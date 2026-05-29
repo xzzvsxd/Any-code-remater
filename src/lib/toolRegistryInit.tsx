@@ -7,6 +7,7 @@
 
 import React from 'react';
 import { toolRegistry, ToolRenderer, ToolRenderProps } from './toolRegistry';
+import { normalizeAnswers, normalizeQuestions } from './askUserQuestionUtils';
 
 // ✅ 已迁移组件：从新的 widgets 目录导入
 import {
@@ -757,8 +758,8 @@ export function initializeToolRegistry(): void {
       name: 'askuserquestion',
       pattern: /^ask[-_]?user[-_]?question$/i,
       render: createToolAdapter(AskUserQuestionWidget, (props) => ({
-        questions: props.input?.questions || [],
-        answers: props.input?.answers || props.result?.content?.answers || {},
+        questions: normalizeQuestions(props.input?.questions),
+        answers: normalizeAnswers(props.input?.answers || props.result?.content?.answers),
         result: props.result,
       })),
       description: '用户问题询问工具',

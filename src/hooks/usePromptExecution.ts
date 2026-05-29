@@ -23,6 +23,7 @@ import { CodexEventConverter, extractCodexRateLimitsFromEvent } from '@/lib/code
 import { sanitizeCodexModelId } from '@/lib/codexModelSupport';
 import type { CodexExecutionMode, CodexRateLimits } from '@/types/codex';
 import { cacheCodexModelFromStream, cacheModelFromInitMessage } from '@/lib/modelNameParser';
+import { notifyAiExecutionComplete } from '@/lib/aiCompletionNotification';
 
 // ============================================================================
 // Global Type Declarations
@@ -289,6 +290,21 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         promptText: prompt,
         promptIndex: undefined as number | undefined,
       } : undefined;
+      let hasNotifiedCompletion = false;
+
+      const notifyCompletionIfIdle = async (engine: 'claude' | 'codex' | 'gemini') => {
+        if (hasNotifiedCompletion) {
+          return;
+        }
+
+        const queuedPromptCount = queuedPromptsRef.current.length;
+        if (queuedPromptCount > 0) {
+          return;
+        }
+
+        hasNotifiedCompletion = true;
+        await notifyAiExecutionComplete({ engine, queuedPromptCount });
+      };
       
       // 对于已有会话，立即记录；对于新会话，在收到 session_id 后记录
       if (effectiveSession && isUserInitiated) {
@@ -502,6 +518,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             }
 
             await refreshCodexRateLimitsFromHistory();
+            await notifyCompletionIfIdle('codex');
 
             // Process queued prompts
             if (queuedPromptsRef.current.length > 0) {
@@ -930,6 +947,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
             // Clear pending session
             delete window.__geminiPendingSession;
+            await notifyCompletionIfIdle('gemini');
 
             // Process queued prompts
             if (queuedPromptsRef.current.length > 0) {
@@ -1249,6 +1267,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
           // Reset currentSessionId to allow detection of new session_id
           currentSessionId = null;
+          await notifyCompletionIfIdle('claude');
           // Process queued prompts after completion
           if (queuedPromptsRef.current.length > 0) {
             const [nextPrompt, ...remainingPrompts] = queuedPromptsRef.current;

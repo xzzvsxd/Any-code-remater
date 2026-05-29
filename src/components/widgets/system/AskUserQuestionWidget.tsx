@@ -16,6 +16,12 @@ import { HelpCircle, CheckCircle, MessageCircle, ChevronDown, ChevronUp, Check }
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useUserQuestion, getQuestionId } from "@/contexts/UserQuestionContext";
+import {
+  getQuestionKey,
+  isOptionSelectedSafe,
+  normalizeAnswers,
+  normalizeQuestions,
+} from "@/lib/askUserQuestionUtils";
 
 export interface AskUserQuestionWidgetProps {
   /** 问题列表 */
@@ -41,34 +47,6 @@ export interface AskUserQuestionWidgetProps {
   };
 }
 
-/**
- * 检查选项是否被选中
- */
-function isOptionSelected(
-  optionLabel: string,
-  answer: string | string[] | undefined
-): boolean {
-  if (!answer) return false;
-
-  if (Array.isArray(answer)) {
-    // 多选：检查是否在数组中
-    return answer.some(a =>
-      optionLabel.toLowerCase().includes(a.toLowerCase()) ||
-      a.toLowerCase().includes(optionLabel.toLowerCase())
-    );
-  } else {
-    // 单选：检查是否匹配
-    return optionLabel.toLowerCase().includes(answer.toLowerCase()) ||
-           answer.toLowerCase().includes(optionLabel.toLowerCase());
-  }
-}
-
-/**
- * AskUserQuestion Widget V3
- *
- * 展示 Claude 向用户提问的内容和用户的回答
- * 支持折叠/展开功能，在选项上直接显示选中状态
- */
 export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
   questions = [],
   answers = {},
@@ -76,7 +54,9 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
 }) => {
   const { t } = useTranslation();
   const isError = result?.is_error;
-  const hasAnswers = Object.keys(answers).length > 0;
+  const safeQuestions = useMemo(() => normalizeQuestions(questions), [questions]);
+  const safeAnswers = useMemo(() => normalizeAnswers(answers), [answers]);
+  const hasAnswers = Object.keys(safeAnswers).length > 0;
 
   // 折叠状态：已回答时默认折叠，未回答时默认展开
   const [isCollapsed, setIsCollapsed] = useState(hasAnswers);
@@ -100,8 +80,8 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
 
   // 计算问题 ID
   const questionId = useMemo(() => {
-    return questions.length > 0 ? getQuestionId(questions) : null;
-  }, [questions]);
+    return safeQuestions.length > 0 ? getQuestionId(safeQuestions) : null;
+  }, [safeQuestions]);
 
   // 检查是否已回答
   const answered = questionId && isQuestionAnswered ? isQuestionAnswered(questionId) : false;
@@ -120,17 +100,17 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
       hasTriggered.current = true;
       // 延迟触发，确保 UI 已渲染
       const timer = setTimeout(() => {
-        triggerQuestionDialog(questions);
+        triggerQuestionDialog(safeQuestions);
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [questions, hasAnswers, answered, triggerQuestionDialog, isError, result]);
+  }, [questions.length, safeQuestions, hasAnswers, answered, triggerQuestionDialog, isError, result]);
 
   // 解析answers - 可能在result.content中以字符串格式存储
   const parsedAnswers = useMemo(() => {
     // 如果answers不为空，直接使用
-    if (Object.keys(answers).length > 0) {
-      return answers;
+    if (Object.keys(safeAnswers).length > 0) {
+      return safeAnswers;
     }
 
     // 尝试从result.content解析
@@ -157,18 +137,18 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
 
       // 如果content.answers存在
       if (content.answers) {
-        return content.answers;
+        return normalizeAnswers(content.answers);
       }
     }
 
     return {};
-  }, [answers, result]);
+  }, [safeAnswers, result]);
 
   // 构建问题到答案的映射
   const questionAnswerMap = useMemo(() => {
     const map = new Map<string, string | string[]>();
 
-    questions.forEach((q) => {
+    safeQuestions.forEach((q) => {
       // 尝试多种方式匹配答案
       const possibleKeys = [
         q.question,                    // 使用完整问题文本作为key（最常见）
@@ -179,19 +159,19 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
 
       for (const key of possibleKeys) {
         if (key && parsedAnswers[key]) {
-          map.set(q.header || q.question, parsedAnswers[key]);
+          map.set(getQuestionKey(q), parsedAnswers[key]);
           break;
         }
       }
 
       // 如果仍然没匹配到，尝试模糊匹配
-      if (!map.has(q.header || q.question)) {
+      if (!map.has(getQuestionKey(q))) {
         const questionText = q.question.toLowerCase();
         for (const [answerKey, answerValue] of Object.entries(parsedAnswers)) {
           const keyLower = answerKey.toLowerCase();
           // 检查问题文本的前30个字符是否匹配
           if (questionText.substring(0, 30) === keyLower.substring(0, 30)) {
-            map.set(q.header || q.question, answerValue as string | string[]);
+            map.set(getQuestionKey(q), answerValue as string | string[]);
             break;
           }
         }
@@ -199,7 +179,7 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
     });
 
     return map;
-  }, [questions, parsedAnswers]);
+  }, [safeQuestions, parsedAnswers]);
 
   return (
     <div
@@ -258,9 +238,9 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
               >
                 {hasAnswers ? t('widget.userAnswered') : t('widget.claudeAsking')}
               </span>
-              {questions.length > 0 && (
+              {safeQuestions.length > 0 && (
                 <span className="text-xs text-muted-foreground">
-                  {t('widget.questionsCount', { count: questions.length })}
+                  {t('widget.questionsCount', { count: safeQuestions.length })}
                 </span>
               )}
             </div>
@@ -286,11 +266,11 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
           {/* 折叠时显示的简要信息 */}
           {isCollapsed && hasAnswers && (
             <div className="mt-1 text-xs text-muted-foreground truncate">
-              {Object.entries(answers).slice(0, 2).map(([key, value]) => {
+              {Object.entries(safeAnswers).slice(0, 2).map(([key, value]) => {
                 const displayValue = Array.isArray(value) ? value.join(", ") : value;
                 return `${key}: ${displayValue}`;
               }).join(" | ")}
-              {Object.keys(answers).length > 2 && ` +${Object.keys(answers).length - 2}...`}
+              {Object.keys(safeAnswers).length > 2 && ` +${Object.keys(safeAnswers).length - 2}...`}
             </div>
           )}
         </div>
@@ -300,11 +280,11 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
       {!isCollapsed && (
         <div className="px-4 pb-3 space-y-3 border-t border-border/30">
           {/* 问题列表 */}
-          {questions.length > 0 && (
+          {safeQuestions.length > 0 && (
             <div className="space-y-2 pt-3">
-              {questions.map((q, qIndex) => {
+              {safeQuestions.map((q, qIndex) => {
                 // 获取这个问题的答案
-                const questionKey = q.header || q.question;
+                const questionKey = getQuestionKey(q);
                 const answer = questionAnswerMap.get(questionKey);
                 const hasAnswer = !!answer;
 
@@ -335,10 +315,10 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
                     </div>
 
                     {/* 选项列表 */}
-                    {q.options && q.options.length > 0 && (
+                        {q.options && q.options.length > 0 && (
                       <div className="pl-6 space-y-1.5">
                         {q.options.map((option, optIndex) => {
-                          const isSelected = isOptionSelected(option.label, answer);
+                          const isSelected = isOptionSelectedSafe(option.label, answer);
 
                           return (
                             <div

@@ -22,6 +22,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import type { Question, UserAnswers } from "@/contexts/UserQuestionContext";
+import { getQuestionKey, normalizeQuestions } from "@/lib/askUserQuestionUtils";
 
 export interface AskUserQuestionDialogProps {
   /** 是否显示对话框 */
@@ -45,6 +46,7 @@ export function AskUserQuestionDialog({
 }: AskUserQuestionDialogProps) {
   // 用户选择的答案
   const [selectedAnswers, setSelectedAnswers] = useState<UserAnswers>({});
+  const safeQuestions = useMemo(() => normalizeQuestions(questions), [questions]);
 
   // 处理单选
   const handleSingleSelect = (questionKey: string, optionLabel: string) => {
@@ -90,15 +92,15 @@ export function AskUserQuestionDialog({
 
   // 检查是否所有问题都已回答
   const allAnswered = useMemo(() => {
-    return questions.every(q => {
-      const key = q.header || q.question;
+    return safeQuestions.every(q => {
+      const key = getQuestionKey(q);
       const answer = selectedAnswers[key];
       if (Array.isArray(answer)) {
         return answer.length > 0;
       }
       return !!answer;
     });
-  }, [questions, selectedAnswers]);
+  }, [safeQuestions, selectedAnswers]);
 
   // 提交答案
   const handleSubmit = () => {
@@ -136,8 +138,8 @@ export function AskUserQuestionDialog({
         <div className="flex-1 min-h-0 my-4">
           <ScrollArea className="h-[400px]">
             <div className="space-y-4 pr-4">
-              {questions.map((q, qIndex) => {
-                const questionKey = q.header || q.question;
+              {safeQuestions.map((q, qIndex) => {
+                const questionKey = getQuestionKey(q);
                 const hasAnswer = !!selectedAnswers[questionKey];
 
                 return (
@@ -288,7 +290,7 @@ export function AskUserQuestionDialog({
             className="gap-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Send className="h-4 w-4" />
-            提交答案 {allAnswered ? "" : `(${Object.keys(selectedAnswers).length}/${questions.length})`}
+            提交答案 {allAnswered ? "" : `(${Object.keys(selectedAnswers).length}/${safeQuestions.length})`}
           </Button>
         </DialogFooter>
       </DialogContent>

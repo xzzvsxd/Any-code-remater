@@ -21,6 +21,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
+import { getQuestionIdContent, getQuestionKey, normalizeQuestions } from "@/lib/askUserQuestionUtils";
 
 /**
  * 问题选项接口
@@ -91,7 +92,7 @@ interface UserQuestionProviderProps {
  * 生成问题的唯一 ID（基于问题内容的简单 hash）
  */
 function generateQuestionId(questions: Question[]): string {
-  const content = questions.map(q => q.question).join('|');
+  const content = getQuestionIdContent(questions);
   let hash = 0;
   for (let i = 0; i < content.length; i++) {
     const char = content.charCodeAt(i);
@@ -147,14 +148,15 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
 
   // 触发问答对话框
   const triggerQuestionDialog = useCallback((questions: Question[]) => {
-    const questionId = generateQuestionId(questions);
+    const safeQuestions = normalizeQuestions(questions);
+    const questionId = generateQuestionId(safeQuestions);
 
     // 如果已回答，不再弹窗
     if (answeredQuestionIds.has(questionId)) {
       return;
     }
     setPendingQuestion({
-      questions,
+      questions: safeQuestions,
       questionId,
       timestamp: Date.now(),
     });
@@ -170,8 +172,8 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
   const formatAnswersAsMessage = useCallback((answers: UserAnswers, questions: Question[]): string => {
     const lines: string[] = ["我的回答："];
 
-    questions.forEach((q) => {
-      const key = q.header || q.question;
+    normalizeQuestions(questions).forEach((q) => {
+      const key = getQuestionKey(q);
       const answer = answers[key];
 
       if (answer) {
