@@ -2,6 +2,11 @@ name: Build and Release
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, e.g. v5.28.7. Empty uses the selected ref name."
+        required: false
+        type: string
   push:
     tags:
       - "v*"
@@ -9,6 +14,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 permissions:
   contents: write
@@ -96,10 +102,10 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Create Windows Portable version
-        if: matrix.platform.name == 'Windows' && startsWith(github.ref, 'refs/tags/v')
+        if: matrix.platform.name == 'Windows' && startsWith(env.RELEASE_TAG, 'v')
         shell: pwsh
         run: |
-          $version = "${{ github.ref_name }}".TrimStart('v')
+          $version = "${{ env.RELEASE_TAG }}".TrimStart('v')
           $exePath = "src-tauri/target/release/any-code.exe"
           $portableName = "Any_Code_${version}_x64-portable.exe"
           $portablePath = "src-tauri/target/release/bundle/$portableName"
@@ -108,7 +114,7 @@ jobs:
           Write-Host "Created portable version: $portableName"
 
       - name: Upload build artifacts
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(env.RELEASE_TAG, 'v')
         uses: actions/upload-artifact@v4
         with:
           name: build-${{ matrix.platform.name }}
@@ -131,7 +137,7 @@ jobs:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(env.RELEASE_TAG, 'v')
 
     steps:
       - name: Checkout repository
@@ -148,7 +154,7 @@ jobs:
 
       - name: Rename updater files for consistent naming
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
 
           AARCH64_TAR=$(find artifacts -path "*aarch64*" -name "*.app.tar.gz" ! -name "*.sig" -type f | head -n 1)
           AARCH64_SIG=$(find artifacts -path "*aarch64*" -name "*.app.tar.gz.sig" -type f | head -n 1)
@@ -196,7 +202,7 @@ jobs:
 
       - name: Generate latest.json for updater
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           DARWIN_AARCH64_SIG=$(find artifacts -name "*_aarch64.app.tar.gz.sig" -type f | head -n 1)
           DARWIN_X64_SIG=$(find artifacts -name "*_x64.app.tar.gz.sig" -type f | head -n 1)
           LINUX_SIG=$(find artifacts -name "*.AppImage.sig" -type f | head -n 1)
@@ -204,7 +210,7 @@ jobs:
 
           python3 .github/scripts/merge_latest_json.py \
             --version "$VERSION" \
-            --tag "$GITHUB_REF_NAME" \
+            --tag "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --output latest.json \
             --platform "darwin-aarch64|$DARWIN_AARCH64_SIG|any-code_${VERSION}_aarch64.app.tar.gz" \
@@ -215,7 +221,7 @@ jobs:
       - name: Check if release exists
         id: check_release
         run: |
-          if gh release view ${{ github.ref_name }} > /dev/null 2>&1; then
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
             echo "exists=true" >> $GITHUB_OUTPUT
           else
             echo "exists=false" >> $GITHUB_OUTPUT
@@ -226,15 +232,15 @@ jobs:
       - name: Prepare release notes
         run: |
           python3 .github/scripts/generate_release_notes.py \
-            --version "${GITHUB_REF_NAME#v}" \
-            --tag "$GITHUB_REF_NAME" \
+            --version "${RELEASE_TAG#v}" \
+            --tag "$RELEASE_TAG" \
             --output release-notes.md
 
       - name: Update release notes
         if: steps.check_release.outputs.exists == 'true'
         run: |
-          gh release edit "${{ github.ref_name }}" \
-            --title "Any Code ${{ github.ref_name }}" \
+          gh release edit "$RELEASE_TAG" \
+            --title "Any Code $RELEASE_TAG" \
             --notes-file release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -245,8 +251,8 @@ jobs:
           find artifacts -type f \( -name "*.dmg" -o -name "*.app.tar.gz" -o -name "*.app.tar.gz.sig" \
             -o -name "*.msi" -o -name "*.msi.sig" -o -name "*-setup.exe" -o -name "*-setup.exe.sig" \
             -o -name "*-portable.exe" -o -name "*.AppImage" -o -name "*.AppImage.sig" \
-            -o -name "*.deb" -o -name "*.rpm" \) -exec gh release upload ${{ github.ref_name }} {} --clobber \;
-          gh release upload ${{ github.ref_name }} latest.json --clobber
+            -o -name "*.deb" -o -name "*.rpm" \) -exec gh release upload "$RELEASE_TAG" {} --clobber \;
+          gh release upload "$RELEASE_TAG" latest.json --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -264,8 +270,8 @@ jobs:
             exit 1
           fi
 
-          gh release create "${{ github.ref_name }}" \
-            --title "Any Code ${{ github.ref_name }}" \
+          gh release create "$RELEASE_TAG" \
+            --title "Any Code $RELEASE_TAG" \
             --notes-file release-notes.md \
             "${files[@]}"
         env:
