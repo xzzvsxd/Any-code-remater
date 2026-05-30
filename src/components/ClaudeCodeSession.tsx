@@ -137,6 +137,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   const [claudeSessionId, setClaudeSessionId] = useState<string | null>(null);
   const claudeSessionIdRef = useRef<string | null>(null);
   const activeSessionIdRef = useRef<string | null>(null);
+  const [cancelSessionId, setCancelSessionId] = useState<string | null>(null);
   const [codexRateLimits, setCodexRateLimits] = useState<CodexRateLimits | null>(null);
   const [isCancellingExecution, setIsCancellingExecution] = useState(false);
   const [executionStartedAt, setExecutionStartedAt] = useState<number | null>(null);
@@ -301,7 +302,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     const engine = executionEngineConfig.engine;
     const engineName = engineDisplayNames[engine];
     const projectLabel = getProjectLabel(projectPath);
-    const canCancel = Boolean(activeSessionIdRef.current);
+    const canCancel = Boolean(cancelSessionId);
     const statusLabel = isCancellingExecution
       ? `正在取消当前 ${engineName} 会话...`
       : `${engineName} 正在执行 · 已运行 ${formatDuration(elapsedSeconds)}`;
@@ -309,7 +310,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       ? `已 ${formatDuration(idleSeconds)} 无新输出，可能仍在后台执行。完成后会弹出提醒。`
       : canCancel
         ? `取消只会影响当前会话${projectLabel ? `（${projectLabel}）` : ''}，不会断开其他对话。`
-        : '正在建立安全取消通道，建立后即可只取消当前会话。';
+        : '正在启动进程，拿到当前会话 ID 后即可安全取消。';
 
     // executionClockTick 用于每秒刷新 useMemo，值本身不参与计算。
     void executionClockTick;
@@ -323,7 +324,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       startedAt,
       elapsedSeconds,
       idleSeconds,
-      activeSessionId: activeSessionIdRef.current,
+      activeSessionId: cancelSessionId,
       projectLabel,
       statusLabel,
       statusHint,
@@ -336,6 +337,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     isLoading,
     lastOutputAt,
     projectPath,
+    cancelSessionId,
   ]);
 
   // 🆕 将消息分组（处理子代理消息）
@@ -473,6 +475,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     setMessages,
     setRawJsonlOutput,
     setClaudeSessionId,
+    setCancelSessionId,
     setCodexRateLimits,
     initializeProgressiveTranslation,
     processMessageWithTranslation,
@@ -544,7 +547,6 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     claudeSessionId,
     effectiveSession,
     isPlanMode,
-    lastTranslationResult,
     isActive,
     isFirstPrompt,
     extractedSessionInfo,
@@ -569,6 +571,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     setExtractedSessionInfo,
     setIsFirstPrompt,
     setCodexRateLimits,
+    setCancelSessionId,
     getRunElapsedSeconds: () => {
       const startedAt = executionStartedAtRef.current;
       return startedAt ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : null;
@@ -716,8 +719,8 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
 
   // Report streaming state changes
   useEffect(() => {
-    onStreamingChange?.(isLoading, claudeSessionId);
-  }, [isLoading, claudeSessionId, onStreamingChange]);
+    onStreamingChange?.(isLoading, cancelSessionId || claudeSessionId);
+  }, [isLoading, cancelSessionId, claudeSessionId, onStreamingChange]);
 
   // 🔧 FIX: When a tab becomes active (visible), re-verify session running state
   // Listeners persist across tab switches (DO NOT clean up on tab switch).
@@ -782,9 +785,9 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
 
   const handleCancelExecution = async () => {
     if (!isLoading || !hasActiveSessionRef.current) return;
-    const activeSessionId = activeSessionIdRef.current;
+    const activeSessionId = cancelSessionId || activeSessionIdRef.current;
     if (!activeSessionId) {
-      const message = '当前运行进程尚未建立安全取消通道，请稍后再试。';
+      const message = '当前运行进程还在启动中，拿到会话 ID 后即可只取消当前会话。';
       setError(message);
       window.dispatchEvent(new CustomEvent('show-toast', {
         detail: { message, type: 'info' }
@@ -818,6 +821,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       hasActiveSessionRef.current = false;
       isListeningRef.current = false;
       activeSessionIdRef.current = null;
+      setCancelSessionId(null);
       setIsCancellingExecution(false);
       setError(null);
       
@@ -869,6 +873,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       hasActiveSessionRef.current = false;
       isListeningRef.current = false;
       activeSessionIdRef.current = null;
+      setCancelSessionId(null);
       setIsCancellingExecution(false);
       setError(null);
       window.dispatchEvent(new CustomEvent('show-toast', {

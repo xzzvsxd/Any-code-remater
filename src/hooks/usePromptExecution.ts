@@ -24,6 +24,7 @@ import { sanitizeCodexModelId } from '@/lib/codexModelSupport';
 import type { CodexExecutionMode, CodexRateLimits } from '@/types/codex';
 import { cacheCodexModelFromStream, cacheModelFromInitMessage } from '@/lib/modelNameParser';
 import { notifyAiExecutionComplete } from '@/lib/aiCompletionNotification';
+import { resolveInitialCancelSessionId } from '@/lib/cancelChannel';
 
 // ============================================================================
 // Type Definitions
@@ -49,7 +50,6 @@ interface UsePromptExecutionConfig {
   claudeSessionId: string | null;
   effectiveSession: Session | null;
   isPlanMode: boolean;
-  lastTranslationResult: TranslationResult | null;
   isActive: boolean;
   isFirstPrompt: boolean;
   extractedSessionInfo: { sessionId: string; projectId: string } | null;
@@ -80,6 +80,7 @@ interface UsePromptExecutionConfig {
   setExtractedSessionInfo: React.Dispatch<React.SetStateAction<{ sessionId: string; projectId: string; engine?: 'claude' | 'codex' | 'gemini' } | null>>;
   setIsFirstPrompt: (isFirst: boolean) => void;
   setCodexRateLimits?: React.Dispatch<React.SetStateAction<CodexRateLimits | null>>;
+  setCancelSessionId?: (id: string | null) => void;
   getRunElapsedSeconds?: () => number | null;
 
   // External Hook Functions
@@ -144,6 +145,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
     setExtractedSessionInfo,
     setIsFirstPrompt,
     setCodexRateLimits,
+    setCancelSessionId,
     getRunElapsedSeconds,
     processMessageWithTranslation
   } = config;
@@ -175,14 +177,20 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
     isListeningRef.current = false;
   }, [unlistenRefs, isListeningRef]);
 
+  const bindCancelSessionId = useCallback((sessionId: string | null) => {
+    const safeSessionId = sessionId?.trim() || null;
+    if (activeSessionIdRef) {
+      activeSessionIdRef.current = safeSessionId;
+    }
+    setCancelSessionId?.(safeSessionId);
+  }, [activeSessionIdRef, setCancelSessionId]);
+
   const resetRuntimeState = useCallback(() => {
     setIsLoading(false);
     hasActiveSessionRef.current = false;
-    if (activeSessionIdRef) {
-      activeSessionIdRef.current = null;
-    }
+    bindCancelSessionId(null);
     cleanupRuntimeListeners();
-  }, [setIsLoading, hasActiveSessionRef, activeSessionIdRef, cleanupRuntimeListeners]);
+  }, [setIsLoading, hasActiveSessionRef, bindCancelSessionId, cleanupRuntimeListeners]);
 
   useEffect(() => {
     if (executionEngine !== 'codex') {
@@ -284,6 +292,12 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
       setIsLoading(true);
       setError(null);
       hasActiveSessionRef.current = true;
+      bindCancelSessionId(resolveInitialCancelSessionId({
+        engine: executionEngine,
+        effectiveSession,
+        claudeSessionId,
+        extractedSessionInfo,
+      }));
 
       // Record prompt sent (save Git state before sending)
       // Only record real user input, exclude auto Warmup and Skills messages
@@ -379,6 +393,18 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           elapsedSeconds: getRunElapsedSeconds?.() ?? null,
           projectPath,
         });
+      };
+      const runNextQueuedPrompt = () => {
+        if (queuedPromptsRef.current.length === 0) {
+          return;
+        }
+
+        const [nextPrompt, ...remainingPrompts] = queuedPromptsRef.current;
+        setQueuedPrompts(remainingPrompts);
+
+        setTimeout(() => {
+          handleSendPrompt(nextPrompt.prompt, nextPrompt.model);
+        }, 100);
       };
 
       // 对于已有会话，立即记录；对于新会话，在收到 session_id 后记录
@@ -568,9 +594,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             const completedSessionId = currentCodexSessionId || codexPendingPromptRecord?.sessionId || null;
             setIsLoading(false);
             hasActiveSessionRef.current = false;
-            if (activeSessionIdRef) {
-              activeSessionIdRef.current = null;
-            }
+            bindCancelSessionId(null);
             isListeningRef.current = false;
 
             // 🆕 Clean up listeners to prevent memory leak
@@ -603,14 +627,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             await notifyCompletionIfIdle('codex', completedSessionId);
 
             // Process queued prompts
-            if (queuedPromptsRef.current.length > 0) {
-              const [nextPrompt, ...remainingPrompts] = queuedPromptsRef.current;
-              setQueuedPrompts(remainingPrompts);
-
-              setTimeout(() => {
-                handleSendPrompt(nextPrompt.prompt, nextPrompt.model);
-              }, 100);
-            }
+            runNextQueuedPrompt();
           };
 
           const parseCodexErrorPayload = (payload: string): { sessionId?: string; message: string } => {
@@ -644,14 +661,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             codexPendingPromptRecord = null;
 
             // 继续处理队列（与完成逻辑一致）
-            if (queuedPromptsRef.current.length > 0) {
-              const [nextPrompt, ...remainingPrompts] = queuedPromptsRef.current;
-              setQueuedPrompts(remainingPrompts);
-
-              setTimeout(() => {
-                handleSendPrompt(nextPrompt.prompt, nextPrompt.model);
-              }, 100);
-            }
+            runNextQueuedPrompt();
           };
 
           // Helper function to attach session-specific listeners
@@ -684,9 +694,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             }
             if (payload.session_id && !currentCodexSessionId) {
               currentCodexSessionId = payload.session_id;
-              if (activeSessionIdRef) {
-                activeSessionIdRef.current = currentCodexSessionId;
-              }
+              bindCancelSessionId(currentCodexSessionId);
               // 🔧 FIX: Set claudeSessionId to the backend channel ID for reconnection and cancellation
               // This is different from the Codex thread_id which is used for resuming sessions
               setClaudeSessionId(currentCodexSessionId);
@@ -735,9 +743,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             // 如果尚未拿到 session_init，但错误里包含 session_id，也用于绑定会话（用于隔离与 UI 展示）
             if (!currentCodexSessionId && parsed.sessionId) {
               currentCodexSessionId = parsed.sessionId;
-              if (activeSessionIdRef) {
-                activeSessionIdRef.current = currentCodexSessionId;
-              }
+              bindCancelSessionId(currentCodexSessionId);
               setClaudeSessionId(currentCodexSessionId);
             }
 
@@ -1020,9 +1026,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             const completedSessionId = currentGeminiSessionId || geminiPendingPromptRecord?.sessionId || null;
             setIsLoading(false);
             hasActiveSessionRef.current = false;
-            if (activeSessionIdRef) {
-              activeSessionIdRef.current = null;
-            }
+            bindCancelSessionId(null);
             isListeningRef.current = false;
 
             // Clean up listeners
@@ -1055,14 +1059,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             await notifyCompletionIfIdle('gemini', completedSessionId);
 
             // Process queued prompts
-            if (queuedPromptsRef.current.length > 0) {
-              const [nextPrompt, ...remainingPrompts] = queuedPromptsRef.current;
-              setQueuedPrompts(remainingPrompts);
-
-              setTimeout(() => {
-                handleSendPrompt(nextPrompt.prompt, nextPrompt.model);
-              }, 100);
-            }
+            runNextQueuedPrompt();
           };
 
           const processGeminiError = (payload: string) => {
@@ -1117,9 +1114,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             if (data.session_id && !currentGeminiSessionId) {
               const backendSessionId = data.session_id as string; // e.g., gemini-{uuid}
               currentGeminiSessionId = backendSessionId;
-              if (activeSessionIdRef) {
-                activeSessionIdRef.current = backendSessionId;
-              }
+              bindCancelSessionId(backendSessionId);
               // Keep claudeSessionId bound to the backend runtime while the process
               // is active.  The real Gemini CLI session id is stored in
               // extractedSessionInfo for history/prompt tracking.
@@ -1145,9 +1140,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             }
             if (!currentGeminiSessionId && backendSessionId) {
               currentGeminiSessionId = backendSessionId;
-              if (activeSessionIdRef) {
-                activeSessionIdRef.current = backendSessionId;
-              }
+              bindCancelSessionId(backendSessionId);
               setClaudeSessionId(backendSessionId);
               await attachGeminiSessionListeners(backendSessionId);
             }
@@ -1416,9 +1409,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
           setIsLoading(false);
           hasActiveSessionRef.current = false;
-          if (activeSessionIdRef) {
-            activeSessionIdRef.current = null;
-          }
+          bindCancelSessionId(null);
           isListeningRef.current = false;
 
           // 🆕 Clean up listeners to prevent memory leak
@@ -1429,15 +1420,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           currentSessionId = null;
           await notifyCompletionIfIdle('claude', completedSessionId);
           // Process queued prompts after completion
-          if (queuedPromptsRef.current.length > 0) {
-            const [nextPrompt, ...remainingPrompts] = queuedPromptsRef.current;
-            setQueuedPrompts(remainingPrompts);
-
-            // Small delay to ensure UI updates
-            setTimeout(() => {
-              handleSendPrompt(nextPrompt.prompt, nextPrompt.model);
-            }, 100);
-          }
+          runNextQueuedPrompt();
         };
 
         const processClaudeError = (payload: string) => {
@@ -1451,6 +1434,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           );
           resetRuntimeState();
           pendingClaudePromptRecordingPromise = null;
+          runNextQueuedPrompt();
         };
 
         // Track if we've recorded the prompt for new sessions
@@ -1533,9 +1517,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
               if (!currentSessionId || currentSessionId !== msg.session_id) {
                 currentSessionId = msg.session_id;
-                if (activeSessionIdRef) {
-                  activeSessionIdRef.current = msg.session_id;
-                }
+                bindCancelSessionId(msg.session_id);
                 setClaudeSessionId(msg.session_id);
 
                 // Claude 在 plan/continue/resume 场景下可能切换到新的 session_id。
@@ -1897,6 +1879,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
     geminiApprovalMode, // 🆕 Gemini integration
     hasActiveSessionRef,
     activeSessionIdRef,
+    bindCancelSessionId,
     unlistenRefs,
     isMountedRef,
     isListeningRef,
@@ -1910,6 +1893,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
     setRawJsonlOutput,
     setExtractedSessionInfo,
     setIsFirstPrompt,
+    setCancelSessionId,
     processMessageWithTranslation,
     refreshCodexRateLimitsFromHistory,
     updateCodexRateLimits,

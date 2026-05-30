@@ -32,6 +32,7 @@ lazy_static::lazy_static! {
 }
 
 const CODEX_SESSION_FILE_CACHE_TTL: Duration = Duration::from_secs(300);
+const MAX_CODEX_SESSION_LIST_SCAN_LINES: usize = 200;
 
 // ============================================================================
 // Type Definitions
@@ -486,15 +487,15 @@ pub fn parse_codex_session_file(path: &std::path::Path) -> Option<CodexSession> 
         .and_then(|modified| modified.duration_since(std::time::SystemTime::UNIX_EPOCH).ok())
         .map(|duration| duration.as_secs());
 
-    // Extract first user message and other metadata from subsequent lines
+    // Extract first user message and other metadata from the head of the file.
+    // Long Codex sessions can contain thousands of JSONL events; project cards
+    // and session lists only need summary metadata, so use file mtime for the
+    // "last active" timestamp instead of scanning to EOF.
     let mut first_message: Option<String> = None;
     let mut last_timestamp: Option<String> = None;
     let mut model: Option<String> = None;
 
-    // Parse only until list-card metadata is known.  `updated_at` uses file
-    // mtime, so list rendering no longer needs to scan every long Codex JSONL
-    // to the end just to discover the last timestamp.
-    for line_result in lines {
+    for line_result in lines.take(MAX_CODEX_SESSION_LIST_SCAN_LINES) {
         if let Ok(line) = line_result {
             if let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) {
                 // Update last timestamp

@@ -21,6 +21,8 @@ static GEMINI_WSL_MODE_CONFIG_CACHE: OnceCell<GeminiWslModeInfo> = OnceCell::con
 static GEMINI_SESSION_INFO_CACHE: Lazy<Mutex<HashMap<PathBuf, GeminiSessionInfoCacheEntry>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+const MAX_GEMINI_SESSION_INFO_SCAN_MESSAGES: usize = 200;
+
 #[derive(Debug, Clone)]
 struct GeminiSessionInfoCacheEntry {
     modified: SystemTime,
@@ -303,7 +305,10 @@ fn read_session_info_from_path(path: &Path) -> Result<GeminiSessionInfo, String>
         }
     }
 
-    let detail = read_session_detail_from_path(&path.to_path_buf())?;
+    let content =
+        fs::read_to_string(path).map_err(|e| format!("Failed to read session file: {}", e))?;
+    let detail: GeminiSessionDetail =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse session file: {}", e))?;
     let file_name = path
         .file_name()
         .and_then(|s| s.to_str())
@@ -313,6 +318,7 @@ fn read_session_info_from_path(path: &Path) -> Result<GeminiSessionInfo, String>
     let first_message = detail
         .messages
         .iter()
+        .take(MAX_GEMINI_SESSION_INFO_SCAN_MESSAGES)
         .find(|message| message.get("type").and_then(|t| t.as_str()) == Some("user"))
         .and_then(|m| m.get("content"))
         .and_then(|c| c.as_str())
@@ -322,6 +328,7 @@ fn read_session_info_from_path(path: &Path) -> Result<GeminiSessionInfo, String>
         detail
             .messages
             .iter()
+            .take(MAX_GEMINI_SESSION_INFO_SCAN_MESSAGES)
             .find_map(|message| message.get("timestamp").and_then(|t| t.as_str()))
             .unwrap_or(&detail.last_updated)
             .to_string()

@@ -163,7 +163,7 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
               {onCancel && canCancel && !isCancelling && <span className="mx-1">·</span>}
               {onCancel && !canCancel && (
                 <>
-                  <span>正在建立安全取消通道</span>
+                  <span>等待会话 ID</span>
                   <span className="mx-1">·</span>
                 </>
               )}

@@ -750,11 +750,10 @@ export const api = {
    */
   async getProjectSessions(projectId: string, projectPath?: string): Promise<Session[]> {
     try {
-      // Get Claude sessions
-      const claudeSessions = await invoke<Session[]>('get_project_sessions', { projectId });
-
-      // Get Codex sessions and filter by project path
-      const codexSessions = await listCodexSessionsCached();
+      const [claudeSessions, codexSessions] = await Promise.all([
+        invoke<Session[]>('get_project_sessions', { projectId }),
+        listCodexSessionsCached(),
+      ]);
 
       const targetPath = projectPath || claudeSessions[0]?.project_path;
 
@@ -791,6 +790,74 @@ export const api = {
       return allSessions;
     } catch (error) {
       console.error("Failed to get project sessions:", error);
+      throw error;
+    }
+  },
+
+  /**
+   * Retrieves only Claude sessions for a project. This is useful for progressive
+   * UI loading where Codex/Gemini sessions can arrive independently.
+   */
+  async getClaudeProjectSessions(projectId: string): Promise<Session[]> {
+    try {
+      const claudeSessions = await invoke<Session[]>('get_project_sessions', { projectId });
+      return claudeSessions.map(s => ({ ...s, engine: 'claude' as const }));
+    } catch (error) {
+      console.error("Failed to get Claude project sessions:", error);
+      throw error;
+    }
+  },
+
+  /**
+   * Retrieves Codex sessions filtered to a single project path.
+   */
+  async getCodexProjectSessions(projectId: string, projectPath: string): Promise<Session[]> {
+    try {
+      const codexSessions = await listCodexSessionsCached();
+      const normalize = (p: string) => p ? p.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase() : '';
+      const targetPathNorm = normalize(projectPath);
+
+      if (!targetPathNorm) {
+        return [];
+      }
+
+      return codexSessions
+        .filter(cs => normalize(cs.projectPath) === targetPathNorm)
+        .map(cs => ({
+          id: cs.id,
+          project_id: projectId,
+          project_path: cs.projectPath,
+          created_at: cs.createdAt,
+          model: cs.model || 'gpt-5.3-codex',
+          engine: 'codex' as const,
+          first_message: cs.firstMessage || `Codex Session`,
+          last_message_timestamp: cs.lastMessageTimestamp,
+        }));
+    } catch (error) {
+      console.error("Failed to get Codex project sessions:", error);
+      throw error;
+    }
+  },
+
+  /**
+   * Retrieves Gemini sessions for a project path and converts them to the common
+   * Session shape used by the list UI.
+   */
+  async getGeminiProjectSessions(projectId: string, projectPath: string): Promise<Session[]> {
+    try {
+      const geminiSessionInfos = await this.listGeminiSessions(projectPath);
+      return geminiSessionInfos.map(info => ({
+        id: info.sessionId,
+        project_id: projectId,
+        project_path: projectPath,
+        created_at: new Date(info.startTime).getTime() / 1000,
+        first_message: info.firstMessage,
+        message_timestamp: info.startTime,
+        last_message_timestamp: info.startTime,
+        engine: 'gemini' as const,
+      }));
+    } catch (error) {
+      console.error("Failed to get Gemini project sessions:", error);
       throw error;
     }
   },

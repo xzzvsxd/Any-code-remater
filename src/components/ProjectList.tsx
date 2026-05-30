@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   FolderOpen,
@@ -11,9 +11,6 @@ import {
   List
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { api } from "@/lib/api";
-import type { CodexSession } from "@/types/codex";
-import type { GeminiSessionInfo } from "@/types/gemini";
 import {
   Tooltip,
   TooltipContent,
@@ -36,7 +33,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { Project } from "@/lib/api";
-import { cn, filterValidGeminiSessions } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { formatAbsoluteDateTime } from "@/lib/date-utils";
 import { Pagination } from "@/components/ui/pagination";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -75,6 +72,9 @@ interface ProjectListProps {
 }
 
 const ITEMS_PER_PAGE = 12;
+
+const normalizePath = (path: string) =>
+  path ? path.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase() : '';
 
 /**
  * Extracts the project name from the full path
@@ -119,51 +119,12 @@ export const ProjectList: React.FC<ProjectListProps> = ({
   const [isDeleting, setIsDeleting] = useState(false);
   const [activeTab, setActiveTab] = useState("active");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
-  const [codexSessions, setCodexSessions] = useState<CodexSession[]>([]);
-  const [geminiSessionsMap, setGeminiSessionsMap] = useState<Map<string, GeminiSessionInfo[]>>(new Map());
   
   // Calculate pagination
   const totalPages = Math.ceil(projects.length / ITEMS_PER_PAGE);
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
   const endIndex = startIndex + ITEMS_PER_PAGE;
   const currentProjects = projects.slice(startIndex, endIndex);
-  
-  // Load Codex sessions for counting
-  useEffect(() => {
-    const loadCodexSessions = async () => {
-      try {
-        const sessions = await api.listCodexSessions();
-        setCodexSessions(sessions);
-      } catch (error) {
-        console.error('Failed to load Codex sessions:', error);
-        // Continue with empty array - won't block UI
-      }
-    };
-    loadCodexSessions();
-  }, []);
-
-  // Load Gemini sessions for each project
-  const loadGeminiSessions = useCallback(async (projectPath: string) => {
-    try {
-      const sessions = await api.listGeminiSessions(projectPath);
-      setGeminiSessionsMap(prev => {
-        const newMap = new Map(prev);
-        newMap.set(projectPath, sessions);
-        return newMap;
-      });
-    } catch {
-      // Silently fail - Gemini may not be configured for this project
-    }
-  }, []);
-
-  // Load Gemini sessions for current page projects
-  useEffect(() => {
-    currentProjects.forEach(project => {
-      if (!geminiSessionsMap.has(project.path)) {
-        loadGeminiSessions(project.path);
-      }
-    });
-  }, [currentProjects, geminiSessionsMap, loadGeminiSessions]);
 
   // Reset to page 1 if projects change
   React.useEffect(() => {
@@ -195,47 +156,16 @@ export const ProjectList: React.FC<ProjectListProps> = ({
     setProjectToDelete(null);
   };
 
-  // Helper function to normalize path for comparison
-  const normalizePath = (p: string) => p ? p.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase() : '';
-
-  /**
-   * Get session breakdown by engine for a project
-   * 只计算有效会话（与 SessionList 显示逻辑尽量一致）
-   *
-   * 注意：
-   * - Claude sessions: 在此阶段只有 ID 列表，无法判断 first_message，保持原样
-   * - Codex sessions: 始终显示（按 SessionList 逻辑）
-   * - Gemini sessions: 过滤掉没有 firstMessage 的会话
-   */
-  const getSessionBreakdown = (project: Project): { claude: number; codex: number; gemini: number; total: number } => {
-    // Claude Code sessions count
-    // 注意：project.sessions 只是 ID 数组，无法在此处过滤有效性
-    // 如果需要精确计数，需要修改后端 API 返回完整的 Session 对象
-    const claudeSessionCount = project.sessions.length;
-
-    // Codex sessions count - filter by normalized project path
-    // Codex 会话始终有效（按 SessionList 逻辑）
-    const projectPathNorm = normalizePath(project.path);
-
-    const codexSessionCount = codexSessions.filter(cs => {
-      const csPathNorm = normalizePath(cs.projectPath);
-      return csPathNorm === projectPathNorm;
-    }).length;
-
-    // Gemini sessions count - from cached map, 只计算有 firstMessage 的会话
-    const geminiSessions = geminiSessionsMap.get(project.path) || [];
-    const geminiSessionCount = filterValidGeminiSessions(geminiSessions).length;
-
-    return {
-      claude: claudeSessionCount,
-      codex: codexSessionCount,
-      gemini: geminiSessionCount,
-      total: claudeSessionCount + codexSessionCount + geminiSessionCount,
-    };
-  };
+  const sessionCountByPath = useMemo(() => {
+    const counts = new Map<string, number>();
+    projects.forEach(project => {
+      counts.set(normalizePath(project.path), project.sessions.length);
+    });
+    return counts;
+  }, [projects]);
 
   const ProjectGrid = () => {
-    if (loading) {
+    if (loading && projects.length === 0) {
       return <ProjectListSkeleton />;
     }
 
@@ -276,8 +206,7 @@ export const ProjectList: React.FC<ProjectListProps> = ({
       >
         {currentProjects.map((project) => {
           const projectName = getProjectName(project.path);
-          const sessionBreakdown = getSessionBreakdown(project);
-          const sessionCount = sessionBreakdown.total;
+          const sessionCount = sessionCountByPath.get(normalizePath(project.path)) ?? project.sessions.length;
 
           return (
             <div
@@ -367,24 +296,13 @@ export const ProjectList: React.FC<ProjectListProps> = ({
                       <TooltipContent side="left" className="p-0 border-primary/20 shadow-xl">
                         <div className="px-3 py-2 space-y-2 min-w-[150px]">
                           <p className="text-xs font-semibold text-foreground border-b border-border/50 pb-1.5">{t('projectList.sessionStats')}</p>
-                          {sessionBreakdown.claude > 0 && (
-                            <div className="flex items-center justify-between text-xs group/item">
-                              <span className="text-muted-foreground group-hover/item:text-foreground transition-colors">Claude Code</span>
-                              <span className="font-mono bg-muted px-1.5 rounded text-[10px]">{sessionBreakdown.claude}</span>
-                            </div>
-                          )}
-                          {sessionBreakdown.codex > 0 && (
-                            <div className="flex items-center justify-between text-xs group/item">
-                              <span className="text-muted-foreground group-hover/item:text-foreground transition-colors">Codex</span>
-                              <span className="font-mono bg-muted px-1.5 rounded text-[10px]">{sessionBreakdown.codex}</span>
-                            </div>
-                          )}
-                          {sessionBreakdown.gemini > 0 && (
-                            <div className="flex items-center justify-between text-xs group/item">
-                              <span className="text-muted-foreground group-hover/item:text-foreground transition-colors">Gemini</span>
-                              <span className="font-mono bg-muted px-1.5 rounded text-[10px]">{sessionBreakdown.gemini}</span>
-                            </div>
-                          )}
+                          <div className="flex items-center justify-between text-xs group/item">
+                            <span className="text-muted-foreground group-hover/item:text-foreground transition-colors">已索引会话</span>
+                            <span className="font-mono bg-muted px-1.5 rounded text-[10px]">{sessionCount}</span>
+                          </div>
+                          <p className="text-[11px] leading-relaxed text-muted-foreground">
+                            打开项目后会异步加载 Claude / Codex / Gemini 明细。
+                          </p>
                         </div>
                       </TooltipContent>
                     </Tooltip>

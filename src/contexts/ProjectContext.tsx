@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react';
+﻿import React, { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react';
 import { api, Project, Session } from '@/lib/api';
 import { useTranslation } from 'react-i18next';
 
@@ -7,6 +7,9 @@ interface ProjectContextType {
   selectedProject: Project | null;
   sessions: Session[];
   loading: boolean;
+  projectsLoading: boolean;
+  sessionsLoading: boolean;
+  sessionsLoadProgress: SessionsLoadProgress;
   error: string | null;
   loadProjects: () => Promise<void>;
   selectProject: (project: Project) => Promise<void>;
@@ -17,6 +20,81 @@ interface ProjectContextType {
   clearSelection: () => void;
 }
 
+type SessionSource = 'claude' | 'codex' | 'gemini';
+type SessionSourceStatus = 'idle' | 'loading' | 'done' | 'error';
+
+interface SessionsLoadProgress {
+  claude: SessionSourceStatus;
+  codex: SessionSourceStatus;
+  gemini: SessionSourceStatus;
+}
+
+const idleSessionsLoadProgress: SessionsLoadProgress = {
+  claude: 'idle',
+  codex: 'idle',
+  gemini: 'idle',
+};
+
+const loadingSessionsLoadProgress: SessionsLoadProgress = {
+  claude: 'loading',
+  codex: 'loading',
+  gemini: 'loading',
+};
+
+const sortSessionsByActivity = (sessionList: Session[]) => {
+  return [...sessionList].sort((a, b) => {
+    const getTime = (session: Session) => {
+      if (session.last_message_timestamp) {
+        const parsed = new Date(session.last_message_timestamp).getTime();
+        if (Number.isFinite(parsed)) return parsed;
+      }
+      if (session.message_timestamp) {
+        const parsed = new Date(session.message_timestamp).getTime();
+        if (Number.isFinite(parsed)) return parsed;
+      }
+      return session.created_at * 1000;
+    };
+
+    return getTime(b) - getTime(a);
+  });
+};
+
+const codexSessionToProjectSession = (
+  session: any,
+  projectId: string,
+  fallbackProjectPath: string
+): Session => ({
+  id: session.id,
+  project_id: projectId,
+  project_path: session.projectPath || fallbackProjectPath,
+  created_at: session.createdAt,
+  model: session.model || 'gpt-5.3-codex',
+  engine: 'codex' as const,
+  first_message: session.firstMessage || 'Codex Session',
+  last_message_timestamp: session.lastMessageTimestamp,
+});
+
+const getCodexSessionActivitySeconds = (session: any): number => {
+  if (session.lastMessageTimestamp) {
+    const parsed = new Date(session.lastMessageTimestamp).getTime();
+    if (Number.isFinite(parsed)) return parsed / 1000;
+  }
+
+  if (session.updatedAt) {
+    return typeof session.updatedAt === 'string'
+      ? new Date(session.updatedAt).getTime() / 1000
+      : session.updatedAt;
+  }
+
+  if (session.createdAt) {
+    return typeof session.createdAt === 'string'
+      ? new Date(session.createdAt).getTime() / 1000
+      : session.createdAt;
+  }
+
+  return 0;
+};
+
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
 
 export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -25,11 +103,16 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [manualProjects, setManualProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [projectsLoading, setProjectsLoading] = useState(false);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [mutationLoading, setMutationLoading] = useState(false);
+  const [sessionsLoadProgress, setSessionsLoadProgress] = useState<SessionsLoadProgress>(idleSessionsLoadProgress);
   const [error, setError] = useState<string | null>(null);
   const codexSessionsCacheRef = useRef<{ value: any[]; expiresAt: number } | null>(null);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshPromiseRef = useRef<Promise<void> | null>(null);
+  const sessionLoadRequestRef = useRef(0);
+  const loading = projectsLoading || sessionsLoading || mutationLoading;
 
   const normalizeProjectPath = useCallback((path: string) => {
     return path ? path.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase() : '';
@@ -90,12 +173,18 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     return mergedProjects;
   }, [normalizeProjectPath]);
 
-  const loadSessionsForProject = useCallback(async (project: Project, projectList?: Project[]) => {
+  const resolveEffectiveProject = useCallback((project: Project, projectList?: Project[]) => {
     const availableProjects = projectList ?? projects;
     const matchedProject =
       findRealProjectByPath(availableProjects, project.path) ??
       (isVirtualProject(project) ? null : findProjectByPath(availableProjects, project.path));
     const effectiveProject = matchedProject ?? project;
+
+    return { matchedProject, effectiveProject };
+  }, [findProjectByPath, findRealProjectByPath, isVirtualProject, projects]);
+
+  const loadSessionsForProject = useCallback(async (project: Project, projectList?: Project[]) => {
+    const { matchedProject, effectiveProject } = resolveEffectiveProject(project, projectList);
 
     let claudeCodexSessions: Session[] = [];
 
@@ -108,16 +197,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
 
         claudeCodexSessions = codexSessions
           .filter(session => normalizeProjectPath(session.projectPath) === normalizedProjectPath)
-          .map(session => ({
-            id: session.id,
-            project_id: effectiveProject.id,
-            project_path: session.projectPath,
-            created_at: session.createdAt,
-            model: session.model || 'gpt-5.3-codex',
-            engine: 'codex' as const,
-            first_message: session.firstMessage || 'Codex Session',
-            last_message_timestamp: session.lastMessageTimestamp,
-          }));
+          .map(session => codexSessionToProjectSession(session, effectiveProject.id, project.path));
       } catch (codexErr) {
         console.warn('[ProjectContext] Failed to load Codex sessions by project path:', codexErr);
       }
@@ -141,109 +221,133 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     }
 
     const allSessions = [...claudeCodexSessions, ...geminiSessions];
-    allSessions.sort((a, b) => b.created_at - a.created_at);
 
     return {
       effectiveProject,
-      sessions: allSessions,
+      sessions: sortSessionsByActivity(allSessions),
     };
-  }, [findProjectByPath, findRealProjectByPath, getCachedCodexSessions, isVirtualProject, normalizeProjectPath, projects]);
+  }, [getCachedCodexSessions, normalizeProjectPath, resolveEffectiveProject]);
 
   const loadProjects = useCallback(async () => {
     try {
-      setLoading(true);
+      setProjectsLoading(true);
       setError(null);
       const list = await api.listProjects();
-      
-      // 1. 获取 Codex 会话列表（全局获取，开销小）
-      let codexSessions: any[] = [];
-      try {
-        codexSessions = await getCachedCodexSessions();
-      } catch (e) {
-        console.warn("Failed to load codex sessions for sorting:", e);
-      }
-
-      // 2. 计算每个项目的"最后活跃时间"
-      // 默认使用创建时间，如果发现更有更新的 Codex 会话，则更新
-      const projectLastActive = new Map<string, number>();
-      
-      // 辅助函数：标准化路径（去除末尾斜杠，转小写，统一斜杠）
-      const normalize = (p: string) => p ? p.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase() : '';
-
-      // 初始化：使用项目创建时间
-      list.forEach(p => {
-        const normPath = normalize(p.path);
-        projectLastActive.set(normPath, p.created_at);
-      });
-
-      // 更新：检查 Codex 会话
-      codexSessions.forEach(session => {
-        if (!session.projectPath) return;
-        const normPath = normalize(session.projectPath);
-        
-        // 获取会话的最新时间（优先使用最后消息时间，否则使用创建时间）
-        // 注意：Codex 会话的时间戳可能是 ISO 字符串或 Unix 时间戳，需要统一
-        let sessionTime = 0;
-        
-        if (session.lastMessageTimestamp) {
-          sessionTime = new Date(session.lastMessageTimestamp).getTime() / 1000;
-        } else if (session.createdAt) {
-          sessionTime = typeof session.createdAt === 'string' 
-            ? new Date(session.createdAt).getTime() / 1000 
-            : session.createdAt;
-        }
-
-        const current = projectLastActive.get(normPath) || 0;
-        if (sessionTime > current) {
-          projectLastActive.set(normPath, sessionTime);
-        }
-      });
-
-      // 3. 排序：按最后活跃时间降序（最新的在前）
-      const sortedList = list.sort((a, b) => {
-        const timeA = projectLastActive.get(normalize(a.path)) || a.created_at;
-        const timeB = projectLastActive.get(normalize(b.path)) || b.created_at;
-        return timeB - timeA;
-      });
-
+      const sortedList = [...list].sort((a, b) => b.created_at - a.created_at);
       setProjects(mergeProjects(sortedList, manualProjects));
+
+      getCachedCodexSessions()
+        .then(codexSessions => {
+          const projectLastActive = new Map<string, number>();
+          sortedList.forEach(project => {
+            projectLastActive.set(normalizeProjectPath(project.path), project.created_at);
+          });
+
+          codexSessions.forEach(session => {
+            if (!session.projectPath) return;
+            const normPath = normalizeProjectPath(session.projectPath);
+            const sessionTime = getCodexSessionActivitySeconds(session);
+            const current = projectLastActive.get(normPath) || 0;
+            if (sessionTime > current) {
+              projectLastActive.set(normPath, sessionTime);
+            }
+          });
+
+          const resortedList = [...sortedList].sort((a, b) => {
+            const timeA = projectLastActive.get(normalizeProjectPath(a.path)) || a.created_at;
+            const timeB = projectLastActive.get(normalizeProjectPath(b.path)) || b.created_at;
+            return timeB - timeA;
+          });
+
+          setProjects(mergeProjects(resortedList, manualProjects));
+        })
+        .catch(e => {
+          console.warn("Failed to refresh Codex activity for project sorting:", e);
+        });
     } catch (err) {
       console.error("Failed to load projects:", err);
       setError(t('common.loadingProjects'));
     } finally {
-      setLoading(false);
+      setProjectsLoading(false);
     }
-  }, [getCachedCodexSessions, manualProjects, mergeProjects, t]);
+  }, [getCachedCodexSessions, manualProjects, mergeProjects, normalizeProjectPath, t]);
 
   const selectProject = useCallback(async (project: Project) => {
-    try {
-      setLoading(true);
-      setError(null);
-      const { effectiveProject, sessions: allSessions } = await loadSessionsForProject(project);
+    const requestId = sessionLoadRequestRef.current + 1;
+    sessionLoadRequestRef.current = requestId;
 
-      setSessions(allSessions);
-      setSelectedProject(effectiveProject);
+    const { matchedProject, effectiveProject } = resolveEffectiveProject(project);
+    const mergeSourceSessions = (source: SessionSource, sourceSessions: Session[]) => {
+      if (sessionLoadRequestRef.current !== requestId) {
+        return;
+      }
 
-      // Background indexing
-      api.preindexProject(effectiveProject.path).catch(console.error);
-    } catch (err) {
-      console.error("Failed to load sessions:", err);
-      setError(t('common.loadingSessions'));
-    } finally {
-      setLoading(false);
+      setSessions(prev => {
+        const withoutSource = prev.filter(session => (session.engine || 'claude') !== source);
+        return sortSessionsByActivity([...withoutSource, ...sourceSessions]);
+      });
+    };
+    const markSource = (source: SessionSource, status: SessionSourceStatus) => {
+      if (sessionLoadRequestRef.current !== requestId) {
+        return;
+      }
+
+      setSessionsLoadProgress(prev => ({ ...prev, [source]: status }));
+    };
+
+    setError(null);
+    setSelectedProject(effectiveProject);
+    setSessions([]);
+    setSessionsLoading(true);
+    setSessionsLoadProgress(loadingSessionsLoadProgress);
+
+    api.preindexProject(effectiveProject.path).catch(console.error);
+
+    const loaders: Array<[SessionSource, () => Promise<Session[]>]> = [
+      ['claude', async () => matchedProject ? api.getClaudeProjectSessions(matchedProject.id) : []],
+      ['codex', async () => {
+        if (matchedProject) {
+          return api.getCodexProjectSessions(matchedProject.id, matchedProject.path);
+        }
+
+        const codexSessions = await getCachedCodexSessions();
+        const normalizedProjectPath = normalizeProjectPath(project.path);
+        return codexSessions
+          .filter(session => normalizeProjectPath(session.projectPath) === normalizedProjectPath)
+          .map(session => codexSessionToProjectSession(session, effectiveProject.id, project.path));
+      }],
+      ['gemini', () => api.getGeminiProjectSessions(effectiveProject.id, effectiveProject.path)],
+    ];
+
+    await Promise.all(loaders.map(async ([source, loader]) => {
+      try {
+        const sourceSessions = await loader();
+        mergeSourceSessions(source, sourceSessions);
+        markSource(source, 'done');
+      } catch (err) {
+        console.warn(`[ProjectContext] Failed to load ${source} sessions:`, err);
+        markSource(source, 'error');
+      }
+    }));
+
+    if (sessionLoadRequestRef.current === requestId) {
+      setSessionsLoading(false);
     }
-  }, [loadSessionsForProject, t]);
+  }, [getCachedCodexSessions, normalizeProjectPath, resolveEffectiveProject]);
 
   const registerProjectByPath = useCallback(async (projectPath: string) => {
     try {
-      setLoading(true);
+      setMutationLoading(true);
       setError(null);
 
       const existingProject = findProjectByPath(projects, projectPath);
       if (existingProject) {
+        sessionLoadRequestRef.current += 1;
         setProjects(prevProjects => mergeProjects([existingProject], prevProjects));
         setSelectedProject(null);
         setSessions([]);
+        setSessionsLoading(false);
+        setSessionsLoadProgress(idleSessionsLoadProgress);
         return;
       }
 
@@ -258,28 +362,45 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
 
       setManualProjects(nextManualProjects);
       setProjects(prevProjects => mergeProjects([projectToRegister], mergeProjects(prevProjects, nextManualProjects)));
+      sessionLoadRequestRef.current += 1;
       setSelectedProject(null);
       setSessions([]);
+      setSessionsLoading(false);
+      setSessionsLoadProgress(idleSessionsLoadProgress);
 
       api.preindexProject(projectToRegister.path).catch(console.error);
     } catch (err) {
       console.error("Failed to register project by path:", err);
       setError(t('common.loadingProjects'));
     } finally {
-      setLoading(false);
+      setMutationLoading(false);
     }
   }, [buildVirtualProject, findProjectByPath, manualProjects, mergeProjects, normalizeProjectPath, projects, t]);
 
   const refreshSessions = useCallback(async () => {
     if (selectedProject) {
+      const requestId = sessionLoadRequestRef.current + 1;
+      sessionLoadRequestRef.current = requestId;
       try {
+        setSessionsLoading(true);
+        setSessionsLoadProgress(loadingSessionsLoadProgress);
         const latestProjects = await api.listProjects().catch(() => [] as Project[]);
         const { effectiveProject, sessions: allSessions } = await loadSessionsForProject(selectedProject, latestProjects);
 
-        setSelectedProject(effectiveProject);
-        setSessions(allSessions);
+        if (sessionLoadRequestRef.current === requestId) {
+          setSelectedProject(effectiveProject);
+          setSessions(allSessions);
+          setSessionsLoadProgress({ claude: 'done', codex: 'done', gemini: 'done' });
+        }
       } catch (err) {
         console.error("Failed to refresh sessions:", err);
+        if (sessionLoadRequestRef.current === requestId) {
+          setSessionsLoadProgress({ claude: 'error', codex: 'error', gemini: 'error' });
+        }
+      } finally {
+        if (sessionLoadRequestRef.current === requestId) {
+          setSessionsLoading(false);
+        }
       }
     }
   }, [loadSessionsForProject, selectedProject]);
@@ -294,30 +415,39 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
           prevProjects.filter(item => normalizeProjectPath(item.path) !== normalizeProjectPath(project.path))
         );
         if (selectedProject && normalizeProjectPath(selectedProject.path) === normalizeProjectPath(project.path)) {
+          sessionLoadRequestRef.current += 1;
           setSelectedProject(null);
           setSessions([]);
+          setSessionsLoading(false);
+          setSessionsLoadProgress(idleSessionsLoadProgress);
         }
         return;
       }
 
-      setLoading(true);
+      setMutationLoading(true);
       await api.deleteProject(project.id);
       await loadProjects();
       if (selectedProject?.id === project.id) {
+        sessionLoadRequestRef.current += 1;
         setSelectedProject(null);
         setSessions([]);
+        setSessionsLoading(false);
+        setSessionsLoadProgress(idleSessionsLoadProgress);
       }
     } catch (err) {
       console.error("Failed to delete project:", err);
       throw err;
     } finally {
-      setLoading(false);
+      setMutationLoading(false);
     }
   }, [loadProjects, normalizeProjectPath, selectedProject]);
 
   const clearSelection = useCallback(() => {
+    sessionLoadRequestRef.current += 1;
     setSelectedProject(null);
     setSessions([]);
+    setSessionsLoading(false);
+    setSessionsLoadProgress(idleSessionsLoadProgress);
   }, []);
 
   const scheduleProjectRefresh = useCallback((includeSessions: boolean = true) => {
@@ -363,6 +493,9 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       selectedProject,
       sessions,
       loading,
+      projectsLoading,
+      sessionsLoading,
+      sessionsLoadProgress,
       error,
       loadProjects,
       selectProject,

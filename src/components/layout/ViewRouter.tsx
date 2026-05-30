@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { Plus } from "lucide-react";
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useTranslation } from 'react-i18next';
@@ -54,7 +54,7 @@ export const ViewRouter: React.FC = () => {
   const { t } = useTranslation();
   const { currentView, navigateTo, viewParams, setNavigationInterceptor, goBack } = useNavigation();
   const {
-    projects, selectedProject, sessions, loading, error,
+    projects, selectedProject, sessions, projectsLoading, sessionsLoading, sessionsLoadProgress, error,
     loadProjects, selectProject, registerProjectByPath, deleteProject, clearSelection, refreshSessions,
     scheduleProjectRefresh
   } = useProject();
@@ -64,15 +64,6 @@ export const ViewRouter: React.FC = () => {
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
   const [showNavigationConfirm, setShowNavigationConfirm] = useState(false);
   const [pendingView, setPendingView] = useState<any | null>(null); // Store pending view for confirmation
-
-  // Load projects on mount if in projects view
-  const hasLoadedProjectsRef = useRef(false);
-  useEffect(() => {
-    if (currentView === "projects" && !hasLoadedProjectsRef.current) {
-      loadProjects();
-      hasLoadedProjectsRef.current = true;
-    }
-  }, [currentView, loadProjects]);
 
   // Global keyboard shortcuts
   useGlobalKeyboardShortcuts({
@@ -358,85 +349,96 @@ export const ViewRouter: React.FC = () => {
                 </div>
               )}
 
-              {loading && (
-                <>
-                  {selectedProject ? (
-                    <div className="border border-border rounded-lg overflow-hidden divide-y divide-border">
-                      {[...Array(8)].map((_, i) => (
+              {selectedProject ? (
+                <div>
+                  {sessionsLoading && (
+                    <div
+                      className="mb-3 rounded-2xl border border-primary/15 bg-primary/5 px-4 py-3 text-sm text-muted-foreground"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span>正在异步加载会话，已加载的会话会实时显示；你可以先打开已出现的会话。</span>
+                        <span className="text-xs">
+                          Claude: {sessionsLoadProgress.claude === 'loading' ? '加载中' : sessionsLoadProgress.claude === 'done' ? '完成' : sessionsLoadProgress.claude === 'error' ? '失败' : '等待'}
+                          <span className="mx-1">·</span>
+                          Codex: {sessionsLoadProgress.codex === 'loading' ? '加载中' : sessionsLoadProgress.codex === 'done' ? '完成' : sessionsLoadProgress.codex === 'error' ? '失败' : '等待'}
+                          <span className="mx-1">·</span>
+                          Gemini: {sessionsLoadProgress.gemini === 'loading' ? '加载中' : sessionsLoadProgress.gemini === 'done' ? '完成' : sessionsLoadProgress.gemini === 'error' ? '失败' : '等待'}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {sessionsLoading && sessions.length === 0 && (
+                    <div className="mb-3 border border-border rounded-lg overflow-hidden divide-y divide-border">
+                      {[...Array(4)].map((_, i) => (
                         <SessionListItemSkeleton key={i} />
                       ))}
                     </div>
-                  ) : (
+                  )}
+
+                  <SessionList
+                    sessions={sessions}
+                    projectPath={selectedProject.path}
+                    onBack={clearSelection}
+                    onEditClaudeFile={(file) => navigateTo("claude-file-editor", { file })}
+                    onSessionDelete={handleSessionDelete}
+                    onSessionsBatchDelete={handleSessionsBatchDelete}
+                    onSessionConvert={handleSessionConvert}
+                    onSessionClick={(session) => {
+                      const result = openSessionInBackground(session);
+                      switchToTab(result.tabId);
+                      navigateTo("claude-tab-manager");
+                      if (result.isNew) {
+                        setToast({ message: `会话 ${session.id.slice(-8)} 已打开`, type: "success" });
+                      } else {
+                        setToast({ message: `已切换到会话 ${session.id.slice(-8)}`, type: "info" });
+                      }
+                    }}
+                    onNewSession={(projectPath) => {
+                      navigateTo("claude-tab-manager", { initialProjectPath: projectPath });
+                    }}
+                  />
+                </div>
+              ) : (
+                <div>
+                  <RunningClaudeSessions
+                    onSessionClick={(session) => {
+                      const result = openSessionInBackground(session);
+                      switchToTab(result.tabId);
+                      navigateTo("claude-tab-manager");
+                      if (result.isNew) {
+                        setToast({ message: `会话 ${session.id.slice(-8)} 已打开`, type: "success" });
+                      } else {
+                        setToast({ message: `已切换到会话 ${session.id.slice(-8)}`, type: "info" });
+                      }
+                    }}
+                  />
+
+                  {projectsLoading && projects.length === 0 ? (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-3">
                       {[...Array(6)].map((_, i) => (
                         <ProjectCardSkeleton key={i} />
                       ))}
                     </div>
-                  )}
-                </>
-              )}
-
-              {!loading && (
-                <>
-                  {selectedProject ? (
-                    <div>
-                      <SessionList
-                        sessions={sessions}
-                        projectPath={selectedProject.path}
-                        onBack={clearSelection}
-                        onEditClaudeFile={(file) => navigateTo("claude-file-editor", { file })}
-                        onSessionDelete={handleSessionDelete}
-                        onSessionsBatchDelete={handleSessionsBatchDelete}
-                        onSessionConvert={handleSessionConvert}
-                        onSessionClick={(session) => {
-                          const result = openSessionInBackground(session);
-                          switchToTab(result.tabId);
-                          navigateTo("claude-tab-manager");
-                          if (result.isNew) {
-                            setToast({ message: `会话 ${session.id.slice(-8)} 已打开`, type: "success" });
-                          } else {
-                            setToast({ message: `已切换到会话 ${session.id.slice(-8)}`, type: "info" });
-                          }
-                        }}
-                        onNewSession={(projectPath) => {
-                          navigateTo("claude-tab-manager", { initialProjectPath: projectPath });
-                        }}
-                      />
-                    </div>
+                  ) : projects.length > 0 ? (
+                    <ProjectList
+                      projects={projects}
+                      onProjectClick={selectProject}
+                      onProjectSettings={(project) => navigateTo("project-settings", { project })}
+                      onProjectDelete={handleProjectDeleteWrapper}
+                      onProjectsChanged={loadProjects}
+                      loading={projectsLoading}
+                    />
                   ) : (
-                    <div>
-                      <RunningClaudeSessions
-                        onSessionClick={(session) => {
-                          const result = openSessionInBackground(session);
-                          switchToTab(result.tabId);
-                          navigateTo("claude-tab-manager");
-                          if (result.isNew) {
-                            setToast({ message: `会话 ${session.id.slice(-8)} 已打开`, type: "success" });
-                          } else {
-                            setToast({ message: `已切换到会话 ${session.id.slice(-8)}`, type: "info" });
-                          }
-                        }}
-                      />
-
-                      {projects.length > 0 ? (
-                        <ProjectList
-                          projects={projects}
-                          onProjectClick={selectProject}
-                          onProjectSettings={(project) => navigateTo("project-settings", { project })}
-                          onProjectDelete={handleProjectDeleteWrapper}
-                          onProjectsChanged={loadProjects}
-                          loading={loading}
-                        />
-                      ) : (
-                        <div className="py-8 text-center">
-                          <p className="text-sm text-muted-foreground">
-                            {t('common.noProjectsFound')}
-                          </p>
-                        </div>
-                      )}
+                    <div className="py-8 text-center">
+                      <p className="text-sm text-muted-foreground">
+                        {t('common.noProjectsFound')}
+                      </p>
                     </div>
                   )}
-                </>
+                </div>
               )}
             </div>
           </div>

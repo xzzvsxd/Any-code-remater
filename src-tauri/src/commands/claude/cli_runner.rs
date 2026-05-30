@@ -289,7 +289,7 @@ pub async fn execute_claude_code(
         Some(&mapped_model),
         max_thinking_tokens,
     )?;
-    spawn_claude_process(app, cmd, prompt, model, project_path, tab_id).await
+    spawn_claude_process(app, cmd, prompt, model, project_path, tab_id, None).await
 }
 
 /// Continue an existing Claude Code conversation with streaming output
@@ -356,7 +356,7 @@ pub async fn continue_claude_code(
         Some(&mapped_model),
         max_thinking_tokens,
     )?;
-    spawn_claude_process(app, cmd, prompt, model, project_path, tab_id).await
+    spawn_claude_process(app, cmd, prompt, model, project_path, tab_id, None).await
 }
 
 /// Resume an existing Claude Code session by ID with streaming output
@@ -448,6 +448,7 @@ pub async fn resume_claude_code(
         model.clone(),
         project_path.clone(),
         tab_id.clone(),
+        Some(session_id.clone()),
     )
     .await
     {
@@ -585,6 +586,7 @@ async fn spawn_claude_process(
     model: String,
     project_path: String,
     tab_id: Option<String>,
+    initial_session_id: Option<String>,
 ) -> Result<(), String> {
     use std::sync::Mutex;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -679,8 +681,12 @@ async fn spawn_claude_process(
     let stdout_reader = BufReader::new(stdout);
     let stderr_reader = BufReader::new(stderr);
 
-    // We'll extract the session ID from Claude's init message
-    let session_id_holder: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    // We'll extract the authoritative session ID from Claude's init message.
+    // For resume mode, seed the holder with the known session id so cancel can
+    // target this process immediately instead of waiting for the first stdout
+    // init line.
+    let session_id_holder: Arc<Mutex<Option<String>>> =
+        Arc::new(Mutex::new(initial_session_id.clone()));
     let run_id_holder: Arc<Mutex<Option<i64>>> = Arc::new(Mutex::new(None));
     #[cfg(windows)]
     let job_object_holder: Arc<std::sync::Mutex<Option<Arc<JobObject>>>> =
@@ -706,6 +712,36 @@ async fn spawn_claude_process(
         *last_pid = Some(pid);
     }
 
+    let registry = app.state::<crate::process::ProcessRegistryState>();
+
+    if let Some(initial_sid) = initial_session_id.as_ref().filter(|sid| !sid.trim().is_empty()) {
+        #[cfg(windows)]
+        let job_object_for_register = job_object_holder.lock().unwrap().take();
+        #[cfg(not(windows))]
+        let job_object_for_register: Option<()> = None;
+
+        match registry.0.register_claude_session_with_job(
+            initial_sid.clone(),
+            pid,
+            project_path.clone(),
+            prompt.clone(),
+            model.clone(),
+            job_object_for_register,
+        ) {
+            Ok(run_id) => {
+                log::info!(
+                    "Registered resumed Claude session immediately with run_id: {}",
+                    run_id
+                );
+                let mut run_id_guard = run_id_holder.lock().unwrap();
+                *run_id_guard = Some(run_id);
+            }
+            Err(e) => {
+                log::error!("Failed to pre-register resumed Claude session: {}", e);
+            }
+        }
+    }
+
     // Check if auto-compact state is available
     let auto_compact_available = app
         .try_state::<crate::commands::context_manager::AutoCompactState>()
@@ -715,7 +751,6 @@ async fn spawn_claude_process(
     let app_handle = app.clone();
     let session_id_holder_clone = session_id_holder.clone();
     let run_id_holder_clone = run_id_holder.clone();
-    let registry = app.state::<crate::process::ProcessRegistryState>();
     let registry_clone = registry.0.clone();
     let project_path_clone = project_path.clone();
     let prompt_clone = prompt.clone();
@@ -736,23 +771,47 @@ async fn spawn_claude_process(
                 if msg["type"] == "system" && msg["subtype"] == "init" {
                     if let Some(claude_session_id) = msg["session_id"].as_str() {
                         let mut session_id_guard = session_id_holder_clone.lock().unwrap();
-                        if session_id_guard.is_none() {
+                        let previous_session_id = session_id_guard.clone();
+                        if previous_session_id.as_deref() != Some(claude_session_id) {
                             *session_id_guard = Some(claude_session_id.to_string());
                             log::info!("Extracted Claude session ID: {}", claude_session_id);
+                        }
+                        drop(session_id_guard);
 
-                            // Register with auto-compact manager
-                            if auto_compact_available {
-                                if let Some(auto_compact_state) = app_handle.try_state::<crate::commands::context_manager::AutoCompactState>() {
-                                    if let Err(e) = auto_compact_state.0.register_session(
+                        // Register with auto-compact manager
+                        if auto_compact_available {
+                            if let Some(auto_compact_state) = app_handle
+                                .try_state::<crate::commands::context_manager::AutoCompactState>()
+                            {
+                                if let Err(e) = auto_compact_state.0.register_session(
                                     claude_session_id.to_string(),
                                     project_path_clone.clone(),
                                     model_clone.clone(),
                                 ) {
-                                    log::warn!("Failed to register session with auto-compact manager: {}", e);
-                                }
+                                    log::warn!(
+                                        "Failed to register session with auto-compact manager: {}",
+                                        e
+                                    );
                                 }
                             }
+                        }
 
+                        let existing_run_id = *run_id_holder_clone.lock().unwrap();
+                        let run_id = if let Some(run_id) = existing_run_id {
+                            if previous_session_id.as_deref() != Some(claude_session_id) {
+                                if let Err(e) = registry_clone.update_claude_session_id(
+                                    run_id,
+                                    claude_session_id.to_string(),
+                                ) {
+                                    log::warn!(
+                                        "Failed to update Claude session id for run {}: {}",
+                                        run_id,
+                                        e
+                                    );
+                                }
+                            }
+                            Some(run_id)
+                        } else {
                             // Now register with ProcessRegistry using Claude's session ID
                             // 🔧 FIX: Pass the pre-created Job Object to avoid orphan processes
                             #[cfg(windows)]
@@ -773,39 +832,43 @@ async fn spawn_claude_process(
                                     log::info!("Registered Claude session with run_id: {}", run_id);
                                     let mut run_id_guard = run_id_holder_clone.lock().unwrap();
                                     *run_id_guard = Some(run_id);
-
-                                    // ✨ Phase 2: Emit event for real-time session tracking
-                                    let event_payload = serde_json::json!({
-                                        "session_id": claude_session_id,
-                                        "project_path": project_path_clone,
-                                        "model": model_clone,
-                                        "status": "started",
-                                        "pid": pid,
-                                        "run_id": run_id,
-                                    });
-                                    if let Err(e) =
-                                        app_handle.emit("claude-session-state", &event_payload)
-                                    {
-                                        log::warn!(
-                                            "Failed to emit claude-session-state event: {}",
-                                            e
-                                        );
-                                    } else {
-                                        log::info!(
-                                            "Emitted claude-session-started event for session: {}",
-                                            claude_session_id
-                                        );
-                                    }
-
-                                    log::info!(
-                                        "Claude CLI will handle project creation for session: {}",
-                                        claude_session_id
-                                    );
+                                    Some(run_id)
                                 }
                                 Err(e) => {
                                     log::error!("Failed to register Claude session: {}", e);
+                                    None
                                 }
                             }
+                        };
+
+                        if let Some(run_id) = run_id {
+                            // ✨ Phase 2: Emit event for real-time session tracking
+                            let event_payload = serde_json::json!({
+                                "session_id": claude_session_id,
+                                "project_path": project_path_clone,
+                                "model": model_clone,
+                                "status": "started",
+                                "pid": pid,
+                                "run_id": run_id,
+                            });
+                            if let Err(e) =
+                                app_handle.emit("claude-session-state", &event_payload)
+                            {
+                                log::warn!(
+                                    "Failed to emit claude-session-state event: {}",
+                                    e
+                                );
+                            } else {
+                                log::info!(
+                                    "Emitted claude-session-started event for session: {}",
+                                    claude_session_id
+                                );
+                            }
+
+                            log::info!(
+                                "Claude CLI will handle project creation for session: {}",
+                                claude_session_id
+                            );
                         }
                     }
                 }

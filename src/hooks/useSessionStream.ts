@@ -70,6 +70,7 @@ interface UseSessionStreamConfig {
   setMessages: React.Dispatch<React.SetStateAction<ClaudeStreamMessage[]>>;
   setRawJsonlOutput: React.Dispatch<React.SetStateAction<string[]>>;
   setClaudeSessionId: (sessionId: string) => void;
+  setCancelSessionId?: (sessionId: string | null) => void;
   setCodexRateLimits?: React.Dispatch<React.SetStateAction<CodexRateLimits | null>>;
 
   /**
@@ -142,6 +143,7 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
     setMessages,
     setRawJsonlOutput,
     setClaudeSessionId,
+    setCancelSessionId,
     setCodexRateLimits,
     processMessageWithTranslation,
     onSessionNotFound,
@@ -360,45 +362,6 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
   ]);
 
   /**
-   * 检查活跃会话
-   */
-  const checkForActiveSession = useCallback(async () => {
-    if (!session) return;
-
-    // 🔧 FIX: Do not check for active sessions if this is a new session instance.
-    // Reconnecting would set up duplicate event listeners and show stale state.
-    if (isNewSessionInstance) {
-      console.debug('[useSessionStream] Skipping checkForActiveSession - new session instance');
-      return;
-    }
-
-    const engine = getEngine();
-    if (engine === 'codex' || engine === 'gemini') return;
-
-    const currentSessionId = session.id;
-
-    try {
-      const activeSessions = await api.listRunningClaudeSessions();
-
-      if (loadingSessionIdRef.current !== currentSessionId) return;
-
-      const activeSession = activeSessions.find((s: any) => {
-        if ('process_type' in s && s.process_type && 'ClaudeSession' in s.process_type) {
-          return (s.process_type as any).ClaudeSession.session_id === session.id;
-        }
-        return false;
-      });
-
-      if (activeSession) {
-        setClaudeSessionId(session.id);
-        await reconnectToSession(session.id);
-      }
-    } catch (err) {
-      console.error('[useSessionStream] Failed to check active sessions:', err);
-    }
-  }, [session, isNewSessionInstance, getEngine, setClaudeSessionId]);
-
-  /**
    * 重新连接到会话
    */
   const reconnectToSession = useCallback(async (sessionId: string) => {
@@ -410,6 +373,7 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
     unlistenRefs.current = [];
 
     // 设置会话 ID
+    setCancelSessionId?.(sessionId);
     setClaudeSessionId(sessionId);
 
     // 标记监听状态
@@ -464,6 +428,7 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
           setIsLoading(false);
           messageQueueRef.current?.done();
           hasActiveSessionRef.current = false;
+          setCancelSessionId?.(null);
           isListeningRef.current = false;
           unlistenRefs.current.forEach(u => u && typeof u === 'function' && u());
           unlistenRefs.current = [];
@@ -482,6 +447,7 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
           messageQueueRef.current?.done();
           // 重置状态
           hasActiveSessionRef.current = false;
+          setCancelSessionId?.(null);
           isListeningRef.current = false;
           // 清理监听器
           unlistenRefs.current.forEach(u => u && typeof u === 'function' && u());
@@ -501,12 +467,14 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
     // 更新状态
     setIsLoading(true);
     hasActiveSessionRef.current = true;
+    setCancelSessionId?.(sessionId);
   }, [
     isMountedRef,
     isListeningRef,
     hasActiveSessionRef,
     unlistenRefs,
     getEngine,
+    setCancelSessionId,
     setClaudeSessionId,
     setError,
     setIsLoading,
@@ -514,6 +482,55 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
     processMessage,
     getRunElapsedSeconds,
     session?.project_path,
+  ]);
+
+  /**
+   * 检查活跃会话
+   */
+  const checkForActiveSession = useCallback(async () => {
+    if (!session) return;
+
+    // 🔧 FIX: Do not check for active sessions if this is a new session instance.
+    // Reconnecting would set up duplicate event listeners and show stale state.
+    if (isNewSessionInstance) {
+      console.debug('[useSessionStream] Skipping checkForActiveSession - new session instance');
+      return;
+    }
+
+    const engine = getEngine();
+    if (engine === 'codex' || engine === 'gemini') return;
+
+    const currentSessionId = session.id;
+
+    try {
+      const activeSessions = await api.listRunningClaudeSessions();
+
+      if (loadingSessionIdRef.current !== currentSessionId) return;
+
+      const activeSession = activeSessions.find((s: any) => {
+        if ('process_type' in s && s.process_type && 'ClaudeSession' in s.process_type) {
+          return (s.process_type as any).ClaudeSession.session_id === session.id;
+        }
+        return false;
+      });
+
+      if (activeSession) {
+        hasActiveSessionRef.current = true;
+        setCancelSessionId?.(session.id);
+        setClaudeSessionId(session.id);
+        await reconnectToSession(session.id);
+      }
+    } catch (err) {
+      console.error('[useSessionStream] Failed to check active sessions:', err);
+    }
+  }, [
+    session,
+    isNewSessionInstance,
+    getEngine,
+    setCancelSessionId,
+    setClaudeSessionId,
+    hasActiveSessionRef,
+    reconnectToSession,
   ]);
 
   // 清理（组件卸载时）

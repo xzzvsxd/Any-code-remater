@@ -4,6 +4,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use super::models::JsonlEntry;
@@ -26,7 +27,12 @@ pub(crate) struct SessionSummary {
     pub first_message_timestamp: Option<String>,
     pub last_message_timestamp: Option<String>,
     pub model: Option<String>,
+    pub has_message_entry: bool,
 }
+
+const MAX_SESSION_SUMMARY_SCAN_LINES: usize = 200;
+const MAX_PROJECT_PATH_SCAN_FILES: usize = 20;
+const MAX_PROJECT_PATH_SCAN_LINES: usize = 10;
 
 pub(crate) fn is_displayable_user_text(text: &str) -> bool {
     if text.trim().is_empty() {
@@ -105,9 +111,19 @@ pub(crate) fn extract_session_summary(path: &Path) -> SessionSummary {
     };
 
     let reader = BufReader::new(file);
-    let mut summary = SessionSummary::default();
+    let mut summary = SessionSummary {
+        last_message_timestamp: fs::metadata(path)
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
+            .map(|modified| DateTime::<Utc>::from(modified).to_rfc3339()),
+        ..SessionSummary::default()
+    };
 
-    for line in reader.lines().map_while(Result::ok) {
+    for line in reader
+        .lines()
+        .map_while(Result::ok)
+        .take(MAX_SESSION_SUMMARY_SCAN_LINES)
+    {
         if line.trim().is_empty() {
             continue;
         }
@@ -117,11 +133,13 @@ pub(crate) fn extract_session_summary(path: &Path) -> SessionSummary {
             Err(_) => continue,
         };
 
-        if value.get("model").and_then(|m| m.as_str()).is_some() {
+        if summary.model.is_none() && value.get("model").and_then(|m| m.as_str()).is_some() {
             summary.model = value.get("model").and_then(|m| m.as_str()).map(str::to_string);
-        } else if let Some(message) = value.get("message") {
-            if let Some(model) = message.get("model").and_then(|m| m.as_str()) {
-                summary.model = Some(model.to_string());
+        } else if summary.model.is_none() {
+            if let Some(message) = value.get("message") {
+                if let Some(model) = message.get("model").and_then(|m| m.as_str()) {
+                    summary.model = Some(model.to_string());
+                }
             }
         }
 
@@ -141,9 +159,16 @@ pub(crate) fn extract_session_summary(path: &Path) -> SessionSummary {
         }
 
         if value.get("message").is_some() {
-            if let Some(ts) = value.get("timestamp").and_then(|t| t.as_str()) {
-                summary.last_message_timestamp = Some(ts.to_string());
+            summary.has_message_entry = true;
+            if summary.last_message_timestamp.is_none() {
+                if let Some(ts) = value.get("timestamp").and_then(|t| t.as_str()) {
+                    summary.last_message_timestamp = Some(ts.to_string());
+                }
             }
+        }
+
+        if summary.first_message.is_some() && summary.model.is_some() {
+            break;
         }
     }
 
@@ -348,7 +373,7 @@ impl ProjectStore {
                         // 检查会话是否真的有内容：
                         // 1. 有 last_message_timestamp，说明有消息
                         // 2. 文件大小 > 100 字节（排除几乎空的会话文件）
-                        let has_content = summary.last_message_timestamp.is_some()
+                        let has_content = summary.has_message_entry
                             && path.metadata().ok().map(|m| m.len() > 100).unwrap_or(false);
 
                         if has_content {
@@ -767,56 +792,73 @@ impl ProjectStore {
 }
 
 fn get_project_path_from_sessions(project_dir: &Path) -> Result<String, String> {
-    let entries = fs::read_dir(project_dir)
-        .map_err(|e| format!("Failed to read project directory: {}", e))?;
-
-    for entry in entries {
-        if let Ok(entry) = entry {
+    let mut jsonl_paths: Vec<(PathBuf, u64)> = fs::read_dir(project_dir)
+        .map_err(|e| format!("Failed to read project directory: {}", e))?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
             let path = entry.path();
-            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("jsonl") {
-                if let Ok(file) = fs::File::open(&path) {
-                    let reader = BufReader::new(file);
-                    // Read up to 10 lines to find cwd field
-                    for line_result in reader.lines().take(10) {
-                        if let Ok(line) = line_result {
-                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
-                                if let Some(cwd) = json.get("cwd").and_then(|v| v.as_str()) {
-                                    let cleaned_cwd = cwd.replace("\\\\", "\\");
+            if !(path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("jsonl")) {
+                return None;
+            }
+            let modified = fs::metadata(&path)
+                .ok()
+                .and_then(|metadata| metadata.modified().ok())
+                .and_then(|modified| modified.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_secs())
+                .unwrap_or(0);
+            Some((path, modified))
+        })
+        .collect();
 
-                                    // On macOS, avoid canonicalize() as it resolves symlinks and can cause
-                                    // path mismatches (e.g., /tmp -> /private/tmp, /var -> /private/var)
-                                    // Also, canonicalize() fails if the path doesn't exist (project moved/deleted)
-                                    #[cfg(target_os = "macos")]
-                                    let normalized_cwd = normalize_macos_path(&cleaned_cwd);
+    jsonl_paths.sort_by(|a, b| b.1.cmp(&a.1));
 
-                                    #[cfg(target_os = "windows")]
-                                    let normalized_cwd = Path::new(&cleaned_cwd)
-                                        .canonicalize()
-                                        .map(|p| {
-                                            let path_str = p.to_string_lossy().to_string();
-                                            // Remove Windows long path prefix (\\?\)
-                                            if path_str.starts_with("\\\\?\\") {
-                                                path_str[4..].to_string()
-                                            } else {
-                                                path_str
-                                            }
-                                        })
-                                        .unwrap_or_else(|_| cleaned_cwd.clone());
+    for (path, _) in jsonl_paths.into_iter().take(MAX_PROJECT_PATH_SCAN_FILES) {
+        if let Ok(file) = fs::File::open(&path) {
+            let reader = BufReader::new(file);
+            for line in reader
+                .lines()
+                .map_while(Result::ok)
+                .take(MAX_PROJECT_PATH_SCAN_LINES)
+            {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
+                    if let Some(cwd) = json.get("cwd").and_then(|v| v.as_str()) {
+                        let cleaned_cwd = cwd.replace("\\\\", "\\");
 
-                                    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-                                    let normalized_cwd = cleaned_cwd.clone();
+                        // On macOS, avoid canonicalize() as it resolves symlinks and can cause
+                        // path mismatches (e.g., /tmp -> /private/tmp, /var -> /private/var)
+                        // Also, canonicalize() fails if the path doesn't exist (project moved/deleted)
+                        #[cfg(target_os = "macos")]
+                        let normalized_cwd = normalize_macos_path(&cleaned_cwd);
 
-                                    return Ok(normalized_cwd);
+                        #[cfg(target_os = "windows")]
+                        let normalized_cwd = Path::new(&cleaned_cwd)
+                            .canonicalize()
+                            .map(|p| {
+                                let path_str = p.to_string_lossy().to_string();
+                                // Remove Windows long path prefix (\\?\)
+                                if path_str.starts_with("\\\\?\\") {
+                                    path_str[4..].to_string()
+                                } else {
+                                    path_str
                                 }
-                            }
-                        }
+                            })
+                            .unwrap_or_else(|_| cleaned_cwd.clone());
+
+                        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+                        let normalized_cwd = cleaned_cwd.clone();
+
+                        return Ok(normalized_cwd);
                     }
                 }
             }
         }
     }
 
-    Err("Could not determine project path from session files".to_string())
+    if let Some(path) = project_dir.file_name().and_then(|name| name.to_str()) {
+        Ok(decode_project_path(path))
+    } else {
+        Err("Could not determine project path from session files".to_string())
+    }
 }
 
 /// Normalize macOS paths without using canonicalize()
@@ -889,5 +931,37 @@ mod tests {
         let summary = extract_session_summary(&session_path);
         assert!(summary.first_message.is_none());
         assert!(summary.last_message_timestamp.is_some());
+    }
+
+    #[test]
+    fn session_summary_does_not_scan_tail_for_last_activity() {
+        let tmp = tempfile::tempdir().unwrap();
+        let session_path = tmp.path().join("session.jsonl");
+        let mut lines = vec![
+            r#"{"type":"system","subtype":"init","timestamp":"2026-01-01T00:00:00Z","model":"claude-opus"}"#.to_string(),
+            r#"{"type":"user","timestamp":"2026-01-01T00:00:01Z","message":{"role":"user","content":"real first prompt"}}"#.to_string(),
+        ];
+        lines.extend((0..300).map(|idx| {
+            format!(
+                r#"{{"type":"assistant","timestamp":"2030-01-01T00:00:{:02}Z","message":{{"role":"assistant","content":"tail {}"}}}}"#,
+                idx % 60,
+                idx
+            )
+        }));
+        fs::write(&session_path, lines.join("\n")).unwrap();
+
+        let summary = extract_session_summary(&session_path);
+
+        assert_eq!(summary.first_message.as_deref(), Some("real first prompt"));
+        assert_eq!(summary.model.as_deref(), Some("claude-opus"));
+        assert!(summary.last_message_timestamp.is_some());
+        assert!(
+            !summary
+                .last_message_timestamp
+                .as_deref()
+                .unwrap()
+                .starts_with("2030-01-01T00:00"),
+            "session summaries should use file metadata for list activity instead of scanning long JSONL tails"
+        );
     }
 }

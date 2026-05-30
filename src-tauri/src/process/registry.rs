@@ -296,6 +296,30 @@ impl ProcessRegistry {
             .map(|handle| handle.info.clone()))
     }
 
+    /// Update the Claude session id for an already-registered process.
+    ///
+    /// Used when a resumed Claude process is registered immediately with the
+    /// known resume id so early cancellation can work, then Claude emits the
+    /// authoritative session id in `system:init`.
+    pub fn update_claude_session_id(
+        &self,
+        run_id: i64,
+        session_id: String,
+    ) -> Result<(), String> {
+        let mut processes = self.processes.lock().map_err(|e| e.to_string())?;
+        let handle = processes
+            .get_mut(&run_id)
+            .ok_or_else(|| format!("Process {} not found in registry", run_id))?;
+
+        match &mut handle.info.process_type {
+            ProcessType::ClaudeSession { session_id: sid } => {
+                *sid = session_id;
+                Ok(())
+            }
+            _ => Err(format!("Process {} is not a Claude session", run_id)),
+        }
+    }
+
     /// Unregister a process (called when it completes)
     #[allow(dead_code)]
     pub fn unregister_process(&self, run_id: i64) -> Result<(), String> {

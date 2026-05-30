@@ -381,7 +381,7 @@ export const ControlBar: React.FC<ControlBarProps> = ({
             disabled={disabled || !canCancelExecution || isCancellingExecution}
             title={
               !canCancelExecution
-                ? '正在建立安全取消通道，建立后即可只取消当前会话'
+                ? '正在启动进程，拿到当前会话 ID 后即可安全取消'
                 : '只取消当前会话，不影响其他对话'
             }
             className="h-8 shadow-md bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700 text-white font-medium disabled:cursor-not-allowed disabled:opacity-70"
@@ -390,7 +390,7 @@ export const ControlBar: React.FC<ControlBarProps> = ({
           </Button>
           {!canCancelExecution && (
             <span className="max-w-44 text-[10px] leading-tight text-muted-foreground text-right">
-              正在建立安全取消通道...
+              启动中，等待会话 ID...
             </span>
           )}
         </div>
