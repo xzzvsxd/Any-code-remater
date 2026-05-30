@@ -206,6 +206,27 @@ pub fn truncate_gemini_git_records(session_id: &str, prompt_index: usize) -> Res
 // Prompt Extraction from Gemini Session Files
 // ============================================================================
 
+fn gemini_prompt_text_from_message(message: &serde_json::Value) -> Option<String> {
+    // Gemini CLI stores messages with "type" field, not "role".
+    let msg_type = message.get("type").and_then(|t| t.as_str());
+    if msg_type != Some("user") {
+        return None;
+    }
+
+    // Gemini CLI stores content as a simple string.
+    let extracted_text = message
+        .get("content")
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    if extracted_text.trim().is_empty() {
+        return None;
+    }
+
+    Some(extracted_text)
+}
+
 fn extract_gemini_prompts_with_records(
     session_id: &str,
     project_path: &str,
@@ -231,24 +252,9 @@ fn extract_gemini_prompts_with_records(
     let mut prompt_index = 0;
 
     for message in messages {
-        // Only process user messages
-        // Gemini CLI stores messages with "type" field, not "role"
-        let msg_type = message.get("type").and_then(|t| t.as_str());
-        if msg_type != Some("user") {
+        let Some(extracted_text) = gemini_prompt_text_from_message(message) else {
             continue;
-        }
-
-        // Extract text content from "content" field (direct string)
-        // Gemini CLI stores content as a simple string, not as parts array
-        let extracted_text = message
-            .get("content")
-            .and_then(|c| c.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        if extracted_text.trim().is_empty() {
-            continue;
-        }
+        };
 
         // Extract timestamp
         let timestamp = message
@@ -644,24 +650,33 @@ pub fn truncate_gemini_session_to_prompt(
     // Count user prompts to find truncation point
     // Gemini uses "type" field (not "role"), with values "user" or "gemini"
     let mut user_prompt_count = 0;
-    let mut truncate_at_index = messages.len(); // Default: keep all if not found
+    let mut truncate_at_index = messages.len(); // overwritten when target is found
+    let mut found_target = false;
 
     for (idx, message) in messages.iter().enumerate() {
-        // Fix: Gemini uses "type" field, not "role"
-        let msg_type = message.get("type").and_then(|t| t.as_str());
-        if msg_type == Some("user") {
-            if user_prompt_count == prompt_index {
-                // Found the target prompt - truncate AT this index (not after)
-                truncate_at_index = idx;
-                log::debug!(
-                    "[Gemini Rewind] Found prompt #{} at message index {}",
-                    prompt_index,
-                    idx
-                );
-                break;
-            }
-            user_prompt_count += 1;
+        if gemini_prompt_text_from_message(message).is_none() {
+            continue;
         }
+
+        if user_prompt_count == prompt_index {
+            // Found the target prompt - truncate AT this index (not after)
+            truncate_at_index = idx;
+            found_target = true;
+            log::debug!(
+                "[Gemini Rewind] Found prompt #{} at message index {}",
+                prompt_index,
+                idx
+            );
+            break;
+        }
+        user_prompt_count += 1;
+    }
+
+    if !found_target {
+        return Err(format!(
+            "Prompt #{} not found in session (only {} user prompts found)",
+            prompt_index, user_prompt_count
+        ));
     }
 
     log::info!(
@@ -1152,4 +1167,38 @@ pub async fn revert_gemini_to_prompt(
 
     // Return the prompt text for restoring to input (same as Claude's behavior)
     Ok(prompt.text.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::gemini_prompt_text_from_message;
+
+    #[test]
+    fn gemini_prompt_filter_skips_empty_user_messages() {
+        assert_eq!(
+            gemini_prompt_text_from_message(&json!({
+                "type": "user",
+                "content": "  "
+            })),
+            None
+        );
+
+        assert_eq!(
+            gemini_prompt_text_from_message(&json!({
+                "type": "user",
+                "content": "selected prompt"
+            })),
+            Some("selected prompt".to_string())
+        );
+
+        assert_eq!(
+            gemini_prompt_text_from_message(&json!({
+                "type": "gemini",
+                "content": "assistant"
+            })),
+            None
+        );
+    }
 }

@@ -139,19 +139,27 @@ pub fn save_codex_git_records(session_id: &str, records: &CodexGitRecords) -> Re
     Ok(())
 }
 
-/// Truncate Git records after a specific prompt index
+fn keep_codex_git_record_before_rewind(record_prompt_index: usize, prompt_index: usize) -> bool {
+    record_prompt_index < prompt_index
+}
+
+/// Truncate Git records at and after a specific prompt index
 pub fn truncate_codex_git_records(session_id: &str, prompt_index: usize) -> Result<(), String> {
     let mut git_records = load_codex_git_records(session_id)?;
+    let before_count = git_records.records.len();
 
-    // Keep only records up to and including prompt_index
+    // Rewind means restoring to the state before prompt #N, so the selected
+    // prompt record itself must be deleted. Keeping it caused future prompt
+    // indices to drift after a conversation-only rewind.
     git_records
         .records
-        .retain(|r| r.prompt_index <= prompt_index);
+        .retain(|r| keep_codex_git_record_before_rewind(r.prompt_index, prompt_index));
 
     save_codex_git_records(session_id, &git_records)?;
     log::info!(
-        "[Codex Rewind] Truncated git records after prompt #{}",
-        prompt_index
+        "[Codex Rewind] Truncated git records before prompt #{} (removed {})",
+        prompt_index,
+        before_count.saturating_sub(git_records.records.len())
     );
 
     Ok(())
@@ -255,6 +263,19 @@ fn extract_codex_prompts_with_records(
     }
 
     Ok((prompts, git_records))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::keep_codex_git_record_before_rewind;
+
+    #[test]
+    fn truncating_git_records_removes_selected_prompt_and_later_records() {
+        assert!(keep_codex_git_record_before_rewind(0, 2));
+        assert!(keep_codex_git_record_before_rewind(1, 2));
+        assert!(!keep_codex_git_record_before_rewind(2, 2));
+        assert!(!keep_codex_git_record_before_rewind(3, 2));
+    }
 }
 
 /// Extract all user prompts from a Codex session JSONL

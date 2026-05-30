@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { isTrackedUserPrompt } from "@/lib/promptIndex";
 import type { ClaudeStreamMessage } from "@/types/claude";
 
 interface PromptNavigatorProps {
@@ -126,43 +127,7 @@ export const PromptNavigator: React.FC<PromptNavigatorProps> = ({
     const items: PromptItem[] = [];
 
     for (const message of messages) {
-      // 只处理 user 类型消息
-      if (message.type !== 'user') continue;
-
-      // 排除侧链消息（agent 消息）
-      if ((message as any).isSidechain === true) continue;
-
-      // 排除有 parent_tool_use_id 的子代理消息
-      if ((message as any).parent_tool_use_id != null) continue;
-
-      // 提取内容并检查文本/tool_result
-      const content = message.message?.content;
-      let rawText = '';
-      let hasTextContent = false;
-      let hasToolResult = false;
-
-      if (typeof content === 'string') {
-        rawText = content;
-        hasTextContent = rawText.trim().length > 0;
-      } else if (Array.isArray(content)) {
-        const textItems = content.filter((item: any) => item.type === 'text');
-        rawText = textItems.map((item: any) => item.text || '').join('');
-        hasTextContent = textItems.length > 0 && rawText.trim().length > 0;
-        hasToolResult = content.some((item: any) => item.type === 'tool_result');
-      }
-
-      // 只有 tool_result 没有文本的消息不计入
-      if (hasToolResult && !hasTextContent) continue;
-
-      // 必须有文本内容
-      if (!hasTextContent) continue;
-
-      // 排除自动发送的 Warmup 和 Skills 消息
-      const isWarmupMessage = rawText.includes('Warmup');
-      const isSkillMessage = rawText.includes('<command-name>')
-        || rawText.includes('Launching skill:')
-        || rawText.includes('skill is running');
-      if (isWarmupMessage || isSkillMessage) continue;
+      if (!isTrackedUserPrompt(message)) continue;
 
       // 通过所有过滤条件，这是一条真实用户提示词
       const displayText = extractUserText(message);

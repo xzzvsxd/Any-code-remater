@@ -194,26 +194,32 @@ fn build_prompt_commit_message(
     format!("{prefix} {truncated} prompt #{prompt_index}")
 }
 
-/// Truncate git records (remove records for prompts after the specified index)
+fn keep_git_record_before_rewind(record_index: usize, prompt_index: usize) -> bool {
+    record_index < prompt_index
+}
+
+/// Truncate git records (remove records for the selected prompt and everything after it)
 fn truncate_git_records(
     session_id: &str,
     project_id: &str,
-    prompts: &[PromptRecord],
+    _prompts: &[PromptRecord],
     prompt_index: usize,
 ) -> Result<()> {
     let mut records = load_git_records(session_id, project_id)?;
+    let before_count = records.len();
 
-    // Remove git records for all prompts after prompt_index
-    // Now using index-based keys, so simply remove all indices > prompt_index
-    for i in (prompt_index + 1)..prompts.len() {
-        records.remove(&i);
-        log::debug!("[Truncate] Removed git record for prompt #{}", i);
-    }
+    // Rewind semantics are "restore to the state before prompt #N":
+    // delete prompt #N itself and every later prompt, so Git records must
+    // follow the same < prompt_index rule as the conversation file.
+    records.retain(|record_index, _| {
+        keep_git_record_before_rewind(*record_index, prompt_index)
+    });
 
     save_git_records(session_id, project_id, &records)?;
     log::info!(
-        "[Truncate] Truncated git records after prompt #{}",
-        prompt_index
+        "[Truncate] Truncated git records before prompt #{} (removed {})",
+        prompt_index,
+        before_count.saturating_sub(records.len())
     );
     Ok(())
 }
@@ -786,7 +792,7 @@ pub async fn revert_to_prompt(
             truncate_session_to_prompt(&session_id, &project_id, prompt_index)
                 .map_err(|e| format!("Failed to truncate session: {}", e))?;
 
-            // Truncate git records (remove records for prompts after this index)
+            // Truncate git records (remove records for this prompt and later)
             // Skip if Git operations are disabled
             if !git_operations_disabled {
                 truncate_git_records(&session_id, &project_id, &prompts, prompt_index)
@@ -1469,7 +1475,7 @@ pub async fn get_unified_prompt_list(
 
 #[cfg(test)]
 mod tests {
-    use super::has_valid_rewind_commit;
+    use super::{has_valid_rewind_commit, keep_git_record_before_rewind};
 
     #[test]
     fn rewind_commit_must_have_after_commit_that_differs_from_before() {
@@ -1481,5 +1487,13 @@ mod tests {
         assert!(!has_valid_rewind_commit("abc123", None));
         assert!(!has_valid_rewind_commit("abc123", Some(&same_commit)));
         assert!(has_valid_rewind_commit("abc123", Some(&different_commit)));
+    }
+
+    #[test]
+    fn truncating_git_records_removes_selected_prompt_and_later_records() {
+        assert!(keep_git_record_before_rewind(0, 2));
+        assert!(keep_git_record_before_rewind(1, 2));
+        assert!(!keep_git_record_before_rewind(2, 2));
+        assert!(!keep_git_record_before_rewind(3, 2));
     }
 }

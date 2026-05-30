@@ -37,6 +37,7 @@ import { AskUserQuestionDialog } from '@/components/dialogs/AskUserQuestionDialo
 import { codexConverter } from '@/lib/codexConverter';
 import { convertGeminiSessionDetailToClaudeMessages } from '@/lib/geminiConverter';
 import { formatClaudeModelLabel, resolveClaudeContinuationModel } from '@/lib/claudeModelSelection';
+import { getPromptIndexForDisplayableMessage } from '@/lib/promptIndex';
 import { SessionHeader } from "./session/SessionHeader";
 import { SessionMessages, type SessionMessagesRef } from "./session/SessionMessages";
 
@@ -958,69 +959,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   // 🆕 辅助函数：计算用户消息对应的 promptIndex
   // 只计算真实用户输入，排除系统消息和工具结果
   const getPromptIndexForMessage = useCallback((displayableIndex: number): number => {
-    // 找到 displayableMessages[displayableIndex] 在 messages 中的实际位置
-    const displayableMessage = displayableMessages[displayableIndex];
-    const actualIndex = messages.findIndex(m => m === displayableMessage);
-    
-    if (actualIndex === -1) return -1;
-    
-    // 计算这是第几条真实用户消息（排除 Warmup/System 和纯工具结果消息）
-    // 这个逻辑必须和后端 prompt_tracker.rs 完全一致！
-    return messages.slice(0, actualIndex + 1)
-      .filter(m => {
-        // 只处理 user 类型消息
-        if (m.type !== 'user') return false;
-        
-        // 检查是否是侧链消息（agent 消息）- 与后端一致
-        const isSidechain = (m as any).isSidechain === true;
-        if (isSidechain) {
-          return false;
-        }
-        
-        // 检查是否有 parent_tool_use_id（子代理的消息）- 与后端一致
-        const hasParentToolUseId = (m as any).parent_tool_use_id !== null && (m as any).parent_tool_use_id !== undefined;
-        if (hasParentToolUseId) {
-          return false;
-        }
-        
-        // 提取消息文本（处理字符串和数组两种格式）
-        const content = m.message?.content;
-        let text = '';
-        let hasTextContent = false;
-        let hasToolResult = false;
-        
-        if (typeof content === 'string') {
-          text = content;
-          hasTextContent = text.trim().length > 0;
-        } else if (Array.isArray(content)) {
-          // 提取所有 text 类型的内容
-          const textItems = content.filter((item: any) => item.type === 'text');
-          text = textItems.map((item: any) => item.text || '').join('');
-          hasTextContent = textItems.length > 0 && text.trim().length > 0;
-          
-          // 检查是否有 tool_result
-          hasToolResult = content.some((item: any) => item.type === 'tool_result');
-        }
-        
-        // 如果只有 tool_result 没有 text，不计入（这些是工具执行的结果）
-        if (hasToolResult && !hasTextContent) {
-          return false;
-        }
-        
-        // 必须有文本内容
-        if (!hasTextContent) {
-          return false;
-        }
-        
-        // 排除自动发送的 Warmup 和 Skills 消息
-        // 这个逻辑要和后端 prompt_tracker.rs 保持一致
-        const isWarmupMessage = text.includes('Warmup');
-        const isSkillMessage = text.includes('<command-name>') 
-          || text.includes('Launching skill:')
-          || text.includes('skill is running');
-        return !isWarmupMessage && !isSkillMessage;
-      })
-      .length - 1;
+    return getPromptIndexForDisplayableMessage(messages, displayableMessages, displayableIndex);
   }, [messages, displayableMessages]);
 
 
