@@ -1025,11 +1025,11 @@ pub async fn enhance_prompt_with_context(
         enable_multi_round.unwrap_or(true)
     );
 
-    // ⚡ 添加长度限制配置
-    const MAX_PROMPT_LENGTH: usize = 80_000; // 最大提示词长度
-    const MAX_TOTAL_OUTPUT_LENGTH: usize = 150_000; // 最大输出长度
+    // ⚡ 添加长度限制配置：默认保留完整上下文，只保留极高的安全上限防止异常输出拖垮界面。
+    const MAX_PROMPT_LENGTH: usize = 200_000; // 最大提示词长度
+    const MAX_TOTAL_OUTPUT_LENGTH: usize = 1_000_000; // 最大输出长度
 
-    let max_length = max_context_length.unwrap_or(3000);
+    let max_length = max_context_length.unwrap_or(120_000);
 
     // ⚡ 检查提示词长度
     if prompt.len() > MAX_PROMPT_LENGTH {

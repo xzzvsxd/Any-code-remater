@@ -17,7 +17,7 @@ import { ClaudeStreamMessage } from '@/types/claude';
 import { extractTextFromContent } from './sessionHelpers';
 import { LLMApiService, type LLMProvider } from '@/lib/services/llmApiService';
 import { callEnhancementAPI } from './promptEnhancementService';
-import { loadContextConfig } from './promptContextConfig';
+import { loadContextConfig, maybeTruncateContextText } from './promptContextConfig';
 
 
 // 重新导出类型以保持向后兼容
@@ -112,13 +112,13 @@ const ACEMCP_REFINEMENT_SYSTEM_PROMPT = `你是代码上下文整理专家。
 注意：
 1. 保持代码的完整性，不要截断函数
 2. 添加简短说明解释代码片段之间的关系（如果有）
-3. 总长度控制在 3000 字符以内`;
+3. 不要截断关键代码、结论、出处或方案前提；如果内容很长，优先保留完整片段而不是硬截断`;
 
 // acemcp 结果整理的触发阈值
 const ACEMCP_REFINEMENT_THRESHOLDS = {
   minSnippetCount: 5,      // 片段数超过此值触发整理
   minContentLength: 3000,  // 内容长度超过此值触发整理
-  maxRefinedLength: 3000,  // 整理后的最大长度
+  maxRefinedLength: 120000,  // 整理后的安全上限，正常不截断
 };
 
 /**
@@ -286,7 +286,7 @@ ${messageList}
     const maxLen = msg.type === 'user'
       ? config.maxUserMessageLength
       : config.maxAssistantMessageLength;
-    const truncated = smartTruncate(text, maxLen);
+    const truncated = maybeTruncateContextText(text, maxLen, config);
     return `${msg.type === 'user' ? '用户' : '助手'}: ${truncated}`;
   });
 }
@@ -358,29 +358,6 @@ function parseIndicesFromResponse(
   }
 }
 
-/**
- * 智能截断（保留完整句子）
- */
-function smartTruncate(text: string, maxLength: number): string {
-  if (text.length <= maxLength) {
-    return text;
-  }
-
-  // 尝试在句子边界截断
-  const sentenceEnd = text.substring(0, maxLength).lastIndexOf('。');
-  if (sentenceEnd > maxLength * 0.7) {
-    return text.substring(0, sentenceEnd + 1);
-  }
-
-  const periodEnd = text.substring(0, maxLength).lastIndexOf('.');
-  if (periodEnd > maxLength * 0.7) {
-    return text.substring(0, periodEnd + 1);
-  }
-
-  // 降级到简单截断
-  return text.substring(0, maxLength) + '...';
-}
-
 // ============================================================================
 // 🆕 acemcp 结果整理相关函数
 // ============================================================================
@@ -441,10 +418,9 @@ ${acemcpResult}
     throw new Error('API returned empty refinement result');
   }
 
-  // 如果整理后反而更长，使用智能截断
+  // 如果整理后反而更长，只记录警告，不再自动截断关键上下文。
   if (response.length > ACEMCP_REFINEMENT_THRESHOLDS.maxRefinedLength) {
-    console.warn(`[Acemcp Refinement] Result too long (${response.length}), truncating...`);
-    return smartTruncate(response, ACEMCP_REFINEMENT_THRESHOLDS.maxRefinedLength);
+    console.warn(`[Acemcp Refinement] Result too long (${response.length}); keeping full response to avoid losing context.`);
   }
 
   return response;

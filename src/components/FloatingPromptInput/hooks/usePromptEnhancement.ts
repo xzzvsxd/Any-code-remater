@@ -11,6 +11,8 @@ const ACEMCP_REFINEMENT_THRESHOLDS = {
   minContentLength: 3000,
 };
 
+const FULL_PROJECT_CONTEXT_LENGTH = 120000;
+
 export interface UsePromptEnhancementOptions {
   prompt: string;
   isExpanded: boolean;
@@ -104,7 +106,7 @@ export function usePromptEnhancement({
         projectPath,
         sessionId,        // 🆕 传递会话 ID
         projectId,        // 🆕 传递项目 ID
-        3000,
+        FULL_PROJECT_CONTEXT_LENGTH,
         enableMultiRound  // 🆕 启用多轮搜索
       );
 

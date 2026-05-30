@@ -13,7 +13,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import type { ClaudeStreamMessage } from '@/types/claude';
 import { copyTextToClipboard } from '@/lib/clipboard';
-import { loadContextConfig, type PromptContextConfig } from './promptContextConfig';
+import { loadContextConfig, maybeTruncateContextText, type PromptContextConfig } from './promptContextConfig';
 
 
 // ============================================================================
@@ -260,10 +260,7 @@ export function getConversationContext(
       const userText = extractTextFromContent(msg.message.content);
 
       if (userText) {
-        // Truncate based on config
-        const truncated = userText.length > config.maxUserMessageLength
-          ? userText.substring(0, config.maxUserMessageLength) + "..."
-          : userText;
+        const truncated = maybeTruncateContextText(userText, config.maxUserMessageLength, config);
         contextLine = `用户: ${truncated}`;
       }
     } else if (msg.type === "assistant" && msg.message) {
@@ -271,18 +268,13 @@ export function getConversationContext(
       const assistantText = extractTextFromContent(msg.message.content);
 
       if (assistantText) {
-        // Truncate based on config
-        const truncated = assistantText.length > config.maxAssistantMessageLength
-          ? assistantText.substring(0, config.maxAssistantMessageLength) + "..."
-          : assistantText;
+        const truncated = maybeTruncateContextText(assistantText, config.maxAssistantMessageLength, config);
         contextLine = `助手: ${truncated}`;
       }
     } else if (msg.type === "result" && msg.result && config.includeExecutionResults) {
       // Include execution results if enabled in config
       const resultText = msg.result;
-      const truncated = resultText.length > config.maxExecutionResultLength
-        ? resultText.substring(0, config.maxExecutionResultLength) + "..."
-        : resultText;
+      const truncated = maybeTruncateContextText(resultText, config.maxExecutionResultLength, config);
       contextLine = `执行结果: ${truncated}`;
     }
 

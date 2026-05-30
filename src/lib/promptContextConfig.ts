@@ -37,10 +37,18 @@ export interface PromptContextConfig {
    * @default 500
    */
   maxExecutionResultLength: number;
+
+  /**
+   * 是否允许按字符数截断历史消息。
+   *
+   * 默认关闭：历史结论、长分析、出处等内容必须完整保留。
+   * 旧的 max*Length 字段仅在用户显式开启该开关时生效。
+   */
+  truncateLongMessages: boolean;
 }
 
 const STORAGE_KEY = 'prompt_context_config';
-const CONFIG_VERSION = 2;  // 🆕 配置版本号，修改此值会触发配置重置
+const CONFIG_VERSION = 3;  // 🆕 配置版本号，修改此值会触发配置重置
 
 /**
  * 默认配置
@@ -56,6 +64,7 @@ export const DEFAULT_CONTEXT_CONFIG: PromptContextConfig = {
   maxUserMessageLength: 1000,
   includeExecutionResults: true,
   maxExecutionResultLength: 500,
+  truncateLongMessages: false,
 };
 
 /**
@@ -76,6 +85,7 @@ export const CONTEXT_PRESETS = {
       maxUserMessageLength: 500,
       includeExecutionResults: false,
       maxExecutionResultLength: 0,
+      truncateLongMessages: false,
     } as PromptContextConfig,
   },
   balanced: {
@@ -92,6 +102,7 @@ export const CONTEXT_PRESETS = {
       maxUserMessageLength: 2000,
       includeExecutionResults: true,
       maxExecutionResultLength: 1000,
+      truncateLongMessages: false,
     } as PromptContextConfig,
   },
 };
@@ -102,6 +113,10 @@ export const CONTEXT_PRESETS = {
  * 🆕 版本检查：如果保存的配置版本与当前版本不匹配，自动重置为默认值
  */
 export function loadContextConfig(): PromptContextConfig {
+  if (typeof localStorage === 'undefined') {
+    return DEFAULT_CONTEXT_CONFIG;
+  }
+
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (!stored) {
@@ -170,5 +185,17 @@ export function applyPreset(presetKey: keyof typeof CONTEXT_PRESETS): void {
   if (preset) {
     saveContextConfig(preset.config);
   }
+}
+
+export function maybeTruncateContextText(
+  text: string,
+  maxLength: number,
+  config: Pick<PromptContextConfig, "truncateLongMessages">
+): string {
+  if (!config.truncateLongMessages || maxLength <= 0 || text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.substring(0, maxLength)}...`;
 }
 
