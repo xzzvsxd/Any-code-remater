@@ -36,6 +36,7 @@ import { UserQuestionProvider, useUserQuestion } from '@/contexts/UserQuestionCo
 import { AskUserQuestionDialog } from '@/components/dialogs/AskUserQuestionDialog';
 import { codexConverter } from '@/lib/codexConverter';
 import { convertGeminiSessionDetailToClaudeMessages } from '@/lib/geminiConverter';
+import { formatClaudeModelLabel, resolveClaudeContinuationModel } from '@/lib/claudeModelSelection';
 import { SessionHeader } from "./session/SessionHeader";
 import { SessionMessages, type SessionMessagesRef } from "./session/SessionMessages";
 
@@ -232,6 +233,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
 
   // Queued prompts state
   const [queuedPrompts, setQueuedPrompts] = useState<Array<{ id: string; prompt: string; model: ModelType }>>([]);
+  const lastSubmittedClaudeModelRef = useRef<ModelType | null>(null);
 
   // State for revert prompt picker (defined early for useKeyboardShortcuts)
   const [showRevertPicker, setShowRevertPicker] = useState(false);
@@ -589,19 +591,31 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   const handleSendPromptWithScroll = useCallback((prompt: string, model: ModelType, maxThinkingTokens?: number) => {
     setUserScrolled(false);
     setShouldAutoScroll(true);
+    if (executionEngineConfig.engine === 'claude') {
+      lastSubmittedClaudeModelRef.current = model;
+    }
 
     setTimeout(() => {
       handleJumpToLatest();
     }, 50);
 
     handleSendPrompt(prompt, model, maxThinkingTokens);
-  }, [handleJumpToLatest, handleSendPrompt, setUserScrolled, setShouldAutoScroll]);
+  }, [executionEngineConfig.engine, handleJumpToLatest, handleSendPrompt, setUserScrolled, setShouldAutoScroll]);
+
+  const resolveAutoContinuationModel = useCallback((): ModelType => {
+    return resolveClaudeContinuationModel({
+      requestedModel: 'sonnet',
+      sessionModel: effectiveSession?.model || session?.model,
+      messages,
+      lastSubmittedModel: lastSubmittedClaudeModelRef.current,
+    });
+  }, [effectiveSession?.model, messages, session?.model]);
 
   // 🆕 方案 B-1: 设置发送提示词回调，用于计划批准后自动执行
   useEffect(() => {
-    // 创建一个简化的发送函数，只需要 prompt 参数
+    // 创建一个简化的发送函数，只需要 prompt 参数；自动续聊必须继承原会话模型。
     const simpleSendPrompt = (prompt: string) => {
-      handleSendPromptWithScroll(prompt, 'sonnet'); // 使用默认模型
+      handleSendPromptWithScroll(prompt, resolveAutoContinuationModel());
     };
     setSendPromptCallback(simpleSendPrompt);
 
@@ -609,12 +623,12 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     return () => {
       setSendPromptCallback(null);
     };
-  }, [handleSendPromptWithScroll, setSendPromptCallback]);
+  }, [handleSendPromptWithScroll, resolveAutoContinuationModel, setSendPromptCallback]);
 
   // 🆕 设置 UserQuestion 的发送消息回调，用于答案提交后自动发送
   useEffect(() => {
     const simpleSendMessage = (message: string) => {
-      handleSendPromptWithScroll(message, 'sonnet'); // 使用默认模型
+      handleSendPromptWithScroll(message, resolveAutoContinuationModel());
     };
     setSendMessageCallback(simpleSendMessage);
 
@@ -622,7 +636,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     return () => {
       setSendMessageCallback(null);
     };
-  }, [handleSendPromptWithScroll, setSendMessageCallback]);
+  }, [handleSendPromptWithScroll, resolveAutoContinuationModel, setSendMessageCallback]);
 
   // Load recent projects when component mounts (only for new sessions)
   useEffect(() => {
@@ -1360,7 +1374,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-xs font-medium text-muted-foreground">#{index + 1}</span>
                         <span className="text-xs px-1.5 py-0.5 bg-primary/10 text-primary rounded">
-                          {queuedPrompt.model === "opus1m" ? "Opus 1M" : queuedPrompt.model === "opus" ? "Opus" : queuedPrompt.model === "sonnet1m" ? "Sonnet 1M" : "Sonnet"}
+                          {formatClaudeModelLabel(queuedPrompt.model)}
                         </span>
                       </div>
                       <p className="text-sm line-clamp-2 break-words">{queuedPrompt.prompt}</p>

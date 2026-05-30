@@ -44,12 +44,19 @@ export const GEMINI_MODEL_NAMES_UPDATED_EVENT = 'gemini-model-names-updated';
 export function parseModelDisplayName(modelId: string): string | null {
   if (!modelId || typeof modelId !== 'string') return null;
 
-  // Pattern: claude-{family}-{major}[-{minor}[...]] with an optional 8-digit date suffix
-  const match = modelId.match(/^claude-(\w+)-([\d]+(?:-[\d]+)*)(?:-\d{8})?(?:\[1m\])?$/);
+  // Pattern: claude-{family}-{major}[-{minor}[...]] with an optional 8-digit date suffix.
+  // Keep the date suffix out of the display version (4-7-20260201 -> 4.7).
+  const match = modelId.match(/^claude-(\w+)-(.+?)(?:\[1m\])?$/);
   if (!match) return null;
 
   const family = match[1]; // "sonnet", "opus", "haiku"
-  const versionParts = match[2].split('-'); // ["4", "5"] or ["4"]
+  const versionParts = match[2].split('-'); // ["4", "5", "20250514"] or ["4"]
+  if (versionParts.length > 1 && /^\d{8}$/.test(versionParts[versionParts.length - 1])) {
+    versionParts.pop();
+  }
+  if (versionParts.length === 0 || !versionParts.every(part => /^\d+$/.test(part))) {
+    return null;
+  }
   const version = versionParts.join('.');
 
   const familyName = family.charAt(0).toUpperCase() + family.slice(1);

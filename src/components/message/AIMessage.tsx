@@ -10,6 +10,7 @@ import { MessageActions } from "./MessageActions";
 import { cn } from "@/lib/utils";
 import { tokenExtractor } from "@/lib/tokenExtractor";
 import { formatTimestamp } from "@/lib/messageUtils";
+import { getRenderableAiContent } from "@/lib/aiMessageContent";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ClaudeStreamMessage } from '@/types/claude';
 
@@ -23,74 +24,6 @@ interface AIMessageProps {
   /** 链接检测回调 */
   onLinkDetected?: (url: string) => void;
 }
-
-/**
- * 提取AI消息的文本内容
- */
-const extractAIText = (message: ClaudeStreamMessage): string => {
-  if (!message.message?.content) return '';
-  
-  const content = message.message.content;
-  
-  // 如果是字符串，直接返回
-  if (typeof content === 'string') return content;
-  
-  // 如果是数组，提取所有text类型的内容
-  if (Array.isArray(content)) {
-    return content
-      .filter((item: any) => item.type === 'text')
-      .map((item: any) => item.text)
-      .join('\n\n');
-  }
-  
-  return '';
-};
-
-/**
- * 检测消息中是否有工具调用
- *
- * 注意：只检查 tool_use，不检查 tool_result
- * tool_result 是工具执行的结果，通常通过 ToolCallsGroup 根据 tool_use 匹配显示
- * Codex 的 function_call_output 事件会生成仅包含 tool_result 的消息，
- * 这些消息不应该触发工具卡片渲染（避免空白消息卡片）
- */
-const hasToolCalls = (message: ClaudeStreamMessage): boolean => {
-  if (!message.message?.content) return false;
-
-  const content = message.message.content;
-  if (!Array.isArray(content)) return false;
-
-  return content.some((item: any) => item.type === 'tool_use');
-};
-
-/**
- * 检测消息中是否有思考块
- */
-const hasThinkingBlock = (message: ClaudeStreamMessage): boolean => {
-  if (!message.message?.content) return false;
-
-  const content = message.message.content;
-  if (!Array.isArray(content)) return false;
-
-  return content.some((item: any) => item.type === 'thinking');
-};
-
-/**
- * 提取思考块内容
- * 
- * ✅ FIX: 使用特殊的分隔符连接多个思考块，以便 ThinkingBlock 组件能够识别并渲染分割线
- */
-const extractThinkingContent = (message: ClaudeStreamMessage): string => {
-  if (!message.message?.content) return '';
-
-  const content = message.message.content;
-  if (!Array.isArray(content)) return '';
-
-  const thinkingBlocks = content.filter((item: any) => item.type === 'thinking');
-  // 使用特殊的不可见分隔符+换行符，以便 ThinkingBlock 可以识别分割点
-  // 使用 ---divider--- 作为明确的分割标记
-  return thinkingBlocks.map((item: any) => item.thinking || '').join('\n\n---divider---\n\n');
-};
 
 /**
  * AI消息组件（重构版）
@@ -107,10 +40,12 @@ export const AIMessage: React.FC<AIMessageProps> = ({
   className,
   onLinkDetected
 }) => {
-  const text = extractAIText(message);
-  const hasTools = hasToolCalls(message);
-  const hasThinking = hasThinkingBlock(message);
-  const thinkingContent = hasThinking ? extractThinkingContent(message) : '';
+  const {
+    text,
+    hasToolCalls: hasTools,
+    hasThinking,
+    thinkingContent,
+  } = getRenderableAiContent(message);
 
   // Detect engine type for avatar styling
   const isCodexMessage = (message as any).engine === 'codex';
