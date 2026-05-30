@@ -19,3 +19,12 @@ expectEqual(jsonQuestion[0]?.options?.[0]?.label, 'Windows', 'string option labe
 const objectQuestion = normalizeQuestions({ question: '是否继续？', options: [{ label: '继续' }] });
 expectEqual(objectQuestion.length, 1, 'single object question normalized');
 expectEqual(objectQuestion[0]?.options?.[0]?.label, '继续', 'object option label preserved');
+
+const missingQuestionFields = normalizeQuestions([
+  { header: '环境', options: ['Windows', 'Linux'] },
+  { options: [{ label: '继续' }] },
+]);
+expectEqual(missingQuestionFields.length, 2, 'array items without question are preserved');
+expectEqual(missingQuestionFields[0]?.question, '环境', 'header falls back to question text');
+expectEqual(missingQuestionFields[1]?.question, '问题 2', 'missing question falls back to numbered label');
+expectEqual(missingQuestionFields[1]?.options?.[0]?.label, '继续', 'options survive missing question fallback');
