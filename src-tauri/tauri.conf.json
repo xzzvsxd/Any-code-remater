@@ -40,10 +40,10 @@
     "updater": {
       "active": true,
       "endpoints": [
-        "https://github.com/zm892729231/Any-code/releases/latest/download/latest.json"
+        "https://github.com/xzzvsxd/Any-code-remater/releases/latest/download/latest.json"
       ],
       "dialog": false,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQzNjM4REU0QTA0MTYyRDUKUldUVllrR2c1STFqMDRVZ2pkU3BNV1IzUTdXRWVrQ2dDSG9qcHFSUVRXcUFYOW51V1lGTmNaTHMK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDcyNTU0RTQ4Mjk0QzZERTUKUldUbGJVd3BTRTVWY3JpNk5yelRxRE1SWmxWUEs1djc4WHM3WnA2eVByc2JHT1Vtak9idGNZKzkK"
     },
     "shell": {
       "open": true
