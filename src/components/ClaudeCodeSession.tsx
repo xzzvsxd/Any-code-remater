@@ -39,6 +39,7 @@ import { convertGeminiSessionDetailToClaudeMessages } from '@/lib/geminiConverte
 import { formatClaudeModelLabel, resolveClaudeContinuationModel } from '@/lib/claudeModelSelection';
 import { buildPromptIndexByMessage, getPromptIndexForDisplayableMessage } from '@/lib/promptIndex';
 import { loadUiOnlySessionMessages, mergeUiOnlySessionMessages } from '@/lib/uiOnlySessionEvents';
+import { prepareRecentProjects } from '@/lib/recentProjects';
 import { SessionHeader } from "./session/SessionHeader";
 import { SessionMessages, type SessionMessagesRef } from "./session/SessionMessages";
 
@@ -646,11 +647,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       const loadRecentProjects = async () => {
         try {
           const projects = await api.listProjects();
-          // Sort by created_at (latest first) and take top 5
-          const sortedProjects = projects
-            .sort((a, b) => b.created_at - a.created_at)
-            .slice(0, 5);
-          setRecentProjects(sortedProjects);
+          setRecentProjects(prepareRecentProjects(projects));
         } catch (error) {
           console.error("Failed to load recent projects:", error);
         }

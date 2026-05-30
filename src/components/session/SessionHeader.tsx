@@ -15,6 +15,10 @@ interface SessionHeaderProps {
   isLoading: boolean;
 }
 
+const getProjectDisplayName = (path: string) => {
+  return path.split(/[\\/]/).filter(Boolean).pop() || path;
+};
+
 export const SessionHeader: React.FC<SessionHeaderProps> = ({
   projectPath,
   setProjectPath,
@@ -74,14 +78,14 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
           <div className="space-y-2">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Clock className="h-4 w-4" />
-              <span>{t('sessionHeader.recentProjects')}</span>
+              <span>{t('sessionHeader.recentProjects')} ({recentProjects.length})</span>
             </div>
-            <div className="grid gap-2">
+            <div className="grid max-h-[min(52vh,30rem)] gap-2 overflow-y-auto overscroll-contain rounded-md pr-1">
               {recentProjects.map((project) => (
                 <Button
                   key={project.id}
                   variant="outline"
-                  className="justify-start h-auto py-3 px-4"
+                  className="h-auto w-full justify-start py-3 px-4"
                   onClick={() => {
                     setProjectPath(project.path);
                   }}
@@ -90,7 +94,7 @@ export const SessionHeader: React.FC<SessionHeaderProps> = ({
                     <div className="flex items-center gap-2 w-full">
                       <FolderOpen className="h-4 w-4 flex-shrink-0 text-primary" />
                       <span className="font-medium text-sm truncate">
-                        {project.path.split('/').pop() || project.path.split('\\').pop()}
+                        {getProjectDisplayName(project.path)}
                       </span>
                     </div>
                     <span className="text-xs text-muted-foreground truncate w-full">
