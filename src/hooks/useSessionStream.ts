@@ -30,6 +30,10 @@ import {
   cacheGeminiModelFromStream,
 } from '@/lib/modelNameParser';
 import { notifyAiExecutionComplete } from '@/lib/aiCompletionNotification';
+import {
+  loadUiOnlySessionMessages,
+  mergeUiOnlySessionMessages,
+} from '@/lib/uiOnlySessionEvents';
 
 /**
  * Hook 配置
@@ -322,8 +326,15 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
         return;
       }
 
-      // 更新状态
-      setMessages(processedMessages);
+      const uiOnlyMessages = loadUiOnlySessionMessages({
+        sessionId: session.id,
+        projectPath: session.project_path,
+        engine,
+      });
+
+      // 更新状态。上游错误/完成提醒是前端 UI-only 事件：历史里可见，但不写入原生 JSONL，
+      // 避免 Claude/Codex/Gemini resume 时把错误详情带回下一次模型上下文。
+      setMessages(mergeUiOnlySessionMessages(processedMessages, uiOnlyMessages));
       setRawJsonlOutput(history.map(h => JSON.stringify(h)));
       setIsHistoryLoading(false);
 

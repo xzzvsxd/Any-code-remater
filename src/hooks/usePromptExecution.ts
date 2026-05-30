@@ -25,6 +25,7 @@ import type { CodexExecutionMode, CodexRateLimits } from '@/types/codex';
 import { cacheCodexModelFromStream, cacheModelFromInitMessage } from '@/lib/modelNameParser';
 import { notifyAiExecutionComplete } from '@/lib/aiCompletionNotification';
 import { resolveInitialCancelSessionId } from '@/lib/cancelChannel';
+import { persistUiOnlySessionMessage } from '@/lib/uiOnlySessionEvents';
 
 // ============================================================================
 // Type Definitions
@@ -93,6 +94,26 @@ interface UsePromptExecutionReturn {
 
 type ClaudeGlobalEventPayload<T> = { tab_id?: string | null; payload: T } | T;
 type EngineGlobalEventPayload<T> = { tab_id?: string | null; payload: T } | T;
+
+const stringifyPromptExecutionError = (error: unknown): string => {
+  if (typeof error === 'string') return error;
+  if (error instanceof Error) {
+    return error.stack || error.message;
+  }
+
+  try {
+    return JSON.stringify(error, null, 2);
+  } catch {
+    return String(error);
+  }
+};
+
+const createUiEventId = () => {
+  const randomId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `ui-event-${randomId}`;
+};
 
 const normalizeClaudeGlobalPayload = <T,>(payload: ClaudeGlobalEventPayload<T>) => {
   if (payload && typeof payload === 'object' && 'payload' in payload) {
@@ -288,6 +309,69 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
       return;
     }
 
+    let hasAppendedTerminalMessage = false;
+    const engineNames: Record<'claude' | 'codex' | 'gemini', string> = {
+      claude: 'Claude',
+      codex: 'Codex',
+      gemini: 'Gemini',
+    };
+    const formatElapsed = (seconds?: number | null) => {
+      if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 1) {
+        return '';
+      }
+      const wholeSeconds = Math.floor(seconds);
+      if (wholeSeconds < 60) {
+        return `${wholeSeconds} 秒`;
+      }
+      const minutes = Math.floor(wholeSeconds / 60);
+      const remainingSeconds = wholeSeconds % 60;
+      return remainingSeconds > 0 ? `${minutes} 分 ${remainingSeconds} 秒` : `${minutes} 分钟`;
+    };
+    const appendExecutionSystemMessage = (
+      subtype: 'execution-complete' | 'execution-error',
+      engine: 'claude' | 'codex' | 'gemini',
+      text: string,
+      details?: string,
+      sessionIdOverride?: string | null
+    ) => {
+      if (hasAppendedTerminalMessage) {
+        return;
+      }
+      hasAppendedTerminalMessage = true;
+      const elapsedSeconds = getRunElapsedSeconds?.() ?? null;
+      const suffix = subtype === 'execution-complete' && elapsedSeconds
+        ? `，用时 ${formatElapsed(elapsedSeconds)}`
+        : '';
+      const now = new Date().toISOString();
+      const message: ClaudeStreamMessage = {
+        type: 'system',
+        subtype,
+        result: `${text}${suffix}${details ? `\n\n${details}` : ''}`,
+        engine,
+        elapsedSeconds,
+        projectPath,
+        timestamp: now,
+        receivedAt: now,
+        uiOnly: true,
+        uiEventId: createUiEventId(),
+        excludeFromAiContext: true,
+      };
+
+      persistUiOnlySessionMessage({
+        sessionId: sessionIdOverride
+          || activeSessionIdRef?.current
+          || effectiveSession?.id
+          || extractedSessionInfo?.sessionId
+          || claudeSessionId
+          || null,
+        projectPath,
+        engine,
+        message,
+      });
+
+      setMessages(prev => [...prev, message]);
+    };
+
     try {
       setIsLoading(true);
       setError(null);
@@ -320,51 +404,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
       let codexPendingPromptRecord: PendingPromptRecord | null = null;
       let geminiPendingPromptRecord: PendingPromptRecord | null = null;
       let hasNotifiedCompletion = false;
-      let hasAppendedTerminalMessage = false;
       const isCurrentRunEventTab = (eventTabId: string | null) => eventTabId === tabIdRef.current;
-      const engineNames: Record<'claude' | 'codex' | 'gemini', string> = {
-        claude: 'Claude',
-        codex: 'Codex',
-        gemini: 'Gemini',
-      };
-      const formatElapsed = (seconds?: number | null) => {
-        if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 1) {
-          return '';
-        }
-        const wholeSeconds = Math.floor(seconds);
-        if (wholeSeconds < 60) {
-          return `${wholeSeconds} 秒`;
-        }
-        const minutes = Math.floor(wholeSeconds / 60);
-        const remainingSeconds = wholeSeconds % 60;
-        return remainingSeconds > 0 ? `${minutes} 分 ${remainingSeconds} 秒` : `${minutes} 分钟`;
-      };
-      const appendExecutionSystemMessage = (
-        subtype: 'execution-complete' | 'execution-error',
-        engine: 'claude' | 'codex' | 'gemini',
-        text: string,
-        details?: string
-      ) => {
-        if (hasAppendedTerminalMessage) {
-          return;
-        }
-        hasAppendedTerminalMessage = true;
-        const elapsedSeconds = getRunElapsedSeconds?.() ?? null;
-        const suffix = subtype === 'execution-complete' && elapsedSeconds
-          ? `，用时 ${formatElapsed(elapsedSeconds)}`
-          : '';
-
-        setMessages(prev => [...prev, {
-          type: 'system',
-          subtype,
-          result: `${text}${suffix}${details ? `\n\n${details}` : ''}`,
-          engine,
-          elapsedSeconds,
-          projectPath,
-          timestamp: new Date().toISOString(),
-          receivedAt: new Date().toISOString(),
-        } as ClaudeStreamMessage]);
-      };
 
       const notifyCompletionIfIdle = async (
         engine: 'claude' | 'codex' | 'gemini',
@@ -382,7 +422,9 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         appendExecutionSystemMessage(
           'execution-complete',
           engine,
-          `✅ 本次 ${engineNames[engine]} 执行完成`
+          `✅ 本次 ${engineNames[engine]} 执行完成`,
+          undefined,
+          sessionId ?? null
         );
         hasNotifiedCompletion = true;
         await notifyAiExecutionComplete({
@@ -1858,10 +1900,15 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
       // 7️⃣ Error Handling
       // ========================================================================
       console.error("Failed to send prompt:", err);
-      setError("发送提示失败");
+      const errorMessage = stringifyPromptExecutionError(err) || '未知错误';
+      setError(errorMessage);
+      appendExecutionSystemMessage(
+        'execution-error',
+        executionEngine,
+        `⚠️ ${engineNames[executionEngine]} 上游返回错误，本次运行已停止监听。错误详情只展示在前端并保存为 UI 事件，不会带入下一次对话上下文。`,
+        errorMessage
+      );
       resetRuntimeState();
-      // Reset session state on error
-      setClaudeSessionId(null);
     }
   }, [
     projectPath,

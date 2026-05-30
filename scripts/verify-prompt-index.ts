@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  buildPromptIndexByMessage,
   getPromptIndexForDisplayableMessage,
   isTrackedUserPrompt,
 } from '../src/lib/promptIndex.js';
@@ -36,5 +37,11 @@ assert.equal(getPromptIndexForDisplayableMessage(messages, messages, 3), -1);
 assert.equal(getPromptIndexForDisplayableMessage(messages, messages, 4), -1);
 assert.equal(getPromptIndexForDisplayableMessage(messages, messages, 5), 1);
 assert.equal(getPromptIndexForDisplayableMessage(messages, messages, 6), 2);
+
+const promptIndexByMessage = buildPromptIndexByMessage(messages);
+assert.equal(promptIndexByMessage.get(messages[0] as object), 0);
+assert.equal(promptIndexByMessage.get(messages[2] as object), undefined);
+assert.equal(promptIndexByMessage.get(messages[5] as object), 1);
+assert.equal(promptIndexByMessage.get(messages[6] as object), 2);
 
 console.log('prompt index verification passed');

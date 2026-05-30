@@ -5,6 +5,8 @@ type PromptContentItem = {
   text?: string;
 };
 
+export type PromptIndexByMessage = WeakMap<object, number>;
+
 /**
  * 提取后端 prompt_tracker 会计数的用户文本。
  *
@@ -85,6 +87,23 @@ export function getPromptIndexForMessageInList(
   return promptIndex;
 }
 
+export function buildPromptIndexByMessage(
+  messages: Array<ClaudeStreamMessage | unknown>,
+): PromptIndexByMessage {
+  const promptIndexByMessage: PromptIndexByMessage = new WeakMap();
+  let promptIndex = 0;
+
+  for (const message of messages) {
+    if (typeof message !== 'object' || message === null) continue;
+    if (!isTrackedUserPrompt(message)) continue;
+
+    promptIndexByMessage.set(message, promptIndex);
+    promptIndex += 1;
+  }
+
+  return promptIndexByMessage;
+}
+
 /**
  * displayableMessages 是 messages 的过滤视图。这里先用对象引用找回完整
  * messages 中的真实位置，再交给 getPromptIndexForMessageInList 计算。
@@ -93,9 +112,14 @@ export function getPromptIndexForDisplayableMessage(
   messages: Array<ClaudeStreamMessage | unknown>,
   displayableMessages: Array<ClaudeStreamMessage | unknown>,
   displayableIndex: number,
+  promptIndexByMessage?: PromptIndexByMessage,
 ): number {
   const displayableMessage = displayableMessages[displayableIndex];
   if (!displayableMessage) return -1;
+
+  if (promptIndexByMessage && typeof displayableMessage === 'object') {
+    return promptIndexByMessage.get(displayableMessage) ?? -1;
+  }
 
   const actualIndex = messages.findIndex((message) => message === displayableMessage);
   return getPromptIndexForMessageInList(messages, actualIndex);

@@ -242,6 +242,14 @@ export function getConversationContext(
 
   // Filter out system init messages and get meaningful content
   const meaningfulMessages = messages.filter(msg => {
+    // UI-only terminal/error events are persisted for the frontend, but must
+    // never be fed back into prompt enhancement or the next AI request.
+    if ((msg as any).excludeFromAiContext === true || (msg as any).uiOnly === true) return false;
+    if (msg.type === "system" && (
+      msg.subtype === "execution-error" ||
+      msg.subtype === "execution-cancelled" ||
+      msg.subtype === "execution-complete"
+    )) return false;
     // Skip system init messages
     if (msg.type === "system" && msg.subtype === "init") return false;
     // Skip empty messages

@@ -7,7 +7,7 @@
  * 3. 将 Task 调用和相关子代理消息打包成一个消息组
  */
 
-import type { ClaudeStreamMessage } from '@/types/claude';
+import type { ClaudeStreamMessage } from '../types/claude';
 
 /**
  * 子代理消息组
@@ -204,44 +204,48 @@ export function groupMessages(messages: ClaudeStreamMessage[]): MessageGroup[] {
   });
 
   // 第二遍：为每个 Task 收集子代理消息
-  // ✅ FIX: 不再在遇到下一个 Task 时停止，而是遍历所有消息并根据 parent_tool_use_id 归类
+  // 性能修复：旧实现会对每个 Task 再遍历一次后续全部消息，长会话中是 O(T*N)。
+  // 这里改为一次线性扫描，根据 parent_tool_use_id 直接归入对应 Task，降为 O(T+N)。
   const subagentGroups = new Map<string, SubagentGroup>();
+  const subagentMessagesByTaskId = new Map<string, {
+    messages: ClaudeStreamMessage[];
+    maxIndex: number;
+  }>();
 
-  taskToolUseMap.forEach((taskInfo, taskId) => {
-    const subagentMessages: ClaudeStreamMessage[] = [];
-    let maxIndex = taskInfo.index;
-
-    // 遍历所有后续消息，根据 parent_tool_use_id 匹配
-    for (let i = taskInfo.index + 1; i < messages.length; i++) {
-      const msg = messages[i];
-      const parentId = getParentToolUseId(msg);
-
-      // ✅ FIX: 只根据 parent_tool_use_id 判断归属，不提前停止
-      if (parentId === taskId) {
-        subagentMessages.push(msg);
-        maxIndex = Math.max(maxIndex, i);
-      }
-    }
-
-    if (subagentMessages.length > 0) {
-      subagentGroups.set(taskId, {
-        id: taskId,
-        taskMessage: taskInfo.message,
-        taskToolUseId: taskId,
-        subagentMessages,
-        startIndex: taskInfo.index,
-        endIndex: maxIndex,
-        subagentType: taskSubagentTypes.get(taskId),
-      });
-    }
-  });
-
-  // 标记所有子代理消息的索引（避免重复渲染）
   messages.forEach((message, index) => {
     const parentId = getParentToolUseId(message);
-    if (parentId && subagentGroups.has(parentId)) {
-      processedIndices.add(index);
+    if (!parentId) return;
+
+    const taskInfo = taskToolUseMap.get(parentId);
+    if (!taskInfo || index <= taskInfo.index) return;
+
+    const bucket = subagentMessagesByTaskId.get(parentId) ?? {
+      messages: [],
+      maxIndex: taskInfo.index,
+    };
+    bucket.messages.push(message);
+    bucket.maxIndex = Math.max(bucket.maxIndex, index);
+    subagentMessagesByTaskId.set(parentId, bucket);
+
+    // 标记所有子代理消息的索引（避免重复渲染）
+    processedIndices.add(index);
+  });
+
+  taskToolUseMap.forEach((taskInfo, taskId) => {
+    const bucket = subagentMessagesByTaskId.get(taskId);
+    if (!bucket || bucket.messages.length === 0) {
+      return;
     }
+
+    subagentGroups.set(taskId, {
+      id: taskId,
+      taskMessage: taskInfo.message,
+      taskToolUseId: taskId,
+      subagentMessages: bucket.messages,
+      startIndex: taskInfo.index,
+      endIndex: bucket.maxIndex,
+      subagentType: taskSubagentTypes.get(taskId),
+    });
   });
 
   // 记录已添加的 Task 组（避免重复）

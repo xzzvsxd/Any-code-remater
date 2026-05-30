@@ -391,9 +391,8 @@ Remove-Item -Recurse -Force .tmp-tools
 $secretPatterns = @(
   'github_pa' + 't',
   'gh' + 'p_',
-  'AHD3C' + 'KA',
-  'TAURI_SECRET_PRIVATE_KEY' + '_VALUE',
-  'GH_TOKEN' + '_FOR_SECRETS'
+  'TAURI_' + 'SECRET_' + 'PRIVATE_' + 'KEY',
+  'GH_' + 'TOKEN'
 ) -join '|'
 
 rg -n $secretPatterns . --hidden `

@@ -37,7 +37,8 @@ import { AskUserQuestionDialog } from '@/components/dialogs/AskUserQuestionDialo
 import { codexConverter } from '@/lib/codexConverter';
 import { convertGeminiSessionDetailToClaudeMessages } from '@/lib/geminiConverter';
 import { formatClaudeModelLabel, resolveClaudeContinuationModel } from '@/lib/claudeModelSelection';
-import { getPromptIndexForDisplayableMessage } from '@/lib/promptIndex';
+import { buildPromptIndexByMessage, getPromptIndexForDisplayableMessage } from '@/lib/promptIndex';
+import { loadUiOnlySessionMessages, mergeUiOnlySessionMessages } from '@/lib/uiOnlySessionEvents';
 import { SessionHeader } from "./session/SessionHeader";
 import { SessionMessages, type SessionMessagesRef } from "./session/SessionMessages";
 
@@ -958,9 +959,15 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
 
   // 🆕 辅助函数：计算用户消息对应的 promptIndex
   // 只计算真实用户输入，排除系统消息和工具结果
+  const promptIndexByMessage = useMemo(() => buildPromptIndexByMessage(messages), [messages]);
   const getPromptIndexForMessage = useCallback((displayableIndex: number): number => {
-    return getPromptIndexForDisplayableMessage(messages, displayableMessages, displayableIndex);
-  }, [messages, displayableMessages]);
+    return getPromptIndexForDisplayableMessage(
+      messages,
+      displayableMessages,
+      displayableIndex,
+      promptIndexByMessage,
+    );
+  }, [messages, displayableMessages, promptIndexByMessage]);
 
 
   // 🆕 撤回处理函数 - 支持三种撤回模式
@@ -981,6 +988,15 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       const sessionEngine = effectiveSession.engine || executionEngineConfig.engine || 'claude';
       const isCodex = sessionEngine === 'codex';
       const isGemini = sessionEngine === 'gemini';
+      const uiEngine = isCodex ? 'codex' : isGemini ? 'gemini' : 'claude';
+      const withUiOnlyEvents = (historyMessages: ClaudeStreamMessage[]) => mergeUiOnlySessionMessages(
+        historyMessages,
+        loadUiOnlySessionMessages({
+          sessionId: effectiveSession.id,
+          projectPath,
+          engine: uiEngine,
+        }),
+      );
 
       // 调用后端撤回（返回提示词文本）
       const promptText = isCodex
@@ -1009,7 +1025,8 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       if (isGemini) {
         // Gemini 使用专门的 API 加载历史
         const geminiDetail = await api.getGeminiSessionDetail(projectPath, effectiveSession.id);
-        setMessages(convertGeminiSessionDetailToClaudeMessages(geminiDetail) as any);
+        const convertedMessages = convertGeminiSessionDetailToClaudeMessages(geminiDetail) as ClaudeStreamMessage[];
+        setMessages(withUiOnlyEvents(convertedMessages));
       } else {
         // Claude/Codex 使用原有 API
         const history = await api.loadSessionHistory(
@@ -1026,11 +1043,11 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
             const msg = codexConverter.convertEventObject(event as any);
             if (msg) convertedMessages.push(msg);
           }
-          setMessages(convertedMessages);
+          setMessages(withUiOnlyEvents(convertedMessages));
         } else if (Array.isArray(history)) {
-          setMessages(history);
+          setMessages(withUiOnlyEvents(history));
         } else if (history && typeof history === 'object' && 'messages' in history) {
-          setMessages((history as any).messages);
+          setMessages(withUiOnlyEvents((history as any).messages));
         }
       }
 

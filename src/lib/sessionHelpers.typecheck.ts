@@ -25,3 +25,29 @@ expect(context.length === 1, 'should keep one assistant context item');
 expect(context[0].includes('尾部不可丢失'), 'assistant context must preserve tail content');
 expect(!context[0].includes('[content truncated to fit context limit]'), 'context must not include truncation marker');
 expect(!context[0].endsWith('...'), 'context must not add ellipsis truncation');
+
+const upstreamErrorContext = getConversationContext([
+  {
+    type: 'user',
+    message: {
+      role: 'user',
+      content: [{ type: 'text', text: '下一轮正常问题' }],
+    },
+  },
+  {
+    type: 'system',
+    subtype: 'execution-error',
+    result: 'Upstream failed with diagnostics that must stay UI-only',
+    uiOnly: true,
+    excludeFromAiContext: true,
+  },
+  {
+    type: 'result',
+    result: 'UI-only result fallback should not pollute context',
+    excludeFromAiContext: true,
+  },
+] as ClaudeStreamMessage[], { includeExecutionResults: true });
+
+expect(upstreamErrorContext.some(line => line.includes('下一轮正常问题')), 'normal user context should remain available');
+expect(!upstreamErrorContext.some(line => line.includes('Upstream failed')), 'upstream errors must not enter AI context');
+expect(!upstreamErrorContext.some(line => line.includes('UI-only result fallback')), 'excludeFromAiContext must override execution result inclusion');
