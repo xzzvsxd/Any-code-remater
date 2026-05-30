@@ -1,5 +1,7 @@
 //! Unix/macOS-specific platform implementations
 
+use std::process::Command;
+
 /// Resolve a .cmd wrapper file to its actual Node.js script path
 ///
 /// On Unix-like systems, .cmd files are not used, so this always returns None.
