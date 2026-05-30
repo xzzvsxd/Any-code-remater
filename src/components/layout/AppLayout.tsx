@@ -1,4 +1,4 @@
-import React, { ReactNode, useState } from 'react';
+import React, { ReactNode, useEffect, useRef, useState } from 'react';
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useNavigation } from '@/contexts/NavigationContext';
 import { useUpdate } from '@/contexts/UpdateContext';
@@ -12,10 +12,25 @@ interface AppLayoutProps {
 
 export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
   const { currentView, navigateTo } = useNavigation();
-  const { checkUpdate } = useUpdate();
+  const { checkUpdate, hasUpdate, updateInfo, isDismissed } = useUpdate();
   const [showUpdateDialog, setShowUpdateDialog] = useState(false);
   const [showAboutDialog, setShowAboutDialog] = useState(false);
+  const autoOpenedUpdateVersionRef = useRef<string | null>(null);
   const isDev = import.meta.env.DEV;
+
+  useEffect(() => {
+    const availableVersion = updateInfo?.availableVersion;
+    if (!hasUpdate || !availableVersion || isDismissed) {
+      return;
+    }
+
+    if (autoOpenedUpdateVersionRef.current === availableVersion) {
+      return;
+    }
+
+    autoOpenedUpdateVersionRef.current = availableVersion;
+    setShowUpdateDialog(true);
+  }, [hasUpdate, isDismissed, updateInfo?.availableVersion]);
 
   const handleCheckUpdate = async () => {
     setShowAboutDialog(false);

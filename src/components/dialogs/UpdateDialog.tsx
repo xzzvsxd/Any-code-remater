@@ -2,6 +2,11 @@ import { useState, useEffect } from "react";
 import { Download, RefreshCw, AlertCircle, ExternalLink } from "lucide-react";
 import { useUpdate } from "@/contexts/UpdateContext";
 import { relaunchApp } from "@/lib/updater";
+import { getReleaseUrl } from "@/lib/appMetadata";
+import {
+  fetchReleaseNotes,
+  getDisplayUpdateNotes,
+} from "@/lib/updateReleaseNotes";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import {
   Dialog,
@@ -28,6 +33,8 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
   const [error, setError] = useState<string | null>(null);
   const [isInstalled, setIsInstalled] = useState(false);
   const [isPortable, setIsPortable] = useState(false);
+  const [releaseNotes, setReleaseNotes] = useState<string | null>(null);
+  const [isLoadingReleaseNotes, setIsLoadingReleaseNotes] = useState(false);
 
   // 检测是否为免安装版本
   useEffect(() => {
@@ -45,14 +52,44 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
     }
   }, [open, updateHandle]);
 
+  useEffect(() => {
+    if (!open || !updateInfo?.availableVersion) {
+      return;
+    }
+
+    const controller = new AbortController();
+    setReleaseNotes(null);
+    setIsLoadingReleaseNotes(true);
+
+    fetchReleaseNotes(updateInfo.availableVersion, controller.signal)
+      .then((notes) => {
+        if (!controller.signal.aborted) {
+          setReleaseNotes(notes);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setIsLoadingReleaseNotes(false);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [open, updateInfo?.availableVersion]);
+
   if (!updateInfo) {
     return null;
   }
 
+  const displayUpdateNotes = getDisplayUpdateNotes({
+    updaterNotes: updateInfo.notes,
+    releaseNotes,
+  });
+
   const handleOpenDownloadPage = async () => {
     try {
-      const releaseUrl = `https://github.com/zm892729231/Any-code/releases/tag/v${updateInfo.availableVersion}`;
-      await openUrl(releaseUrl);
+      await openUrl(getReleaseUrl(updateInfo.availableVersion));
       handleDismissAndClose();
     } catch (err) {
       console.error("打开下载页面失败:", err);
@@ -151,18 +188,22 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
         )}
 
         {/* Release Notes */}
-        {updateInfo.notes && (
-          <div>
-            <h3 className="text-sm font-medium text-foreground mb-2">
-              更新内容：
-            </h3>
-            <div className="bg-muted rounded-lg p-3 max-h-48 overflow-y-auto">
+        <div>
+          <h3 className="text-sm font-medium text-foreground mb-2">
+            更新内容：
+          </h3>
+          <div className="bg-muted rounded-lg p-3 max-h-48 overflow-y-auto">
+            {isLoadingReleaseNotes && !releaseNotes ? (
+              <p className="text-xs text-muted-foreground">
+                正在加载更新日志...
+              </p>
+            ) : (
               <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-sans">
-                {updateInfo.notes}
+                {displayUpdateNotes}
               </pre>
-            </div>
+            )}
           </div>
-        )}
+        </div>
 
         {/* Progress */}
         {isDownloading && (

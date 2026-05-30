@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/hooks/useTranslation";
+import { getCopyrightYear } from "@/lib/appMetadata";
 
 interface AboutDialogProps {
   open: boolean;
@@ -23,6 +24,7 @@ export function AboutDialog({ open, onClose, onCheckUpdate }: AboutDialogProps) 
   const { t } = useTranslation();
   const [appVersion, setAppVersion] = useState<string>(t('messages.loading'));
   const PROJECT_URL = "https://github.com/zm892729231/Any-code";
+  const copyrightYear = getCopyrightYear();
 
   // 动态获取应用版本号
   useEffect(() => {
@@ -39,7 +41,7 @@ export function AboutDialog({ open, onClose, onCheckUpdate }: AboutDialogProps) 
     if (open) {
       fetchVersion();
     }
-  }, [open]);
+  }, [open, t]);
 
   const handleOpenProject = async () => {
     try {
@@ -96,7 +98,7 @@ export function AboutDialog({ open, onClose, onCheckUpdate }: AboutDialogProps) 
         {/* Footer */}
         <div className="pt-4 border-t border-border text-center">
           <p className="text-xs text-muted-foreground">
-            © 2025 Any Code. All rights reserved.
+            © {copyrightYear} Any Code. All rights reserved.
           </p>
         </div>
       </DialogContent>
