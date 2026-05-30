@@ -80,9 +80,15 @@ export function getQuestionKey(question: Pick<Question, "question" | "header">):
 }
 
 export function getQuestionIdContent(questions: unknown): string {
-  return normalizeQuestions(questions)
-    .map((question) => question.question)
-    .join("|");
+  return JSON.stringify(normalizeQuestions(questions).map((question) => ({
+    question: question.question,
+    header: question.header || "",
+    multiSelect: question.multiSelect === true,
+    options: (question.options || []).map((option) => ({
+      label: option.label,
+      description: option.description || "",
+    })),
+  })));
 }
 
 export function isOptionSelectedSafe(

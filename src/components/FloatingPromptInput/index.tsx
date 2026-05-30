@@ -26,7 +26,7 @@ import { ControlBar } from "./ControlBar";
 import { ExpandedModal } from "./ExpandedModal";
 
 // Re-export types for external use
-export type { FloatingPromptInputRef, FloatingPromptInputProps, ThinkingMode, ModelType } from "./types";
+export type { FloatingPromptInputRef, FloatingPromptInputProps, ThinkingMode, ModelType, ExecutionStatusInfo } from "./types";
 
 /**
  * FloatingPromptInput - Refactored modular component
@@ -55,6 +55,7 @@ const FloatingPromptInputInner = (
     session,
     codexRateLimits,
     executionEngineConfig: externalEngineConfig,
+    executionStatus,
     onExecutionEngineConfigChange,
   }: FloatingPromptInputProps,
   ref: React.Ref<FloatingPromptInputRef>,
@@ -685,10 +686,10 @@ const FloatingPromptInputInner = (
                   <LoaderCircle className="mt-0.5 h-4 w-4 flex-shrink-0 animate-spin text-amber-500 sm:mt-0" />
                   <div className="min-w-0">
                     <div className="text-sm font-medium text-foreground/90">
-                      {t('floatingInput.processingStatus', '处理中')}
+                      {executionStatus?.statusLabel || t('floatingInput.processingStatus', '处理中')}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {t('floatingInput.processingStatusHint', '正在持续输出，你可以继续查看历史消息')}
+                      {executionStatus?.statusHint || t('floatingInput.processingStatusHint', '正在持续输出，你可以继续查看历史消息')}
                     </div>
                   </div>
                 </div>
@@ -766,6 +767,7 @@ const FloatingPromptInputInner = (
             session={session}
             codexRateLimits={codexRateLimits}
             isEnhancing={isEnhancing}
+            executionStatus={executionStatus}
             projectPath={projectPath}
             enableProjectContext={state.enableProjectContext}
             setEnableProjectContext={(enable) => dispatch({ type: "SET_ENABLE_PROJECT_CONTEXT", payload: enable })}

@@ -32,7 +32,7 @@ export interface AskUserQuestionDialogProps {
   /** 关闭对话框 */
   onClose: () => void;
   /** 提交答案 */
-  onSubmit: (answers: UserAnswers) => void;
+  onSubmit: (answers: UserAnswers) => boolean | void;
 }
 
 /**
@@ -105,7 +105,10 @@ export function AskUserQuestionDialog({
   // 提交答案
   const handleSubmit = () => {
     if (!allAnswered) return;
-    onSubmit(selectedAnswers);
+    const submitted = onSubmit(selectedAnswers);
+    if (submitted === false) {
+      return;
+    }
     onClose();
     // 重置选择
     setSelectedAnswers({});

@@ -27,6 +27,14 @@ interface PromptEntry {
   loading: boolean;
 }
 
+const fallbackCapabilities: RewindCapabilities = {
+  conversation: true,
+  code: false,
+  both: false,
+  warning: '无法获取撤回能力信息',
+  source: 'cli',
+};
+
 interface RevertPromptPickerProps {
   /** 会话ID */
   sessionId: string;
@@ -76,12 +84,14 @@ export const RevertPromptPicker: React.FC<RevertPromptPickerProps> = ({
   useEffect(() => {
     const loadPrompts = async () => {
       try {
-        // 调用后端获取准确的提示词列表（包含正确的 index）
+        // 调用后端获取准确的提示词列表和能力。
+        // 旧逻辑会对每个 prompt 串行调用 check*Capabilities，后端每次都重扫完整历史；
+        // 对长会话是 O(P * file_size)，会卡 UI，甚至拖慢正在运行的会话事件处理。
         const promptRecords = isCodex
-          ? await api.getCodexPromptList(sessionId)
+          ? await api.getCodexPromptListWithCapabilities(sessionId)
           : isGemini
-          ? await api.getGeminiPromptList(sessionId, projectPath)
-          : await api.getPromptList(sessionId, projectId);
+          ? await api.getGeminiPromptListWithCapabilities(sessionId, projectPath)
+          : await api.getPromptListWithCapabilities(sessionId, projectId);
 
         if (promptRecords.length === 0) {
           onClose();
@@ -94,7 +104,8 @@ export const RevertPromptPicker: React.FC<RevertPromptPickerProps> = ({
           content: record.text,
           preview: truncateText(record.text),
           source: record.source,
-          loading: true,
+          capabilities: record.capabilities ?? fallbackCapabilities,
+          loading: false,
         }));
 
         setPrompts(promptEntries);
@@ -106,59 +117,6 @@ export const RevertPromptPicker: React.FC<RevertPromptPickerProps> = ({
 
     loadPrompts();
   }, [sessionId, projectId, projectPath, onClose, isCodex, isGemini]);
-
-  // 异步加载每个提示词的撤回能力
-  useEffect(() => {
-    const loadCapabilities = async () => {
-      for (const prompt of prompts) {
-        if (prompt.loading && !prompt.capabilities) {
-          try {
-            const capabilities = isCodex
-              ? await api.checkCodexRewindCapabilities(sessionId, prompt.index)
-              : isGemini
-              ? await api.checkGeminiRewindCapabilities(sessionId, projectPath, prompt.index)
-              : await api.checkRewindCapabilities(
-                  sessionId,
-                  projectId,
-                  prompt.index
-                );
-
-            setPrompts(prev =>
-              prev.map(p =>
-                p.index === prompt.index
-                  ? { ...p, capabilities, loading: false }
-                  : p
-              )
-            );
-          } catch (error) {
-            console.error(`Failed to load capabilities for prompt #${prompt.index}:`, error);
-            // 失败时设置默认能力（仅对话）
-            setPrompts(prev =>
-              prev.map(p =>
-                p.index === prompt.index
-                  ? {
-                      ...p,
-                      capabilities: {
-                        conversation: true,
-                        code: false,
-                        both: false,
-                        warning: '无法获取撤回能力信息',
-                        source: 'cli',
-                      },
-                      loading: false,
-                    }
-                  : p
-              )
-            );
-          }
-        }
-      }
-    };
-
-    if (prompts.length > 0) {
-      loadCapabilities();
-    }
-  }, [prompts, sessionId, projectId, isCodex]);
 
   // 当前选中提示词的撤回能力
   const currentCapabilities = useMemo(() => {

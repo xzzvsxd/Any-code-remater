@@ -145,20 +145,19 @@ export const UsageDashboard: React.FC<UsageDashboardProps> = ({ onBack }) => {
         const todayDateStr = formatLocalDate(today);
         startDateStr = todayDateStr;
         endDateStr = todayDateStr;
-        const [statsResult, sessionResult] = await Promise.all([
-          api.getUsageByDateRange(todayDateStr, todayDateStr),
-          api.getSessionStats()
-        ]);
-        statsData = statsResult;
-        sessionData = sessionResult;
+        const dashboardResult = await api.getUsageDashboardStats({
+          startDate: todayDateStr,
+          endDate: todayDateStr,
+          order: 'desc',
+        });
+        statsData = dashboardResult.stats;
+        sessionData = dashboardResult.session_stats;
       } else if (selectedDateRange === "all") {
-        // Fetch all data in parallel
-        const [statsResult, sessionResult] = await Promise.all([
-          api.getUsageStats(),
-          api.getSessionStats()
-        ]);
-        statsData = statsResult;
-        sessionData = sessionResult;
+        const dashboardResult = await api.getUsageDashboardStats({
+          order: 'desc',
+        });
+        statsData = dashboardResult.stats;
+        sessionData = dashboardResult.session_stats;
       } else {
         const endDate = new Date();
         const startDate = new Date();
@@ -176,18 +175,16 @@ export const UsageDashboard: React.FC<UsageDashboardProps> = ({ onBack }) => {
           return `${year}${month}${day}`;
         };
 
-        // Fetch all data in parallel for better performance
-        const [statsResult, sessionResult] = await Promise.all([
-          api.getUsageByDateRange(startDateStr, endDateStr),
-          api.getSessionStats(
-            formatDateForSessionApi(startDate),
-            formatDateForSessionApi(endDate),
-            'desc'
-          )
-        ]);
+        const dashboardResult = await api.getUsageDashboardStats({
+          startDate: startDateStr,
+          endDate: endDateStr,
+          since: formatDateForSessionApi(startDate),
+          until: formatDateForSessionApi(endDate),
+          order: 'desc',
+        });
 
-        statsData = statsResult;
-        sessionData = sessionResult;
+        statsData = dashboardResult.stats;
+        sessionData = dashboardResult.session_stats;
       }
 
       // Update Claude state

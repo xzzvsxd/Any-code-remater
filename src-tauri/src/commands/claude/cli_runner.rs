@@ -33,49 +33,10 @@ impl Default for ClaudeProcessState {
 
 impl Drop for ClaudeProcessState {
     fn drop(&mut self) {
-        // When the application exits, clean up the current process
-        log::info!("ClaudeProcessState dropping, cleaning up current process...");
-
-        // Use a runtime to execute the async cleanup
-        let process = self.current_process.clone();
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            // We're in a tokio runtime context
-            handle.block_on(async move {
-                let mut current_process = process.lock().await;
-                if let Some(mut child) = current_process.take() {
-                    log::info!("Cleanup on drop: Killing Claude process");
-                    match child.kill().await {
-                        Ok(_) => {
-                            log::info!("Cleanup on drop: Successfully killed Claude process");
-                        }
-                        Err(e) => {
-                            log::error!("Cleanup on drop: Failed to kill Claude process: {}", e);
-                        }
-                    }
-                }
-            });
-        } else {
-            // Create a temporary runtime for cleanup
-            if let Ok(rt) = tokio::runtime::Runtime::new() {
-                rt.block_on(async move {
-                    let mut current_process = process.lock().await;
-                    if let Some(mut child) = current_process.take() {
-                        log::info!("Cleanup on drop: Killing Claude process");
-                        match child.kill().await {
-                            Ok(_) => {
-                                log::info!("Cleanup on drop: Successfully killed Claude process");
-                            }
-                            Err(e) => {
-                                log::error!(
-                                    "Cleanup on drop: Failed to kill Claude process: {}",
-                                    e
-                                );
-                            }
-                        }
-                    }
-                });
-            }
-        }
+        // Runtime-owned cleanup happens through ProcessRegistry.  Do not call
+        // Handle::block_on from Drop: when Tauri/Tokio is shutting down that can
+        // panic or hang and make unrelated desktop apps look like they crashed.
+        log::info!("ClaudeProcessState dropping; skipping async Drop cleanup");
     }
 }
 
@@ -259,13 +220,9 @@ fn create_windows_command(
     // Apply platform-specific no-window configuration
     platform::apply_no_window_async(&mut cmd);
 
-    // On Unix-like systems, create a new process group
-    // This allows us to kill the entire process tree with a single signal
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0); // Create new process group, process becomes group leader
-    }
+    // On Unix-like systems, create a new process group so cancellation targets
+    // only this run and its descendants.
+    crate::process::apply_process_group(&mut cmd);
 
     Ok(cmd)
 }
@@ -528,129 +485,56 @@ pub async fn cancel_claude_execution(
 
     let mut killed = false;
     let mut attempted_methods = Vec::new();
+    let sid = session_id
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| "session_id is required to cancel a Claude session safely".to_string())?;
 
     // Method 1: Try to find and kill via ProcessRegistry using session ID
-    if let Some(sid) = &session_id {
-        let registry = app.state::<crate::process::ProcessRegistryState>();
-        match registry.0.get_claude_session_by_id(sid) {
-            Ok(Some(process_info)) => {
-                log::info!(
-                    "Found process in registry for session {}: run_id={}, PID={}",
-                    sid,
-                    process_info.run_id,
-                    process_info.pid
-                );
-                match registry.0.kill_process(process_info.run_id).await {
-                    Ok(success) => {
-                        if success {
-                            log::info!("Successfully killed process via registry");
-                            killed = true;
-                        } else {
-                            log::warn!("Registry kill returned false");
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("Failed to kill via registry: {}", e);
-                    }
-                }
-                attempted_methods.push("registry");
-            }
-            Ok(None) => {
-                log::warn!("Session {} not found in ProcessRegistry", sid);
-            }
-            Err(e) => {
-                log::error!("Error querying ProcessRegistry: {}", e);
-            }
-        }
-    }
-
-    // Method 2: Try the legacy approach via ClaudeProcessState
-    if !killed {
-        let claude_state = app.state::<ClaudeProcessState>();
-        let mut current_process = claude_state.current_process.lock().await;
-
-        if let Some(mut child) = current_process.take() {
-            // Try to get the PID before killing
-            let pid = child.id();
+    let registry = app.state::<crate::process::ProcessRegistryState>();
+    match registry.0.get_claude_session_by_id(&sid) {
+        Ok(Some(process_info)) => {
             log::info!(
-                "Attempting to kill Claude process via ClaudeProcessState with PID: {:?}",
-                pid
+                "Found process in registry for session {}: run_id={}, PID={}",
+                sid,
+                process_info.run_id,
+                process_info.pid
             );
-
-            // Kill the process
-            match child.kill().await {
-                Ok(_) => {
-                    log::info!("Successfully killed Claude process via ClaudeProcessState");
-                    killed = true;
+            match registry.0.kill_process(process_info.run_id).await {
+                Ok(success) => {
+                    if success {
+                        log::info!("Successfully killed process via registry");
+                        killed = true;
+                    } else {
+                        log::warn!("Registry kill returned false");
+                    }
                 }
                 Err(e) => {
-                    log::error!(
-                        "Failed to kill Claude process via ClaudeProcessState: {}",
-                        e
-                    );
-
-                    // Fallback: If we have a PID, try system kill as last resort
-                    if let Some(pid) = pid {
-                        log::info!("Attempting system kill as last resort for PID: {}", pid);
-                        match platform::kill_process_tree(pid) {
-                            Ok(_) => {
-                                log::info!("Successfully killed process tree via platform module");
-                                killed = true;
-                            }
-                            Err(e) => {
-                                log::error!("Failed to kill process tree: {}", e);
-                            }
-                        }
-                    }
+                    log::warn!("Failed to kill via registry: {}", e);
                 }
             }
-            attempted_methods.push("claude_state");
-        } else {
-            log::warn!("No active Claude process in ClaudeProcessState");
+            attempted_methods.push("registry");
+        }
+        Ok(None) => {
+            log::warn!("Session {} not found in ProcessRegistry", sid);
+        }
+        Err(e) => {
+            log::error!("Error querying ProcessRegistry: {}", e);
         }
     }
 
-    // Method 3: Try killing the last spawned PID when session_id is not available
-    if !killed {
-        let claude_state = app.state::<ClaudeProcessState>();
-        let last_pid = { *claude_state.last_spawned_pid.lock().await };
-        if let Some(pid) = last_pid {
-            log::info!(
-                "Attempting to kill Claude process via last spawned PID: {}",
-                pid
-            );
-            match platform::kill_process_tree(pid) {
-                Ok(_) => {
-                    log::info!("Successfully killed process tree via last spawned PID");
-                    let mut last_pid_guard = claude_state.last_spawned_pid.lock().await;
-                    if last_pid_guard.as_ref() == Some(&pid) {
-                        *last_pid_guard = None;
-                    }
-                    killed = true;
-                }
-                Err(e) => {
-                    log::error!("Failed to kill process tree via last spawned PID: {}", e);
-                }
-            }
-            attempted_methods.push("last_spawned_pid");
-        }
-    }
+    // Do not fall back to ClaudeProcessState or last_spawned_pid.  They are
+    // global "latest process" handles, not per-tab/per-session handles, and can
+    // kill another running conversation when multiple sessions overlap.
 
     if !killed && attempted_methods.is_empty() {
         log::warn!("No active Claude process found to cancel");
     }
 
-    // Always emit cancellation events for UI consistency
-    if let Some(sid) = session_id {
-        let _ = app.emit(&format!("claude-cancelled:{}", sid), true);
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        let _ = app.emit(&format!("claude-complete:{}", sid), false);
-    }
-
-    // Also emit generic events for backward compatibility
-    let _ = app.emit("claude-cancelled", true);
+    // Emit only session-scoped completion to avoid stopping unrelated tabs
+    // that are still in the early global-listener phase.
+    let _ = app.emit(&format!("claude-cancelled:{}", sid), true);
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    let _ = app.emit("claude-complete", false);
+    let _ = app.emit(&format!("claude-complete:{}", sid), false);
 
     if killed {
         log::info!("Claude process cancellation completed successfully");

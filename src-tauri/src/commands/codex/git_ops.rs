@@ -9,6 +9,7 @@ use chrono::Utc;
  * - Session truncation and revert operations
  */
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -16,7 +17,8 @@ use std::path::PathBuf;
 use super::super::simple_git;
 // Import rewind helpers/types shared with Claude
 use super::super::prompt_tracker::{
-    load_execution_config, PromptRecord as ClaudePromptRecord, RewindCapabilities, RewindMode,
+    has_valid_rewind_commit, load_execution_config, PromptRecord as ClaudePromptRecord,
+    PromptRecordWithCapabilities, RewindCapabilities, RewindMode,
 };
 // Import WSL utilities
 use super::super::wsl_utils;
@@ -159,25 +161,32 @@ pub fn truncate_codex_git_records(session_id: &str, prompt_index: usize) -> Resu
 // Prompt Extraction
 // ============================================================================
 
-/// Extract all user prompts from a Codex session JSONL
-/// This mirrors Claude prompt extraction so indices stay consistent
-pub fn extract_codex_prompts(session_id: &str) -> Result<Vec<PromptRecord>, String> {
+fn extract_codex_prompts_with_records(
+    session_id: &str,
+    enrich_with_git_records: bool,
+) -> Result<(Vec<PromptRecord>, CodexGitRecords), String> {
     let sessions_dir = get_codex_sessions_dir()?;
     let session_file = find_session_file(&sessions_dir, session_id)
         .ok_or_else(|| format!("Session file not found for: {}", session_id))?;
 
-    let content = fs::read_to_string(&session_file)
-        .map_err(|e| format!("Failed to read session file: {}", e))?;
+    use std::io::{BufRead, BufReader};
+    let file = fs::File::open(&session_file)
+        .map_err(|e| format!("Failed to open session file: {}", e))?;
+    let reader = BufReader::new(file);
 
     let mut prompts: Vec<PromptRecord> = Vec::new();
     let mut prompt_index = 0;
 
-    for (line_idx, line) in content.lines().enumerate() {
+    for (line_idx, line_result) in reader.lines().enumerate() {
+        let line = match line_result {
+            Ok(line) => line,
+            Err(_) => continue,
+        };
         if line.trim().is_empty() {
             continue;
         }
 
-        if let Ok(event) = serde_json::from_str::<serde_json::Value>(line) {
+        if let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) {
             if event["type"].as_str() == Some("response_item")
                 && event["payload"]["role"].as_str() == Some("user")
             {
@@ -221,33 +230,124 @@ pub fn extract_codex_prompts(session_id: &str) -> Result<Vec<PromptRecord>, Stri
         }
     }
 
-    // Enrich with git records (if present)
     let git_records = load_codex_git_records(session_id)?;
-    for prompt in prompts.iter_mut() {
-        if let Some(record) = git_records
+
+    if enrich_with_git_records {
+        let records_by_prompt: HashMap<usize, &CodexPromptGitRecord> = git_records
             .records
             .iter()
-            .find(|r| r.prompt_index == prompt.index)
-        {
-            prompt.git_commit_before = record.commit_before.clone();
-            prompt.git_commit_after = record.commit_after.clone();
-            prompt.source = "project".to_string();
+            .map(|record| (record.prompt_index, record))
+            .collect();
 
-            if prompt.timestamp == 0 {
-                if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&record.timestamp) {
-                    prompt.timestamp = ts.timestamp();
+        for prompt in prompts.iter_mut() {
+            if let Some(record) = records_by_prompt.get(&prompt.index) {
+                prompt.git_commit_before = record.commit_before.clone();
+                prompt.git_commit_after = record.commit_after.clone();
+                prompt.source = "project".to_string();
+
+                if prompt.timestamp == 0 {
+                    if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&record.timestamp) {
+                        prompt.timestamp = ts.timestamp();
+                    }
                 }
             }
         }
     }
 
-    Ok(prompts)
+    Ok((prompts, git_records))
+}
+
+/// Extract all user prompts from a Codex session JSONL
+/// This mirrors Claude prompt extraction so indices stay consistent
+pub fn extract_codex_prompts(session_id: &str) -> Result<Vec<PromptRecord>, String> {
+    extract_codex_prompts_with_records(session_id, true).map(|(prompts, _)| prompts)
 }
 
 /// Get prompt list for Codex sessions (for revert picker)
 #[tauri::command]
 pub async fn get_codex_prompt_list(session_id: String) -> Result<Vec<PromptRecord>, String> {
-    extract_codex_prompts(&session_id)
+    tokio::task::spawn_blocking(move || extract_codex_prompts(&session_id))
+        .await
+        .map_err(|e| format!("get_codex_prompt_list task failed: {}", e))?
+}
+
+fn codex_rewind_capabilities_for_prompt(
+    prompt: &PromptRecord,
+    git_record: Option<&CodexPromptGitRecord>,
+    git_operations_disabled: bool,
+) -> RewindCapabilities {
+    if git_operations_disabled {
+        return RewindCapabilities {
+            conversation: true,
+            code: false,
+            both: false,
+            warning: Some(
+                "Git 操作已在配置中禁用。只能撤回对话历史，无法回滚代码变更。".to_string(),
+            ),
+            source: prompt.source.clone(),
+        };
+    }
+
+    if let Some(record) = git_record {
+        let has_valid_commit =
+            has_valid_rewind_commit(&record.commit_before, record.commit_after.as_ref());
+
+        RewindCapabilities {
+            conversation: true,
+            code: has_valid_commit,
+            both: has_valid_commit,
+            warning: if has_valid_commit {
+                None
+            } else {
+                Some("此提示词没有关联的 Git 记录，只能删除对话历史。".to_string())
+            },
+            source: "project".to_string(),
+        }
+    } else {
+        RewindCapabilities {
+            conversation: true,
+            code: false,
+            both: false,
+            warning: Some(
+                "此提示词没有关联的 Git 记录（可能来自 CLI），只能删除对话历史。".to_string(),
+            ),
+            source: prompt.source.clone(),
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn get_codex_prompt_list_with_capabilities(
+    session_id: String,
+) -> Result<Vec<PromptRecordWithCapabilities>, String> {
+    tokio::task::spawn_blocking(move || {
+        let execution_config =
+            load_execution_config().map_err(|e| format!("Failed to load execution config: {}", e))?;
+        let git_operations_disabled = execution_config.disable_rewind_git_operations;
+        let (prompts, git_records) = extract_codex_prompts_with_records(&session_id, true)?;
+        let records_by_prompt: HashMap<usize, &CodexPromptGitRecord> = git_records
+            .records
+            .iter()
+            .map(|record| (record.prompt_index, record))
+            .collect();
+
+        Ok(prompts
+            .into_iter()
+            .map(|prompt| {
+                let capabilities = codex_rewind_capabilities_for_prompt(
+                    &prompt,
+                    records_by_prompt.get(&prompt.index).copied(),
+                    git_operations_disabled,
+                );
+                PromptRecordWithCapabilities {
+                    prompt,
+                    capabilities,
+                }
+            })
+            .collect())
+    })
+    .await
+    .map_err(|e| format!("get_codex_prompt_list_with_capabilities task failed: {}", e))?
 }
 
 fn build_prompt_commit_message(
@@ -283,65 +383,26 @@ pub async fn check_codex_rewind_capabilities(
         prompt_index
     );
 
-    // Respect global execution config for git operations
-    let execution_config =
-        load_execution_config().map_err(|e| format!("Failed to load execution config: {}", e))?;
-    let git_operations_disabled = execution_config.disable_rewind_git_operations;
+    tokio::task::spawn_blocking(move || {
+        let execution_config =
+            load_execution_config().map_err(|e| format!("Failed to load execution config: {}", e))?;
+        let git_operations_disabled = execution_config.disable_rewind_git_operations;
+        let (prompts, git_records) = extract_codex_prompts_with_records(&session_id, true)?;
+        let prompt = prompts
+            .get(prompt_index)
+            .ok_or_else(|| format!("Prompt #{} not found", prompt_index))?;
 
-    // Extract prompts to validate index and source
-    let prompts = extract_codex_prompts(&session_id)?;
-    let prompt = prompts
-        .get(prompt_index)
-        .ok_or_else(|| format!("Prompt #{} not found", prompt_index))?;
-
-    if git_operations_disabled {
-        return Ok(RewindCapabilities {
-            conversation: true,
-            code: false,
-            both: false,
-            warning: Some(
-                "Git 操作已在配置中禁用。只能撤回对话历史，无法回滚代码变更。".to_string(),
-            ),
-            source: prompt.source.clone(),
-        });
-    }
-
-    // Look up git record for this prompt index
-    let git_records = load_codex_git_records(&session_id)?;
-    let git_record = git_records
-        .records
-        .iter()
-        .find(|r| r.prompt_index == prompt_index);
-
-    if let Some(record) = git_record {
-        let has_valid_commit = !record.commit_before.is_empty()
-            && record
-                .commit_after
-                .as_ref()
-                .map(|commit_after| commit_after != &record.commit_before)
-                .unwrap_or(false);
-        Ok(RewindCapabilities {
-            conversation: true,
-            code: has_valid_commit,
-            both: has_valid_commit,
-            warning: if has_valid_commit {
-                None
-            } else {
-                Some("此提示词没有关联的 Git 记录，只能删除对话历史。".to_string())
-            },
-            source: "project".to_string(),
-        })
-    } else {
-        Ok(RewindCapabilities {
-            conversation: true,
-            code: false,
-            both: false,
-            warning: Some(
-                "此提示词没有关联的 Git 记录（可能来自 CLI），只能删除对话历史。".to_string(),
-            ),
-            source: prompt.source.clone(),
-        })
-    }
+        Ok(codex_rewind_capabilities_for_prompt(
+            prompt,
+            git_records
+                .records
+                .iter()
+                .find(|r| r.prompt_index == prompt_index),
+            git_operations_disabled,
+        ))
+    })
+    .await
+    .map_err(|e| format!("check_codex_rewind_capabilities task failed: {}", e))?
 }
 
 // ============================================================================

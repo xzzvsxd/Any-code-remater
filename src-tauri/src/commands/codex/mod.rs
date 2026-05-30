@@ -52,8 +52,9 @@ pub use session::{
 // ============================================================================
 
 pub use git_ops::{
-    check_codex_rewind_capabilities, get_codex_prompt_list, record_codex_prompt_completed,
-    record_codex_prompt_sent, revert_codex_to_prompt,
+    check_codex_rewind_capabilities, get_codex_prompt_list,
+    get_codex_prompt_list_with_capabilities, record_codex_prompt_completed, record_codex_prompt_sent,
+    revert_codex_to_prompt,
 };
 
 // ============================================================================

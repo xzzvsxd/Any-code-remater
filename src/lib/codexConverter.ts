@@ -577,12 +577,36 @@ export class CodexEventConverter {
   /**
    * Converts function_call response_item to tool_use message
    */
+  private parseToolArgumentsSafe(rawArguments: unknown): Record<string, any> {
+    if (!rawArguments) {
+      return {};
+    }
+
+    if (typeof rawArguments === 'object') {
+      return rawArguments as Record<string, any>;
+    }
+
+    if (typeof rawArguments !== 'string') {
+      return {};
+    }
+
+    try {
+      const parsed = JSON.parse(rawArguments);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed
+        : { value: parsed };
+    } catch (error) {
+      console.warn('[CodexConverter] Failed to parse function_call arguments:', error);
+      return { raw_arguments: rawArguments };
+    }
+  }
+
   private convertFunctionCall(event: any): ClaudeStreamMessage {
     const payload = event.payload;
     const rawToolName = payload.name || 'unknown_tool';
     // Map Codex tool names to Claude Code equivalents for consistent rendering
     const toolName = mapCodexToolName(rawToolName);
-    const toolArgs = payload.arguments ? JSON.parse(payload.arguments) : {};
+    const toolArgs = this.parseToolArgumentsSafe(payload.arguments);
     const callId = payload.call_id || `call_${Date.now()}`;
 
     // For shell_command, also normalize the input structure

@@ -4,8 +4,12 @@
 //! model selection, and user preferences.
 
 use serde::{Deserialize, Serialize};
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::SystemTime;
 use tokio::sync::OnceCell;
 
 use crate::commands::wsl_utils;
@@ -13,6 +17,16 @@ use crate::commands::wsl_utils;
 /// 全局 Gemini WSL 模式配置缓存
 /// 避免重复创建 WSL 进程检测模式配置
 static GEMINI_WSL_MODE_CONFIG_CACHE: OnceCell<GeminiWslModeInfo> = OnceCell::const_new();
+
+static GEMINI_SESSION_INFO_CACHE: Lazy<Mutex<HashMap<PathBuf, GeminiSessionInfoCacheEntry>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+#[derive(Debug, Clone)]
+struct GeminiSessionInfoCacheEntry {
+    modified: SystemTime,
+    len: u64,
+    info: GeminiSessionInfo,
+}
 
 // ============================================================================
 // Configuration Types
@@ -273,6 +287,78 @@ pub fn read_session_logs(project_path: &str) -> Result<Vec<GeminiSessionLog>, St
     serde_json::from_str(&content).map_err(|e| format!("Failed to parse logs.json: {}", e))
 }
 
+fn read_session_info_from_path(path: &Path) -> Result<GeminiSessionInfo, String> {
+    let metadata =
+        fs::metadata(path).map_err(|e| format!("Failed to read session metadata: {}", e))?;
+    let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+    let len = metadata.len();
+
+    if let Some(cached) = GEMINI_SESSION_INFO_CACHE
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(path).cloned())
+    {
+        if cached.modified == modified && cached.len == len {
+            return Ok(cached.info);
+        }
+    }
+
+    let detail = read_session_detail_from_path(&path.to_path_buf())?;
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    let first_message = detail
+        .messages
+        .iter()
+        .find(|message| message.get("type").and_then(|t| t.as_str()) == Some("user"))
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .map(|s| s.to_string());
+
+    let start_time = if detail.start_time.is_empty() {
+        detail
+            .messages
+            .iter()
+            .find_map(|message| message.get("timestamp").and_then(|t| t.as_str()))
+            .unwrap_or(&detail.last_updated)
+            .to_string()
+    } else {
+        detail.start_time
+    };
+
+    // Skip subagent/task sessions - they start with "Your task is to"
+    if first_message
+        .as_ref()
+        .map(|msg| msg.trim_start().starts_with("Your task is to"))
+        .unwrap_or(false)
+    {
+        return Err("Skipping Gemini task/subagent session".to_string());
+    }
+
+    let info = GeminiSessionInfo {
+        session_id: detail.session_id,
+        file_name,
+        start_time,
+        first_message,
+    };
+
+    if let Ok(mut cache) = GEMINI_SESSION_INFO_CACHE.lock() {
+        cache.insert(
+            path.to_path_buf(),
+            GeminiSessionInfoCacheEntry {
+                modified,
+                len,
+                info: info.clone(),
+            },
+        );
+    }
+
+    Ok(info)
+}
+
 /// List all session files in chats/ directory
 pub fn list_session_files(project_path: &str) -> Result<Vec<GeminiSessionInfo>, String> {
     let session_dir = get_project_session_dir(project_path)?;
@@ -292,34 +378,8 @@ pub fn list_session_files(project_path: &str) -> Result<Vec<GeminiSessionInfo>, 
         let path = entry.path();
 
         if path.extension().and_then(|s| s.to_str()) == Some("json") {
-            let file_name = path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_string();
-
-            // Try to read basic info from file
-            if let Ok(detail) = read_session_detail_from_path(&path) {
-                let first_message = detail
-                    .messages
-                    .first()
-                    .and_then(|m| m.get("content"))
-                    .and_then(|c| c.as_str())
-                    .map(|s| s.to_string());
-
-                // Skip subagent/task sessions - they start with "Your task is to"
-                if let Some(ref msg) = first_message {
-                    if msg.trim_start().starts_with("Your task is to") {
-                        continue;
-                    }
-                }
-
-                sessions.push(GeminiSessionInfo {
-                    session_id: detail.session_id,
-                    file_name,
-                    start_time: detail.start_time,
-                    first_message,
-                });
+            if let Ok(info) = read_session_info_from_path(&path) {
+                sessions.push(info);
             }
         }
     }
@@ -385,7 +445,9 @@ pub async fn get_gemini_session_logs(
 /// List all sessions for a project
 #[tauri::command]
 pub async fn list_gemini_sessions(project_path: String) -> Result<Vec<GeminiSessionInfo>, String> {
-    list_session_files(&project_path)
+    tokio::task::spawn_blocking(move || list_session_files(&project_path))
+        .await
+        .map_err(|e| format!("list_gemini_sessions task failed: {}", e))?
 }
 
 /// Get detailed session information
@@ -394,7 +456,9 @@ pub async fn get_gemini_session_detail(
     project_path: String,
     session_id: String,
 ) -> Result<GeminiSessionDetail, String> {
-    read_session_detail(&project_path, &session_id)
+    tokio::task::spawn_blocking(move || read_session_detail(&project_path, &session_id))
+        .await
+        .map_err(|e| format!("get_gemini_session_detail task failed: {}", e))?
 }
 
 /// Delete a Gemini session

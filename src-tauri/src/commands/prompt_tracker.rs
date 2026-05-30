@@ -4,6 +4,7 @@ use log;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 use super::claude::get_claude_dir;
@@ -56,6 +57,14 @@ pub struct PromptRecord {
     pub source: String,
     /// Line number in the JSONL file (0-based)
     pub line_number: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptRecordWithCapabilities {
+    #[serde(flatten)]
+    pub prompt: PromptRecord,
+    pub capabilities: RewindCapabilities,
 }
 
 /// Git record for a prompt (stored by content hash)
@@ -209,6 +218,69 @@ fn truncate_git_records(
     Ok(())
 }
 
+pub fn has_valid_rewind_commit(commit_before: &str, commit_after: Option<&String>) -> bool {
+    !commit_before.is_empty()
+        && commit_before != "NONE"
+        && commit_after
+            .map(|commit_after| commit_after != commit_before)
+            .unwrap_or(false)
+}
+
+fn claude_rewind_capabilities_for_prompt(
+    prompt: &PromptRecord,
+    git_record: Option<&GitRecord>,
+    git_operations_disabled: bool,
+) -> RewindCapabilities {
+    if git_operations_disabled {
+        return RewindCapabilities {
+            conversation: true,
+            code: false,
+            both: false,
+            warning: Some(
+                "Git 操作已在配置中禁用。只能撤回对话历史，无法回滚代码变更。".to_string(),
+            ),
+            source: prompt.source.clone(),
+        };
+    }
+
+    if prompt.source == "project" {
+        if let Some(record) = git_record {
+            let has_valid_commit =
+                has_valid_rewind_commit(&record.commit_before, record.commit_after.as_ref());
+
+            RewindCapabilities {
+                conversation: true,
+                code: has_valid_commit,
+                both: has_valid_commit,
+                warning: if has_valid_commit {
+                    None
+                } else {
+                    Some("此提示词没有关联的 Git 记录，只能删除消息，无法回滚代码".to_string())
+                },
+                source: "project".to_string(),
+            }
+        } else {
+            RewindCapabilities {
+                conversation: true,
+                code: false,
+                both: false,
+                warning: Some(
+                    "此提示词来自项目界面，但没有找到 Git 记录，只能删除消息".to_string(),
+                ),
+                source: "project".to_string(),
+            }
+        }
+    } else {
+        RewindCapabilities {
+            conversation: true,
+            code: false,
+            both: false,
+            warning: Some("此提示词来自 CLI 终端，只能删除消息，无法回滚代码".to_string()),
+            source: "cli".to_string(),
+        }
+    }
+}
+
 /// Truncate session JSONL file to before a specific prompt
 /// 🆕 Now supports multiple files (main session + agent files)
 fn truncate_session_to_prompt(
@@ -250,7 +322,7 @@ fn truncate_session_to_prompt(
             if msg_type == Some("summary") || msg_type == Some("file-history-snapshot") {
                 log::debug!(
                     "Skipping {} message at line {}",
-                    msg_type.unwrap(),
+                    msg_type.unwrap_or("unknown"),
                     line_index
                 );
                 continue;
@@ -270,8 +342,10 @@ fn truncate_session_to_prompt(
                 }
 
                 // 检查是否有 parent_tool_use_id（子代理的消息）
-                let has_parent_tool_use_id = msg.get("parent_tool_use_id").is_some()
-                    && !msg.get("parent_tool_use_id").unwrap().is_null();
+                let has_parent_tool_use_id = msg
+                    .get("parent_tool_use_id")
+                    .map(|value| !value.is_null())
+                    .unwrap_or(false);
 
                 if has_parent_tool_use_id {
                     log::debug!(
@@ -1104,8 +1178,50 @@ pub async fn get_prompt_list(
     session_id: String,
     project_id: String,
 ) -> Result<Vec<PromptRecord>, String> {
-    extract_prompts_from_jsonl(&session_id, &project_id)
-        .map_err(|e| format!("Failed to extract prompts from JSONL: {}", e))
+    tokio::task::spawn_blocking(move || {
+        extract_prompts_from_jsonl(&session_id, &project_id)
+            .map_err(|e| format!("Failed to extract prompts from JSONL: {}", e))
+    })
+    .await
+    .map_err(|e| format!("get_prompt_list task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn get_prompt_list_with_capabilities(
+    session_id: String,
+    project_id: String,
+) -> Result<Vec<PromptRecordWithCapabilities>, String> {
+    tokio::task::spawn_blocking(move || {
+        let execution_config =
+            load_execution_config().map_err(|e| format!("Failed to load execution config: {}", e))?;
+        let git_operations_disabled = execution_config.disable_rewind_git_operations;
+
+        let prompts = extract_prompts_from_jsonl(&session_id, &project_id)
+            .map_err(|e| format!("Failed to extract prompts from JSONL: {}", e))?;
+        let git_records = if git_operations_disabled {
+            HashMap::new()
+        } else {
+            load_git_records(&session_id, &project_id)
+                .map_err(|e| format!("Failed to load git records: {}", e))?
+        };
+
+        Ok(prompts
+            .into_iter()
+            .map(|prompt| {
+                let capabilities = claude_rewind_capabilities_for_prompt(
+                    &prompt,
+                    git_records.get(&prompt.index),
+                    git_operations_disabled,
+                );
+                PromptRecordWithCapabilities {
+                    prompt,
+                    capabilities,
+                }
+            })
+            .collect())
+    })
+    .await
+    .map_err(|e| format!("get_prompt_list_with_capabilities task failed: {}", e))?
 }
 
 /// Check rewind capabilities for a specific prompt
@@ -1122,105 +1238,32 @@ pub async fn check_rewind_capabilities(
         session_id
     );
 
-    // Load execution config to check if Git operations are disabled
-    let execution_config =
-        load_execution_config().map_err(|e| format!("Failed to load execution config: {}", e))?;
+    tokio::task::spawn_blocking(move || {
+        let execution_config =
+            load_execution_config().map_err(|e| format!("Failed to load execution config: {}", e))?;
+        let git_operations_disabled = execution_config.disable_rewind_git_operations;
 
-    let git_operations_disabled = execution_config.disable_rewind_git_operations;
+        let prompts = extract_prompts_from_jsonl(&session_id, &project_id)
+            .map_err(|e| format!("Failed to extract prompts from JSONL: {}", e))?;
+        let prompt = prompts
+            .get(prompt_index)
+            .ok_or_else(|| format!("Prompt #{} not found", prompt_index))?;
 
-    // Extract prompts from JSONL (single source of truth)
-    let prompts = extract_prompts_from_jsonl(&session_id, &project_id)
-        .map_err(|e| format!("Failed to extract prompts from JSONL: {}", e))?;
-
-    // Get the prompt at the specified index
-    let prompt = prompts
-        .get(prompt_index)
-        .ok_or_else(|| format!("Prompt #{} not found", prompt_index))?;
-
-    // 🔧 FIX: Use prompt.source field (from queue-operation detection) instead of hash matching
-    // This is more reliable as hash matching is fragile (affected by string escaping, encoding, etc.)
-    log::info!(
-        "[Rewind Check] Prompt #{} source: {}",
-        prompt_index,
-        prompt.source
-    );
-
-    // If Git operations are disabled, always return conversation-only capability with warning
-    if git_operations_disabled {
-        log::info!("[Rewind Check] Git operations disabled - conversation only");
-        return Ok(RewindCapabilities {
-            conversation: true,
-            code: false,
-            both: false,
-            warning: Some(
-                "Git 操作已在配置中禁用。只能撤回对话历史，无法回滚代码变更。".to_string(),
-            ),
-            source: prompt.source.clone(),
-        });
-    }
-
-    if prompt.source == "project" {
-        // This prompt was sent from project interface (has queue-operation marker)
-        // 🔧 FIX: Check git records using prompt_index (not hash!)
-        let git_record = get_git_record(&session_id, &project_id, prompt_index)
-            .map_err(|e| format!("Failed to get git record: {}", e))?;
-
-        if let Some(record) = git_record {
-            let has_valid_commit = !record.commit_before.is_empty()
-                && record.commit_before != "NONE"
-                && record
-                    .commit_after
-                    .as_ref()
-                    .map(|commit_after| commit_after != &record.commit_before)
-                    .unwrap_or(false);
-
-            log::info!(
-                "[Rewind Check] ✅ Project prompt #{} with git record: has_valid_commit={}",
-                prompt_index,
-                has_valid_commit
-            );
-
-            Ok(RewindCapabilities {
-                conversation: true,
-                code: has_valid_commit,
-                both: has_valid_commit,
-                warning: if !has_valid_commit {
-                    Some("此提示词没有关联的 Git 记录，只能删除消息，无法回滚代码".to_string())
-                } else {
-                    None
-                },
-                source: "project".to_string(),
-            })
+        let git_records = if git_operations_disabled {
+            HashMap::new()
         } else {
-            // Project prompt but no git record (edge case: record_prompt_sent might have failed)
-            log::warn!(
-                "[Rewind Check] ⚠️ Project prompt #{} but no git record found",
-                prompt_index
-            );
-            Ok(RewindCapabilities {
-                conversation: true,
-                code: false,
-                both: false,
-                warning: Some(
-                    "此提示词来自项目界面，但没有找到 Git 记录，只能删除消息".to_string(),
-                ),
-                source: "project".to_string(),
-            })
-        }
-    } else {
-        // This prompt was sent from CLI (no queue-operation marker)
-        log::info!(
-            "[Rewind Check] CLI prompt #{} - conversation only",
-            prompt_index
-        );
-        Ok(RewindCapabilities {
-            conversation: true,
-            code: false,
-            both: false,
-            warning: Some("此提示词来自 CLI 终端，只能删除消息，无法回滚代码".to_string()),
-            source: "cli".to_string(),
-        })
-    }
+            load_git_records(&session_id, &project_id)
+                .map_err(|e| format!("Failed to load git records: {}", e))?
+        };
+
+        Ok(claude_rewind_capabilities_for_prompt(
+            prompt,
+            git_records.get(&prompt.index),
+            git_operations_disabled,
+        ))
+    })
+    .await
+    .map_err(|e| format!("check_rewind_capabilities task failed: {}", e))?
 }
 
 /// Extract prompts from JSONL session file
@@ -1237,14 +1280,19 @@ fn extract_prompts_from_jsonl(session_id: &str, project_id: &str) -> Result<Vec<
         return Ok(Vec::new());
     }
 
-    let content = fs::read_to_string(&session_path).context("Failed to read session file")?;
+    let file = fs::File::open(&session_path).context("Failed to read session file")?;
+    let reader = BufReader::new(file);
 
     let mut prompts = Vec::new();
     let mut prompt_index = 0;
     let mut pending_dequeue = false;
 
-    for (line_idx, line) in content.lines().enumerate() {
-        if let Ok(msg) = serde_json::from_str::<serde_json::Value>(line) {
+    for (line_idx, line_result) in reader.lines().enumerate() {
+        let line = match line_result {
+            Ok(line) => line,
+            Err(_) => continue,
+        };
+        if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
             let msg_type = msg.get("type").and_then(|t| t.as_str());
 
             // Check for dequeue operation
@@ -1272,8 +1320,10 @@ fn extract_prompts_from_jsonl(session_id: &str, project_id: &str) -> Result<Vec<
             }
 
             // Skip subagent messages (has parent_tool_use_id)
-            let has_parent_tool_use_id = msg.get("parent_tool_use_id").is_some()
-                && !msg.get("parent_tool_use_id").unwrap().is_null();
+            let has_parent_tool_use_id = msg
+                .get("parent_tool_use_id")
+                .map(|value| !value.is_null())
+                .unwrap_or(false);
 
             if has_parent_tool_use_id {
                 continue;
@@ -1415,4 +1465,21 @@ pub async fn get_unified_prompt_list(
     );
 
     Ok(prompts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_valid_rewind_commit;
+
+    #[test]
+    fn rewind_commit_must_have_after_commit_that_differs_from_before() {
+        let same_commit = "abc123".to_string();
+        let different_commit = "def456".to_string();
+
+        assert!(!has_valid_rewind_commit("", Some(&different_commit)));
+        assert!(!has_valid_rewind_commit("NONE", Some(&different_commit)));
+        assert!(!has_valid_rewind_commit("abc123", None));
+        assert!(!has_valid_rewind_commit("abc123", Some(&same_commit)));
+        assert!(has_valid_rewind_commit("abc123", Some(&different_commit)));
+    }
 }

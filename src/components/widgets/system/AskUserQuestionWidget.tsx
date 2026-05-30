@@ -15,7 +15,7 @@ import { useTranslation } from "react-i18next";
 import { HelpCircle, CheckCircle, MessageCircle, ChevronDown, ChevronUp, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { useUserQuestion, getQuestionId } from "@/contexts/UserQuestionContext";
+import { useOptionalUserQuestion, getQuestionId } from "@/contexts/UserQuestionContext";
 import {
   getQuestionKey,
   isOptionSelectedSafe,
@@ -66,17 +66,10 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
     setIsCollapsed(!isCollapsed);
   };
 
-  // 🆕 尝试获取 UserQuestion Context
-  let triggerQuestionDialog: ((questions: any[]) => void) | undefined;
-  let isQuestionAnswered: ((questionId: string) => boolean) | undefined;
-
-  try {
-    const userQuestionContext = useUserQuestion();
-    triggerQuestionDialog = userQuestionContext.triggerQuestionDialog;
-    isQuestionAnswered = userQuestionContext.isQuestionAnswered;
-  } catch {
-    // Context 不可用时忽略（组件可能在 Provider 外部渲染）
-  }
+  // 🆕 尝试获取 UserQuestion Context；Provider 外渲染时只展示静态 widget。
+  const userQuestionContext = useOptionalUserQuestion();
+  const triggerQuestionDialog = userQuestionContext?.triggerQuestionDialog;
+  const isQuestionAnswered = userQuestionContext?.isQuestionAnswered;
 
   // 计算问题 ID
   const questionId = useMemo(() => {
@@ -89,7 +82,7 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
   // 🆕 自动触发问答对话框（仅在有问题且未回答时）
   useEffect(() => {
     if (
-      questions.length > 0 &&
+      safeQuestions.length > 0 &&
       !hasAnswers &&
       !answered &&
       triggerQuestionDialog &&
@@ -104,7 +97,15 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [questions.length, safeQuestions, hasAnswers, answered, triggerQuestionDialog, isError, result]);
+  }, [safeQuestions, hasAnswers, answered, triggerQuestionDialog, isError, result]);
+
+  const handleAnswerNow = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (!triggerQuestionDialog || safeQuestions.length === 0 || hasAnswers || answered || isError || result) {
+      return;
+    }
+    triggerQuestionDialog(safeQuestions);
+  };
 
   // 解析answers - 可能在result.content中以字符串格式存储
   const parsedAnswers = useMemo(() => {
@@ -236,7 +237,7 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
                       : "text-blue-500"
                 )}
               >
-                {hasAnswers ? t('widget.userAnswered') : t('widget.claudeAsking')}
+                {hasAnswers ? t('widget.userAnswered') : '等待你的回答'}
               </span>
               {safeQuestions.length > 0 && (
                 <span className="text-xs text-muted-foreground">
@@ -246,6 +247,16 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
             </div>
 
             {/* 折叠按钮 */}
+            {!hasAnswers && !answered && triggerQuestionDialog && safeQuestions.length > 0 && !isError && !result && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={handleAnswerNow}
+              >
+                回答问题
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"

@@ -3,6 +3,49 @@ import type { HooksConfiguration } from '@/types/hooks';
 import { HooksManager } from '@/lib/hooksManager';
 import { codexProviderPresets } from '@/config/codexProviderPresets';
 
+let codexSessionsCache: {
+  value: import('@/types/codex').CodexSession[];
+  expiresAt: number;
+} | null = null;
+
+const geminiSessionsCache = new Map<string, {
+  value: import('@/types/gemini').GeminiSessionInfo[];
+  expiresAt: number;
+}>();
+
+const normalizeCachePath = (path: string) =>
+  path ? path.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase() : '';
+
+async function listCodexSessionsCached(): Promise<import('@/types/codex').CodexSession[]> {
+  const now = Date.now();
+  if (codexSessionsCache && codexSessionsCache.expiresAt > now) {
+    return codexSessionsCache.value;
+  }
+
+  const value = await invoke<import('@/types/codex').CodexSession[]>("list_codex_sessions");
+  codexSessionsCache = {
+    value,
+    expiresAt: now + 30_000,
+  };
+  return value;
+}
+
+async function listGeminiSessionsCached(projectPath: string): Promise<import('@/types/gemini').GeminiSessionInfo[]> {
+  const key = normalizeCachePath(projectPath);
+  const now = Date.now();
+  const cached = geminiSessionsCache.get(key);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  const value = await invoke<import('@/types/gemini').GeminiSessionInfo[]>("list_gemini_sessions", { projectPath });
+  geminiSessionsCache.set(key, {
+    value,
+    expiresAt: now + 30_000,
+  });
+  return value;
+}
+
 /** Process type for tracking in ProcessRegistry */
 export type ProcessType =
   | { AgentRun: { agent_id: number; agent_name: string } }
@@ -239,6 +282,10 @@ export interface PromptRecord {
   source: string;
 }
 
+export type PromptRecordWithCapabilities = PromptRecord & {
+  capabilities: RewindCapabilities;
+};
+
 
 // Usage Dashboard types
 export interface UsageEntry {
@@ -302,6 +349,11 @@ export interface UsageStats {
   by_date: DailyUsage[];
   by_project: ProjectUsage[];
   by_api_base_url?: ApiBaseUrlUsage[];
+}
+
+export interface UsageDashboardStats {
+  stats: UsageStats;
+  session_stats: ProjectUsage[];
 }
 
 export interface UsageOverview {
@@ -702,7 +754,7 @@ export const api = {
       const claudeSessions = await invoke<Session[]>('get_project_sessions', { projectId });
 
       // Get Codex sessions and filter by project path
-      const codexSessions = await this.listCodexSessions();
+      const codexSessions = await listCodexSessionsCached();
 
       const targetPath = projectPath || claudeSessions[0]?.project_path;
 
@@ -1106,7 +1158,10 @@ export const api = {
    * Cancels the currently running Claude Code execution
    * @param sessionId - Optional session ID to cancel a specific session
    */
-  async cancelClaudeExecution(sessionId?: string): Promise<void> {
+  async cancelClaudeExecution(sessionId: string): Promise<void> {
+    if (!sessionId?.trim()) {
+      throw new Error("sessionId is required to cancel Claude execution safely");
+    }
     return invoke("cancel_claude_execution", { sessionId });
   },
 
@@ -2814,6 +2869,49 @@ export const api = {
   },
 
   /**
+   * Gets dashboard Claude usage stats and grouped session stats in one backend scan.
+   */
+  async getUsageDashboardStats(options: {
+    startDate?: string;
+    endDate?: string;
+    since?: string;
+    until?: string;
+    order?: "asc" | "desc";
+  } = {}): Promise<UsageDashboardStats> {
+    try {
+      return await invoke<UsageDashboardStats>("get_usage_dashboard_stats", {
+        startDate: options.startDate,
+        endDate: options.endDate,
+        since: options.since,
+        until: options.until,
+        order: options.order,
+      });
+    } catch (error) {
+      console.error("Failed to get usage dashboard stats:", error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get prompts and rewind capabilities in one backend scan.
+   * Avoids RevertPromptPicker doing one full JSONL scan per prompt.
+   */
+  async getPromptListWithCapabilities(
+    sessionId: string,
+    projectId: string
+  ): Promise<PromptRecordWithCapabilities[]> {
+    try {
+      return await invoke<PromptRecordWithCapabilities[]>("get_prompt_list_with_capabilities", {
+        sessionId,
+        projectId
+      });
+    } catch (error) {
+      console.error("Failed to get prompt list with capabilities:", error);
+      return [];
+    }
+  },
+
+  /**
    * Get unified prompt list with git records enriched from .git-records.json
    * Combines .jsonl prompts (all messages) with git records (hash-based mapping)
    * This includes both project interface prompts (with git records) and CLI prompts (without git records)
@@ -3105,6 +3203,7 @@ export const api = {
    */
   async executeCodex(options: import('@/types/codex').CodexExecutionOptions): Promise<void> {
     try {
+      codexSessionsCache = null;
       return await invoke("execute_codex", { options });
     } catch (error) {
       console.error("Failed to execute Codex:", error);
@@ -3151,7 +3250,10 @@ export const api = {
    * @param sessionId - Optional session ID to cancel a specific session
    * @returns Promise resolving when cancellation is complete
    */
-  async cancelCodex(sessionId?: string): Promise<void> {
+  async cancelCodex(sessionId: string): Promise<void> {
+    if (!sessionId?.trim()) {
+      throw new Error("sessionId is required to cancel Codex execution safely");
+    }
     try {
       return await invoke("cancel_codex", { sessionId });
     } catch (error) {
@@ -3166,7 +3268,7 @@ export const api = {
    */
   async listCodexSessions(): Promise<import('@/types/codex').CodexSession[]> {
     try {
-      return await invoke<import('@/types/codex').CodexSession[]>("list_codex_sessions");
+      return await listCodexSessionsCached();
     } catch (error) {
       console.error("Failed to list Codex sessions:", error);
       throw error;
@@ -3180,7 +3282,9 @@ export const api = {
    */
   async deleteCodexSession(sessionId: string): Promise<string> {
     try {
-      return await invoke<string>("delete_codex_session", { sessionId });
+      const result = await invoke<string>("delete_codex_session", { sessionId });
+      codexSessionsCache = null;
+      return result;
     } catch (error) {
       console.error("Failed to delete Codex session:", error);
       throw error;
@@ -3483,6 +3587,18 @@ export const api = {
   },
 
   /**
+   * Gets Codex prompt list with capabilities in one backend scan.
+   */
+  async getCodexPromptListWithCapabilities(sessionId: string): Promise<PromptRecordWithCapabilities[]> {
+    try {
+      return await invoke<PromptRecordWithCapabilities[]>("get_codex_prompt_list_with_capabilities", { sessionId });
+    } catch (error) {
+      console.error("Failed to get Codex prompt list with capabilities:", error);
+      return [];
+    }
+  },
+
+  /**
    * Checks rewind capabilities for a Codex prompt
    * @param sessionId - Codex session ID
    * @param promptIndex - Prompt index to check
@@ -3607,6 +3723,21 @@ export const api = {
   },
 
   /**
+   * Gets Gemini prompt list with capabilities in one backend scan.
+   */
+  async getGeminiPromptListWithCapabilities(
+    sessionId: string,
+    projectPath: string
+  ): Promise<PromptRecordWithCapabilities[]> {
+    try {
+      return await invoke<PromptRecordWithCapabilities[]>("get_gemini_prompt_list_with_capabilities", { sessionId, projectPath });
+    } catch (error) {
+      console.error("Failed to get Gemini prompt list with capabilities:", error);
+      return [];
+    }
+  },
+
+  /**
    * Checks rewind capabilities for a Gemini prompt
    * @param sessionId - Gemini session ID
    * @param projectPath - The project path
@@ -3651,12 +3782,14 @@ export const api = {
     mode: RewindMode = "both"
   ): Promise<string> {
     try {
-      return await invoke<string>("revert_gemini_to_prompt", {
+      const result = await invoke<string>("revert_gemini_to_prompt", {
         sessionId,
         projectPath,
         promptIndex,
         mode
       });
+      geminiSessionsCache.delete(normalizeCachePath(projectPath));
+      return result;
     } catch (error) {
       console.error("Failed to revert Gemini to prompt:", error);
       throw error;
@@ -4095,6 +4228,7 @@ export const api = {
    */
   async executeGemini(options: import('@/types/gemini').GeminiExecutionOptions): Promise<void> {
     try {
+      geminiSessionsCache.clear();
       return await invoke("execute_gemini", { options });
     } catch (error) {
       console.error("Failed to execute Gemini:", error);
@@ -4106,7 +4240,10 @@ export const api = {
    * Cancels a running Gemini execution
    * @param sessionId - Optional session ID to cancel (cancels all if not provided)
    */
-  async cancelGemini(sessionId?: string): Promise<void> {
+  async cancelGemini(sessionId: string): Promise<void> {
+    if (!sessionId?.trim()) {
+      throw new Error("sessionId is required to cancel Gemini execution safely");
+    }
     try {
       await invoke("cancel_gemini", { sessionId });
     } catch (error) {
@@ -4195,7 +4332,7 @@ export const api = {
    */
   async listGeminiSessions(projectPath: string): Promise<import('@/types/gemini').GeminiSessionInfo[]> {
     try {
-      return await invoke("list_gemini_sessions", { projectPath });
+      return await listGeminiSessionsCached(projectPath);
     } catch (error) {
       console.error("Failed to list Gemini sessions:", error);
       throw error;
@@ -4228,6 +4365,7 @@ export const api = {
   async deleteGeminiSession(projectPath: string, sessionId: string): Promise<void> {
     try {
       await invoke("delete_gemini_session", { projectPath, sessionId });
+      geminiSessionsCache.delete(normalizeCachePath(projectPath));
     } catch (error) {
       console.error("Failed to delete Gemini session:", error);
       throw error;

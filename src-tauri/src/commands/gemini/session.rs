@@ -480,6 +480,9 @@ pub async fn execute_gemini(
     // Command line arguments have length limits and special character issues on Windows
 
     // Build command based on execution mode (native or WSL)
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
+    let mut wsl_spec: Option<wsl_utils::WslCommandSpec> = None;
+
     let cmd = if is_wsl {
         // WSL mode
         #[cfg(target_os = "windows")]
@@ -496,12 +499,16 @@ pub async fn execute_gemini(
                 wsl_runtime.distro
             );
 
-            let mut cmd = wsl_utils::build_wsl_command_async(
+            let marker = format!("any-code-gemini-{}", uuid::Uuid::new_v4());
+            let spec = wsl_utils::build_marked_wsl_command_spec(
+                &marker,
                 gemini_program,
                 &args,
                 Some(&options.project_path),
                 wsl_runtime.distro.as_deref(),
             );
+            let mut cmd = spec.clone().into_command();
+            wsl_spec = Some(spec);
 
             // Set environment variables from config
             // Note: Environment variables will be passed to WSL environment
@@ -536,9 +543,11 @@ pub async fn execute_gemini(
     // Execute process with prompt via stdin
     execute_gemini_process(
         cmd,
+        wsl_spec,
         options.project_path,
         model.clone(),
         Some(options.prompt),
+        options.tab_id.clone(),
         app_handle,
     )
     .await
@@ -552,49 +561,22 @@ pub async fn cancel_gemini(
 ) -> Result<(), String> {
     log::info!("cancel_gemini called for session: {:?}", session_id);
 
+    let sid = session_id
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| "session_id is required to cancel a Gemini session".to_string())?;
+
     let state: tauri::State<'_, GeminiProcessState> = app_handle.state();
     let mut processes = state.processes.lock().await;
 
-    if let Some(sid) = session_id {
-        // Cancel specific session
-        if let Some(mut handle) = processes.remove(&sid) {
-            // Kill the process - JobObject will automatically terminate all child processes when dropped
-            handle
-                .child
-                .kill()
-                .await
-                .map_err(|e| format!("Failed to kill process: {}", e))?;
-            log::info!(
-                "Killed Gemini process for session: {} (PID: {})",
-                sid,
-                handle.pid
-            );
+    if let Some(handle) = processes.remove(&sid) {
+        drop(processes);
+        handle.terminate(&format!("cancel session {}", sid)).await;
 
-            // JobObject is dropped here, killing all child processes (MCP servers, node.exe, etc.)
-            drop(handle.job_object);
-
-            // Emit cancellation event
-            let _ = app_handle.emit(&format!("gemini-cancelled:{}", sid), true);
-            let _ = app_handle.emit("gemini-cancelled", true);
-        } else {
-            log::warn!("No running process found for session: {}", sid);
-        }
-    } else {
-        // Cancel all processes
-        for (sid, mut handle) in processes.drain() {
-            if let Err(e) = handle.child.kill().await {
-                log::error!("Failed to kill process for session {}: {}", sid, e);
-            } else {
-                log::info!(
-                    "Killed Gemini process for session: {} (PID: {})",
-                    sid,
-                    handle.pid
-                );
-            }
-            // JobObject is dropped here, killing all child processes
-            drop(handle.job_object);
-        }
+        // Emit cancellation event
+        let _ = app_handle.emit(&format!("gemini-cancelled:{}", sid), true);
         let _ = app_handle.emit("gemini-cancelled", true);
+    } else {
+        log::warn!("No running process found for session: {}", sid);
     }
 
     Ok(())
@@ -610,9 +592,12 @@ pub async fn cancel_gemini(
 /// 这样既支持斜杠命令，又避免操作系统命令行长度限制（Windows ~8KB, Linux/macOS ~128KB-2MB）
 async fn execute_gemini_process(
     mut cmd: Command,
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
+    wsl_spec: Option<wsl_utils::WslCommandSpec>,
     project_path: String,
     model: String,
     prompt: Option<String>,
+    tab_id: Option<String>,
     app_handle: AppHandle,
 ) -> Result<(), String> {
     // 🔥 关键修复：检测斜杠命令，通过 -p 参数传递以触发命令解析
@@ -640,6 +625,7 @@ async fn execute_gemini_process(
 
     // Apply platform-specific no-window configuration
     apply_no_window_async(&mut cmd);
+    crate::process::apply_process_group(&mut cmd);
 
     // Spawn process
     let mut child = cmd
@@ -720,6 +706,8 @@ async fn execute_gemini_process(
             child,
             pid,
             job_object,
+            #[cfg(target_os = "windows")]
+            wsl_spec,
         };
         processes.insert(session_id.clone(), handle);
 
@@ -727,8 +715,10 @@ async fn execute_gemini_process(
         *last_session = Some(session_id.clone());
     }
 
-    // Emit session init event
-    let init_payload = serde_json::json!({
+    // Emit session init event.  The global event is wrapped with tab_id so only
+    // the tab that launched this process handles early events before the
+    // runtime session id is known.
+    let init_message = serde_json::json!({
         "type": "system",
         "subtype": "init",
         "session_id": session_id,
@@ -739,15 +729,23 @@ async fn execute_gemini_process(
             "eventType": "session_init"
         }
     });
+    let init_payload = serde_json::json!({
+        "tab_id": tab_id,
+        "payload": init_message,
+    });
 
     if let Err(e) = app_handle.emit("gemini-session-init", &init_payload) {
         log::error!("Failed to emit gemini-session-init: {}", e);
     }
 
     // Also emit as gemini-output for unified handling
-    let init_line = serde_json::to_string(&init_payload).unwrap_or_default();
+    let init_line = serde_json::to_string(&init_message).unwrap_or_default();
     let _ = app_handle.emit(&format!("gemini-output:{}", session_id), &init_line);
-    let _ = app_handle.emit("gemini-output", &init_line);
+    let init_global_output = serde_json::json!({
+        "tab_id": tab_id,
+        "payload": init_line,
+    });
+    let _ = app_handle.emit("gemini-output", &init_global_output);
 
     log::info!("Gemini session initialized with ID: {}", session_id);
 
@@ -762,6 +760,9 @@ async fn execute_gemini_process(
     let session_id_stdout = session_id.clone();
     let session_id_stderr = session_id.clone();
     let session_id_complete = session_id.clone();
+    let tab_id_for_stdout = tab_id.clone();
+    let tab_id_for_stderr = tab_id.clone();
+    let tab_id_for_complete = tab_id.clone();
 
     // Spawn task to read stdout (JSONL events)
     let model_for_messages = model.clone();
@@ -795,8 +796,11 @@ async fn execute_gemini_process(
                         // Emit the real Gemini CLI session ID to frontend
                         log::info!("[Gemini] Detected real CLI session ID: {}", cli_session_id);
                         let cli_session_payload = serde_json::json!({
+                            "tab_id": tab_id_for_stdout,
+                            "payload": {
                             "backend_session_id": session_id_stdout,
                             "cli_session_id": cli_session_id,
+                            }
                         });
                         if let Err(e) =
                             app_handle_stdout.emit("gemini-cli-session-id", &cli_session_payload)
@@ -917,8 +921,11 @@ async fn execute_gemini_process(
                                 cli_session_id
                             );
                             let cli_session_payload = serde_json::json!({
+                                "tab_id": tab_id_for_stdout,
+                                "payload": {
                                 "backend_session_id": session_id_stdout,
                                 "cli_session_id": cli_session_id,
+                                }
                             });
                             if let Err(e) = app_handle_stdout
                                 .emit("gemini-cli-session-id", &cli_session_payload)
@@ -972,8 +979,12 @@ async fn execute_gemini_process(
                 log::error!("Failed to emit gemini-output (session): {}", e);
             }
 
-            // Also emit to global channel
-            if let Err(e) = app_handle_stdout.emit("gemini-output", &unified_line) {
+            // Also emit to global channel for early-session compatibility, scoped by tab_id.
+            let global_payload = serde_json::json!({
+                "tab_id": tab_id_for_stdout,
+                "payload": unified_line,
+            });
+            if let Err(e) = app_handle_stdout.emit("gemini-output", &global_payload) {
                 log::error!("Failed to emit gemini-output (global): {}", e);
             }
         }
@@ -1008,7 +1019,11 @@ async fn execute_gemini_process(
 
                 let _ = app_handle_stderr
                     .emit(&format!("gemini-error:{}", session_id_stderr), &error_line);
-                let _ = app_handle_stderr.emit("gemini-error", &error_line);
+                let global_error = serde_json::json!({
+                    "tab_id": tab_id_for_stderr,
+                    "payload": error_line,
+                });
+                let _ = app_handle_stderr.emit("gemini-error", &global_error);
             }
         }
 
@@ -1072,17 +1087,11 @@ async fn execute_gemini_process(
                     session_id_complete,
                     timeout_duration.as_secs()
                 );
-                // Try to kill the hung process
+                // Try to kill the hung process tree
                 let mut processes = processes_complete.lock().await;
-                if let Some(mut handle) = processes.remove(&session_id_complete) {
-                    if let Err(e) = handle.child.kill().await {
-                        log::error!("[Gemini] Failed to kill hung process: {}", e);
-                    }
-                    // JobObject is dropped here, killing all child processes
-                    log::info!(
-                        "[Gemini] Force-dropped JobObject for hung process PID: {}",
-                        handle.pid
-                    );
+                if let Some(handle) = processes.remove(&session_id_complete) {
+                    drop(processes);
+                    handle.terminate("post-stream timeout").await;
                 }
                 (false, None)
             }
@@ -1105,11 +1114,19 @@ async fn execute_gemini_process(
             &format!("gemini-output:{}", session_id_complete),
             &complete_line,
         );
-        let _ = app_handle_complete.emit("gemini-output", &complete_line);
+        let global_output = serde_json::json!({
+            "tab_id": tab_id_for_complete,
+            "payload": complete_line,
+        });
+        let _ = app_handle_complete.emit("gemini-output", &global_output);
 
         let _ =
             app_handle_complete.emit(&format!("gemini-complete:{}", session_id_complete), success);
-        let _ = app_handle_complete.emit("gemini-complete", success);
+        let global_complete = serde_json::json!({
+            "tab_id": tab_id_for_complete,
+            "payload": success,
+        });
+        let _ = app_handle_complete.emit("gemini-complete", &global_complete);
     });
 
     Ok(())

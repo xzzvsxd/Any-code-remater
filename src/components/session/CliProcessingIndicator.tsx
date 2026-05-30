@@ -5,6 +5,11 @@ import { useTranslation } from "react-i18next";
 interface CliProcessingIndicatorProps {
   isProcessing: boolean;
   onCancel?: () => void;
+  engineName?: string;
+  elapsedSeconds?: number;
+  idleSeconds?: number;
+  canCancel?: boolean;
+  isCancelling?: boolean;
 }
 
 // CLI风格的处理状态词汇
@@ -26,6 +31,11 @@ const PROCESSING_VERBS = [
 export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
   isProcessing,
   onCancel,
+  engineName = "AI",
+  elapsedSeconds = 0,
+  idleSeconds = 0,
+  canCancel = true,
+  isCancelling = false,
 }) => {
   const { t } = useTranslation();
   const [dotCount, setDotCount] = useState(0);
@@ -67,7 +77,7 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
 
   // 监听 Escape 键取消
   useEffect(() => {
-    if (!isProcessing || !onCancel) return;
+    if (!isProcessing || !onCancel || !canCancel || isCancelling) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -78,11 +88,20 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isProcessing, onCancel]);
+  }, [isProcessing, onCancel, canCancel, isCancelling]);
 
   const currentVerb = PROCESSING_VERBS[verbIndex];
   const dots = ".".repeat(dotCount);
   const paddedDots = dots.padEnd(3, " ");
+  const formatElapsed = (seconds: number) => {
+    const safeSeconds = Math.max(0, Math.floor(seconds));
+    const minutes = Math.floor(safeSeconds / 60);
+    const remainingSeconds = safeSeconds % 60;
+    return `${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
+  };
+  const idleNotice = idleSeconds >= 60
+    ? `长时间无新输出（${formatElapsed(idleSeconds)}），${engineName} 可能仍在后台执行`
+    : null;
 
   return (
     <AnimatePresence>
@@ -131,7 +150,9 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
             {/* 提示信息 */}
             <span className="text-muted-foreground/60 text-xs">
               (
-              {onCancel && (
+              <span className="font-mono">已运行 {formatElapsed(elapsedSeconds)}</span>
+              <span className="mx-1">·</span>
+              {onCancel && canCancel && !isCancelling && (
                 <button
                   onClick={onCancel}
                   className="hover:text-red-500 transition-colors cursor-pointer"
@@ -139,7 +160,19 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
                   {t('cliIndicator.escToCancel', 'esc to cancel')}
                 </button>
               )}
-              {onCancel && <span className="mx-1">·</span>}
+              {onCancel && canCancel && !isCancelling && <span className="mx-1">·</span>}
+              {onCancel && !canCancel && (
+                <>
+                  <span>正在建立安全取消通道</span>
+                  <span className="mx-1">·</span>
+                </>
+              )}
+              {isCancelling && (
+                <>
+                  <span className="text-red-500">正在取消当前会话</span>
+                  <span className="mx-1">·</span>
+                </>
+              )}
               <span className="inline-flex items-center gap-1">
                 <motion.span
                   animate={{ opacity: [0.4, 1, 0.4] }}
@@ -151,6 +184,12 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
               )
             </span>
           </div>
+
+          {idleNotice && (
+            <div className="mt-2 rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+              {idleNotice}
+            </div>
+          )}
 
           {/* 底部进度条动画 */}
           <motion.div

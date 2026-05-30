@@ -4,10 +4,49 @@
 use chrono::{DateTime, Local, NaiveDate};
 use serde::{Deserialize, Serialize};
 use serde_json;
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use tauri::command;
+
+fn compare_f64_desc(left: f64, right: f64) -> Ordering {
+    right.partial_cmp(&left).unwrap_or(Ordering::Equal)
+}
+
+fn compare_f64_asc(left: f64, right: f64) -> Ordering {
+    left.partial_cmp(&right).unwrap_or(Ordering::Equal)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usage_sorting_handles_nan_costs_without_panicking() {
+        let mut stats = vec![
+            ProjectUsage {
+                project_path: "nan".to_string(),
+                project_name: "nan".to_string(),
+                total_cost: f64::NAN,
+                total_tokens: 0,
+                session_count: 1,
+                last_used: "2026-05-30T00:00:00Z".to_string(),
+            },
+            ProjectUsage {
+                project_path: "normal".to_string(),
+                project_name: "normal".to_string(),
+                total_cost: 1.0,
+                total_tokens: 0,
+                session_count: 1,
+                last_used: "2026-05-30T00:00:01Z".to_string(),
+            },
+        ];
+
+        stats.sort_by(|a, b| compare_f64_desc(a.total_cost, b.total_cost));
+        stats.sort_by(|a, b| compare_f64_asc(a.total_cost, b.total_cost));
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UsageEntry {
@@ -34,6 +73,12 @@ pub struct UsageStats {
     by_model: Vec<ModelUsage>,
     by_date: Vec<DailyUsage>,
     by_project: Vec<ProjectUsage>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UsageDashboardStats {
+    stats: UsageStats,
+    session_stats: Vec<ProjectUsage>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -281,9 +326,10 @@ fn parse_jsonl_file(
     path: &PathBuf,
     encoded_project_name: &str,
     processed_hashes: &mut HashSet<String>,
-) -> Vec<UsageEntry> {
+) -> (Vec<UsageEntry>, Option<String>) {
     let mut entries = Vec::new();
     let mut actual_project_path: Option<String> = None;
+    let mut earliest_timestamp: Option<String> = None;
 
     if let Ok(content) = fs::read_to_string(path) {
         // Extract session ID from the file path
@@ -300,6 +346,16 @@ fn parse_jsonl_file(
             }
 
             if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(line) {
+                if let Some(timestamp_str) = json_value.get("timestamp").and_then(|v| v.as_str()) {
+                    if earliest_timestamp
+                        .as_ref()
+                        .map(|current| timestamp_str < current.as_str())
+                        .unwrap_or(true)
+                    {
+                        earliest_timestamp = Some(timestamp_str.to_string());
+                    }
+                }
+
                 // Extract the actual project path from cwd if we haven't already
                 if actual_project_path.is_none() {
                     if let Some(cwd) = json_value.get("cwd").and_then(|v| v.as_str()) {
@@ -365,28 +421,7 @@ fn parse_jsonl_file(
         }
     }
 
-    entries
-}
-
-fn get_earliest_timestamp(path: &PathBuf) -> Option<String> {
-    if let Ok(content) = fs::read_to_string(path) {
-        let mut earliest_timestamp: Option<String> = None;
-        for line in content.lines() {
-            if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(line) {
-                if let Some(timestamp_str) = json_value.get("timestamp").and_then(|v| v.as_str()) {
-                    if let Some(current_earliest) = &earliest_timestamp {
-                        if timestamp_str < current_earliest.as_str() {
-                            earliest_timestamp = Some(timestamp_str.to_string());
-                        }
-                    } else {
-                        earliest_timestamp = Some(timestamp_str.to_string());
-                    }
-                }
-            }
-        }
-        return earliest_timestamp;
-    }
-    None
+    (entries, earliest_timestamp)
 }
 
 fn get_all_usage_entries(claude_path: &PathBuf) -> Vec<UsageEntry> {
@@ -413,12 +448,13 @@ fn get_all_usage_entries(claude_path: &PathBuf) -> Vec<UsageEntry> {
         }
     }
 
-    // Sort files by their earliest timestamp to ensure chronological processing
-    // and deterministic deduplication
-    files_to_process.sort_by_cached_key(|(path, _)| get_earliest_timestamp(path));
+    // Sort by file path before parsing for deterministic traversal without
+    // reading every file twice.  Deduplication remains stable in a single pass.
+    files_to_process.sort_by(|(a, _), (b, _)| a.cmp(b));
 
     for (path, project_name) in files_to_process {
-        let entries = parse_jsonl_file(&path, &project_name, &mut processed_hashes);
+        let (entries, _earliest_timestamp) =
+            parse_jsonl_file(&path, &project_name, &mut processed_hashes);
         all_entries.extend(entries);
     }
 
@@ -428,226 +464,26 @@ fn get_all_usage_entries(claude_path: &PathBuf) -> Vec<UsageEntry> {
     all_entries
 }
 
-#[command]
-pub fn get_usage_stats(days: Option<u32>) -> Result<UsageStats, String> {
-    let claude_path = dirs::home_dir()
-        .ok_or("Failed to get home directory")?
-        .join(".claude");
-
-    let all_entries = get_all_usage_entries(&claude_path);
-
-    if all_entries.is_empty() {
-        return Ok(UsageStats {
-            total_cost: 0.0,
-            total_tokens: 0,
-            total_input_tokens: 0,
-            total_output_tokens: 0,
-            total_cache_creation_tokens: 0,
-            total_cache_read_tokens: 0,
-            total_sessions: 0,
-            by_model: vec![],
-            by_date: vec![],
-            by_project: vec![],
-        });
+fn empty_usage_stats() -> UsageStats {
+    UsageStats {
+        total_cost: 0.0,
+        total_tokens: 0,
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        total_cache_creation_tokens: 0,
+        total_cache_read_tokens: 0,
+        total_sessions: 0,
+        by_model: vec![],
+        by_date: vec![],
+        by_project: vec![],
     }
-
-    // Filter by days if specified
-    // 🚀 修复时区问题：使用本地时区进行日期比较
-    let filtered_entries = if let Some(days) = days {
-        let cutoff = Local::now().date_naive() - chrono::Duration::days(days as i64);
-        all_entries
-            .into_iter()
-            .filter(|e| {
-                if let Ok(dt) = DateTime::parse_from_rfc3339(&e.timestamp) {
-                    // 转换为本地时区后提取日期进行比较
-                    dt.with_timezone(&Local).date_naive() >= cutoff
-                } else {
-                    false
-                }
-            })
-            .collect()
-    } else {
-        all_entries
-    };
-
-    // Calculate aggregated stats
-    let mut total_cost = 0.0;
-    let mut total_input_tokens = 0u64;
-    let mut total_output_tokens = 0u64;
-    let mut total_cache_creation_tokens = 0u64;
-    let mut total_cache_read_tokens = 0u64;
-
-    let mut model_stats: HashMap<String, ModelUsage> = HashMap::new();
-    let mut daily_stats: HashMap<String, DailyUsage> = HashMap::new();
-    let mut project_stats: HashMap<String, ProjectUsage> = HashMap::new();
-
-    for entry in &filtered_entries {
-        // Update totals
-        total_cost += entry.cost;
-        total_input_tokens += entry.input_tokens;
-        total_output_tokens += entry.output_tokens;
-        total_cache_creation_tokens += entry.cache_creation_tokens;
-        total_cache_read_tokens += entry.cache_read_tokens;
-
-        // Update model stats
-        let model_stat = model_stats
-            .entry(entry.model.clone())
-            .or_insert(ModelUsage {
-                model: entry.model.clone(),
-                total_cost: 0.0,
-                total_tokens: 0,
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_creation_tokens: 0,
-                cache_read_tokens: 0,
-                session_count: 0,
-            });
-        model_stat.total_cost += entry.cost;
-        model_stat.input_tokens += entry.input_tokens;
-        model_stat.output_tokens += entry.output_tokens;
-        model_stat.cache_creation_tokens += entry.cache_creation_tokens;
-        model_stat.cache_read_tokens += entry.cache_read_tokens;
-        model_stat.total_tokens = model_stat.input_tokens + model_stat.output_tokens;
-        model_stat.session_count += 1;
-
-        // Update daily stats
-        // 🚀 修复时区问题：使用本地日期而不是 UTC 日期
-        let date = if let Ok(dt) = DateTime::parse_from_rfc3339(&entry.timestamp) {
-            // 转换为本地时间后提取日期
-            dt.with_timezone(&Local).format("%Y-%m-%d").to_string()
-        } else {
-            // 降级：直接从字符串提取（可能不准确）
-            entry
-                .timestamp
-                .split('T')
-                .next()
-                .unwrap_or(&entry.timestamp)
-                .to_string()
-        };
-        let daily_stat = daily_stats.entry(date.clone()).or_insert(DailyUsage {
-            date,
-            total_cost: 0.0,
-            total_tokens: 0,
-            models_used: vec![],
-        });
-        daily_stat.total_cost += entry.cost;
-        daily_stat.total_tokens += entry.input_tokens
-            + entry.output_tokens
-            + entry.cache_creation_tokens
-            + entry.cache_read_tokens;
-        if !daily_stat.models_used.contains(&entry.model) {
-            daily_stat.models_used.push(entry.model.clone());
-        }
-
-        // Update project stats
-        let project_stat =
-            project_stats
-                .entry(entry.project_path.clone())
-                .or_insert(ProjectUsage {
-                    project_path: entry.project_path.clone(),
-                    project_name: entry
-                        .project_path
-                        .split('/')
-                        .last()
-                        .unwrap_or(&entry.project_path)
-                        .to_string(),
-                    total_cost: 0.0,
-                    total_tokens: 0,
-                    session_count: 0,
-                    last_used: entry.timestamp.clone(),
-                });
-        project_stat.total_cost += entry.cost;
-        project_stat.total_tokens += entry.input_tokens
-            + entry.output_tokens
-            + entry.cache_creation_tokens
-            + entry.cache_read_tokens;
-        project_stat.session_count += 1;
-        if entry.timestamp > project_stat.last_used {
-            project_stat.last_used = entry.timestamp.clone();
-        }
-    }
-
-    let total_tokens = total_input_tokens
-        + total_output_tokens
-        + total_cache_creation_tokens
-        + total_cache_read_tokens;
-    let total_sessions = filtered_entries.len() as u64;
-
-    // Convert hashmaps to sorted vectors
-    let mut by_model: Vec<ModelUsage> = model_stats.into_values().collect();
-    by_model.sort_by(|a, b| b.total_cost.partial_cmp(&a.total_cost).unwrap());
-
-    let mut by_date: Vec<DailyUsage> = daily_stats.into_values().collect();
-    by_date.sort_by(|a, b| a.date.cmp(&b.date));
-
-    let mut by_project: Vec<ProjectUsage> = project_stats.into_values().collect();
-    by_project.sort_by(|a, b| b.total_cost.partial_cmp(&a.total_cost).unwrap());
-
-    Ok(UsageStats {
-        total_cost,
-        total_tokens,
-        total_input_tokens,
-        total_output_tokens,
-        total_cache_creation_tokens,
-        total_cache_read_tokens,
-        total_sessions,
-        by_model,
-        by_date,
-        by_project,
-    })
 }
 
-#[command]
-pub fn get_usage_by_date_range(start_date: String, end_date: String) -> Result<UsageStats, String> {
-    let claude_path = dirs::home_dir()
-        .ok_or("Failed to get home directory")?
-        .join(".claude");
-
-    let all_entries = get_all_usage_entries(&claude_path);
-
-    // Parse dates
-    let start = NaiveDate::parse_from_str(&start_date, "%Y-%m-%d").or_else(|_| {
-        DateTime::parse_from_rfc3339(&start_date)
-            .map(|dt| dt.naive_local().date())
-            .map_err(|e| format!("Invalid start date: {}", e))
-    })?;
-    let end = NaiveDate::parse_from_str(&end_date, "%Y-%m-%d").or_else(|_| {
-        DateTime::parse_from_rfc3339(&end_date)
-            .map(|dt| dt.naive_local().date())
-            .map_err(|e| format!("Invalid end date: {}", e))
-    })?;
-
-    // Filter entries by date range
-    // 🚀 修复时区问题：转换为本地时区后进行日期比较
-    let filtered_entries: Vec<_> = all_entries
-        .into_iter()
-        .filter(|e| {
-            if let Ok(dt) = DateTime::parse_from_rfc3339(&e.timestamp) {
-                // 先转换为本地时区，再提取日期进行比较
-                let date = dt.with_timezone(&Local).date_naive();
-                date >= start && date <= end
-            } else {
-                false
-            }
-        })
-        .collect();
-
-    if filtered_entries.is_empty() {
-        return Ok(UsageStats {
-            total_cost: 0.0,
-            total_tokens: 0,
-            total_input_tokens: 0,
-            total_output_tokens: 0,
-            total_cache_creation_tokens: 0,
-            total_cache_read_tokens: 0,
-            total_sessions: 0,
-            by_model: vec![],
-            by_date: vec![],
-            by_project: vec![],
-        });
+fn aggregate_usage_stats(entries: &[UsageEntry]) -> UsageStats {
+    if entries.is_empty() {
+        return empty_usage_stats();
     }
 
-    // Calculate aggregated stats from filtered entries
     let mut total_cost = 0.0;
     let mut total_input_tokens = 0u64;
     let mut total_output_tokens = 0u64;
@@ -658,15 +494,13 @@ pub fn get_usage_by_date_range(start_date: String, end_date: String) -> Result<U
     let mut daily_stats: HashMap<String, DailyUsage> = HashMap::new();
     let mut project_stats: HashMap<String, ProjectUsage> = HashMap::new();
 
-    for entry in &filtered_entries {
-        // Update totals
+    for entry in entries {
         total_cost += entry.cost;
         total_input_tokens += entry.input_tokens;
         total_output_tokens += entry.output_tokens;
         total_cache_creation_tokens += entry.cache_creation_tokens;
         total_cache_read_tokens += entry.cache_read_tokens;
 
-        // Update model stats
         let model_stat = model_stats
             .entry(entry.model.clone())
             .or_insert(ModelUsage {
@@ -687,13 +521,9 @@ pub fn get_usage_by_date_range(start_date: String, end_date: String) -> Result<U
         model_stat.total_tokens = model_stat.input_tokens + model_stat.output_tokens;
         model_stat.session_count += 1;
 
-        // Update daily stats
-        // 🚀 修复时区问题：使用本地日期而不是 UTC 日期
         let date = if let Ok(dt) = DateTime::parse_from_rfc3339(&entry.timestamp) {
-            // 转换为本地时间后提取日期
             dt.with_timezone(&Local).format("%Y-%m-%d").to_string()
         } else {
-            // 降级：直接从字符串提取（可能不准确）
             entry
                 .timestamp
                 .split('T')
@@ -716,7 +546,6 @@ pub fn get_usage_by_date_range(start_date: String, end_date: String) -> Result<U
             daily_stat.models_used.push(entry.model.clone());
         }
 
-        // Update project stats
         let project_stat =
             project_stats
                 .entry(entry.project_path.clone())
@@ -744,18 +573,18 @@ pub fn get_usage_by_date_range(start_date: String, end_date: String) -> Result<U
         }
     }
 
-    let unique_sessions: HashSet<_> = filtered_entries.iter().map(|e| &e.session_id).collect();
+    let unique_sessions: HashSet<_> = entries.iter().map(|e| &e.session_id).collect();
 
     let mut by_model: Vec<ModelUsage> = model_stats.into_values().collect();
-    by_model.sort_by(|a, b| b.total_cost.partial_cmp(&a.total_cost).unwrap());
+    by_model.sort_by(|a, b| compare_f64_desc(a.total_cost, b.total_cost));
 
     let mut by_date: Vec<DailyUsage> = daily_stats.into_values().collect();
     by_date.sort_by(|a, b| a.date.cmp(&b.date));
 
     let mut by_project: Vec<ProjectUsage> = project_stats.into_values().collect();
-    by_project.sort_by(|a, b| b.total_cost.partial_cmp(&a.total_cost).unwrap());
+    by_project.sort_by(|a, b| compare_f64_desc(a.total_cost, b.total_cost));
 
-    Ok(UsageStats {
+    UsageStats {
         total_cost,
         total_tokens: total_input_tokens
             + total_output_tokens
@@ -769,45 +598,12 @@ pub fn get_usage_by_date_range(start_date: String, end_date: String) -> Result<U
         by_model,
         by_date,
         by_project,
-    })
+    }
 }
 
-#[command]
-pub fn get_session_stats(
-    since: Option<String>,
-    until: Option<String>,
-    order: Option<String>,
-) -> Result<Vec<ProjectUsage>, String> {
-    let claude_path = dirs::home_dir()
-        .ok_or("Failed to get home directory")?
-        .join(".claude");
-
-    let all_entries = get_all_usage_entries(&claude_path);
-
-    // Filter by date range if provided
-    // 🚀 修复时区问题：转换为本地时区后进行日期比较
-    let filtered_entries: Vec<_> = all_entries
-        .into_iter()
-        .filter(|e| {
-            if let (Some(since_str), Some(until_str)) = (&since, &until) {
-                if let (Ok(since_date), Ok(until_date)) = (
-                    NaiveDate::parse_from_str(since_str, "%Y%m%d"),
-                    NaiveDate::parse_from_str(until_str, "%Y%m%d"),
-                ) {
-                    if let Ok(dt) = DateTime::parse_from_rfc3339(&e.timestamp) {
-                        // 先转换为本地时区，再提取日期进行比较
-                        let date = dt.with_timezone(&Local).date_naive();
-                        return date >= since_date && date <= until_date;
-                    }
-                }
-            }
-            true
-        })
-        .collect();
-
-    // Group by project
+fn session_stats_from_entries(entries: &[UsageEntry], order: Option<String>) -> Vec<ProjectUsage> {
     let mut project_stats: HashMap<String, ProjectUsage> = HashMap::new();
-    for entry in filtered_entries {
+    for entry in entries {
         let project_stat =
             project_stats
                 .entry(entry.project_path.clone())
@@ -836,14 +632,196 @@ pub fn get_session_stats(
     }
 
     let mut by_session: Vec<ProjectUsage> = project_stats.into_values().collect();
-
-    // Sort by order
     let order_str = order.unwrap_or_else(|| "desc".to_string());
     if order_str == "asc" {
-        by_session.sort_by(|a, b| a.total_cost.partial_cmp(&b.total_cost).unwrap());
+        by_session.sort_by(|a, b| compare_f64_asc(a.total_cost, b.total_cost));
     } else {
-        by_session.sort_by(|a, b| b.total_cost.partial_cmp(&a.total_cost).unwrap());
+        by_session.sort_by(|a, b| compare_f64_desc(a.total_cost, b.total_cost));
     }
+    by_session
+}
 
-    Ok(by_session)
+fn filter_usage_entries_by_date_range(
+    entries: Vec<UsageEntry>,
+    start: Option<NaiveDate>,
+    end: Option<NaiveDate>,
+) -> Vec<UsageEntry> {
+    entries
+        .into_iter()
+        .filter(|entry| {
+            if start.is_none() && end.is_none() {
+                return true;
+            }
+
+            let Ok(dt) = DateTime::parse_from_rfc3339(&entry.timestamp) else {
+                return false;
+            };
+            let date = dt.with_timezone(&Local).date_naive();
+
+            start.map(|start| date >= start).unwrap_or(true)
+                && end.map(|end| date <= end).unwrap_or(true)
+        })
+        .collect()
+}
+
+#[command]
+pub async fn get_usage_stats(days: Option<u32>) -> Result<UsageStats, String> {
+    tokio::task::spawn_blocking(move || get_usage_stats_blocking(days))
+        .await
+        .map_err(|e| format!("get_usage_stats task failed: {}", e))?
+}
+
+fn get_usage_stats_blocking(days: Option<u32>) -> Result<UsageStats, String> {
+    let claude_path = dirs::home_dir()
+        .ok_or("Failed to get home directory")?
+        .join(".claude");
+
+    let all_entries = get_all_usage_entries(&claude_path);
+
+    // Filter by days if specified
+    // 🚀 修复时区问题：使用本地时区进行日期比较
+    let filtered_entries = if let Some(days) = days {
+        let cutoff = Local::now().date_naive() - chrono::Duration::days(days as i64);
+        all_entries
+            .into_iter()
+            .filter(|e| {
+                if let Ok(dt) = DateTime::parse_from_rfc3339(&e.timestamp) {
+                    // 转换为本地时区后提取日期进行比较
+                    dt.with_timezone(&Local).date_naive() >= cutoff
+                } else {
+                    false
+                }
+            })
+            .collect()
+    } else {
+        all_entries
+    };
+
+    Ok(aggregate_usage_stats(&filtered_entries))
+}
+
+#[command]
+pub async fn get_usage_by_date_range(
+    start_date: String,
+    end_date: String,
+) -> Result<UsageStats, String> {
+    tokio::task::spawn_blocking(move || get_usage_by_date_range_blocking(start_date, end_date))
+        .await
+        .map_err(|e| format!("get_usage_by_date_range task failed: {}", e))?
+}
+
+fn get_usage_by_date_range_blocking(
+    start_date: String,
+    end_date: String,
+) -> Result<UsageStats, String> {
+    // Parse dates
+    let start = NaiveDate::parse_from_str(&start_date, "%Y-%m-%d").or_else(|_| {
+        DateTime::parse_from_rfc3339(&start_date)
+            .map(|dt| dt.naive_local().date())
+            .map_err(|e| format!("Invalid start date: {}", e))
+    })?;
+    let end = NaiveDate::parse_from_str(&end_date, "%Y-%m-%d").or_else(|_| {
+        DateTime::parse_from_rfc3339(&end_date)
+            .map(|dt| dt.naive_local().date())
+            .map_err(|e| format!("Invalid end date: {}", e))
+    })?;
+
+    let claude_path = dirs::home_dir()
+        .ok_or("Failed to get home directory")?
+        .join(".claude");
+    let all_entries = get_all_usage_entries(&claude_path);
+    let filtered_entries = filter_usage_entries_by_date_range(all_entries, Some(start), Some(end));
+
+    Ok(aggregate_usage_stats(&filtered_entries))
+}
+
+#[command]
+pub async fn get_session_stats(
+    since: Option<String>,
+    until: Option<String>,
+    order: Option<String>,
+) -> Result<Vec<ProjectUsage>, String> {
+    tokio::task::spawn_blocking(move || get_session_stats_blocking(since, until, order))
+        .await
+        .map_err(|e| format!("get_session_stats task failed: {}", e))?
+}
+
+#[command]
+pub async fn get_usage_dashboard_stats(
+    start_date: Option<String>,
+    end_date: Option<String>,
+    since: Option<String>,
+    until: Option<String>,
+    order: Option<String>,
+) -> Result<UsageDashboardStats, String> {
+    tokio::task::spawn_blocking(move || {
+        get_usage_dashboard_stats_blocking(start_date, end_date, since, until, order)
+    })
+    .await
+    .map_err(|e| format!("get_usage_dashboard_stats task failed: {}", e))?
+}
+
+fn get_usage_dashboard_stats_blocking(
+    start_date: Option<String>,
+    end_date: Option<String>,
+    since: Option<String>,
+    until: Option<String>,
+    order: Option<String>,
+) -> Result<UsageDashboardStats, String> {
+    let claude_path = dirs::home_dir()
+        .ok_or("Failed to get home directory")?
+        .join(".claude");
+    let all_entries = get_all_usage_entries(&claude_path);
+
+    let stats_entries = if let (Some(start_date), Some(end_date)) = (start_date, end_date) {
+        let start = NaiveDate::parse_from_str(&start_date, "%Y-%m-%d").or_else(|_| {
+            DateTime::parse_from_rfc3339(&start_date)
+                .map(|dt| dt.naive_local().date())
+                .map_err(|e| format!("Invalid start date: {}", e))
+        })?;
+        let end = NaiveDate::parse_from_str(&end_date, "%Y-%m-%d").or_else(|_| {
+            DateTime::parse_from_rfc3339(&end_date)
+                .map(|dt| dt.naive_local().date())
+                .map_err(|e| format!("Invalid end date: {}", e))
+        })?;
+        filter_usage_entries_by_date_range(all_entries.clone(), Some(start), Some(end))
+    } else {
+        all_entries.clone()
+    };
+
+    let session_since = since
+        .as_deref()
+        .and_then(|value| NaiveDate::parse_from_str(value, "%Y%m%d").ok());
+    let session_until = until
+        .as_deref()
+        .and_then(|value| NaiveDate::parse_from_str(value, "%Y%m%d").ok());
+    let session_entries =
+        filter_usage_entries_by_date_range(all_entries, session_since, session_until);
+
+    Ok(UsageDashboardStats {
+        stats: aggregate_usage_stats(&stats_entries),
+        session_stats: session_stats_from_entries(&session_entries, order),
+    })
+}
+
+fn get_session_stats_blocking(
+    since: Option<String>,
+    until: Option<String>,
+    order: Option<String>,
+) -> Result<Vec<ProjectUsage>, String> {
+    let claude_path = dirs::home_dir()
+        .ok_or("Failed to get home directory")?
+        .join(".claude");
+
+    let all_entries = get_all_usage_entries(&claude_path);
+
+    let since_date = since
+        .as_deref()
+        .and_then(|value| NaiveDate::parse_from_str(value, "%Y%m%d").ok());
+    let until_date = until
+        .as_deref()
+        .and_then(|value| NaiveDate::parse_from_str(value, "%Y%m%d").ok());
+    let filtered_entries = filter_usage_entries_by_date_range(all_entries, since_date, until_date);
+
+    Ok(session_stats_from_entries(&filtered_entries, order))
 }

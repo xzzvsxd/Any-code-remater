@@ -124,6 +124,7 @@ pub fn extract_first_user_message<P: AsRef<Path>>(
 }
 
 /// Extracts the timestamp of the last message (user or assistant) from a JSONL file
+#[allow(dead_code)]
 pub fn extract_last_message_timestamp<P: AsRef<Path>>(jsonl_path: P) -> Option<String> {
     let file = match fs::File::open(jsonl_path) {
         Ok(file) => file,
@@ -152,6 +153,7 @@ pub fn extract_last_message_timestamp<P: AsRef<Path>>(jsonl_path: P) -> Option<S
 
 /// Extracts the model used in the session from a JSONL file
 /// Looks for model information in system init messages or assistant messages
+#[allow(dead_code)]
 pub fn extract_session_model<P: AsRef<Path>>(jsonl_path: P) -> Option<String> {
     let file = match fs::File::open(jsonl_path) {
         Ok(file) => file,

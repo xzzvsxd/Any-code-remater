@@ -291,6 +291,9 @@ pub struct GeminiExecutionOptions {
     /// Enable debug mode
     #[serde(default)]
     pub debug: bool,
+
+    /// Frontend tab id used to scope early global events before the runtime session id is known.
+    pub tab_id: Option<String>,
 }
 
 impl Default for GeminiExecutionOptions {
@@ -303,6 +306,7 @@ impl Default for GeminiExecutionOptions {
             include_directories: None,
             session_id: None,
             debug: false,
+            tab_id: None,
         }
     }
 }
@@ -346,6 +350,7 @@ use std::sync::Arc;
 use tokio::process::Child;
 use tokio::sync::Mutex;
 
+use crate::commands::wsl_utils;
 use crate::process::JobObject;
 
 /// Gemini process handle with PID for proper cleanup
@@ -354,6 +359,103 @@ pub struct GeminiProcessHandle {
     pub pid: u32,
     /// Windows Job Object (kills all child processes when dropped); no-op on non-Windows.
     pub job_object: Option<JobObject>,
+    #[cfg(target_os = "windows")]
+    pub wsl_spec: Option<wsl_utils::WslCommandSpec>,
+}
+
+impl GeminiProcessHandle {
+    pub async fn terminate(mut self, reason: &str) {
+        log::info!(
+            "[Gemini] Terminating process PID {} for {}",
+            self.pid,
+            reason
+        );
+
+        let mut terminated_via_job = false;
+        #[cfg(target_os = "windows")]
+        if let Some(spec) = self.wsl_spec.as_ref() {
+            match wsl_utils::build_wsl_termination_command(spec, self.pid, reason) {
+                Ok(mut termination_cmd) => match termination_cmd.output() {
+                    Ok(output) if output.status.success() => {
+                        log::info!(
+                            "[Gemini] Terminated WSL-side process for host PID {}",
+                            self.pid
+                        );
+                    }
+                    Ok(output) => {
+                        log::warn!(
+                            "[Gemini] WSL-side termination command failed for host PID {}: {}",
+                            self.pid,
+                            String::from_utf8_lossy(&output.stderr)
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[Gemini] Failed to run WSL-side termination for host PID {}: {}",
+                            self.pid,
+                            e
+                        );
+                    }
+                },
+                Err(e) => {
+                    log::warn!(
+                        "[Gemini] Refused unsafe WSL-side termination for host PID {}: {}",
+                        self.pid,
+                        e
+                    );
+                }
+            }
+        }
+
+        if let Some(job) = self.job_object.as_ref() {
+            match job.terminate_all(1) {
+                Ok(_) => {
+                    terminated_via_job = true;
+                    log::info!("[Gemini] Terminated Job Object for PID {}", self.pid);
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[Gemini] Failed to terminate Job Object for PID {}: {}",
+                        self.pid,
+                        e
+                    );
+                }
+            }
+        }
+
+        if !terminated_via_job {
+            #[cfg(target_os = "windows")]
+            if self.wsl_spec.is_some() {
+                log::warn!(
+                    "[Gemini] Refusing unsafe Windows taskkill fallback for WSL host PID {}",
+                    self.pid
+                );
+                if let Err(e2) = self.child.kill().await {
+                    log::error!(
+                        "[Gemini] Fallback child.kill failed for PID {}: {}",
+                        self.pid,
+                        e2
+                    );
+                }
+                return;
+            }
+
+            if let Err(e) = crate::commands::claude::kill_process_tree(self.pid) {
+                log::warn!(
+                    "[Gemini] Failed to terminate process tree for PID {}: {}",
+                    self.pid,
+                    e
+                );
+                if let Err(e2) = self.child.kill().await {
+                    log::error!(
+                        "[Gemini] Fallback child.kill failed for PID {}: {}",
+                        self.pid,
+                        e2
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// Global state to track Gemini processes

@@ -243,6 +243,10 @@ export const SystemMessage: React.FC<SystemMessageProps> = ({
     return <CommandOutputMessage message={message} className={className} />;
   }
 
+  if (subtype === "execution-complete" || subtype === "execution-cancelled" || subtype === "execution-error") {
+    return <ExecutionStatusMessage message={message} className={className} />;
+  }
+
   // 🆕 处理斜杠命令错误（如 "Unknown slash command: help"）
   if (subtype === "command-error") {
     return <CommandErrorMessage message={message} className={className} />;
@@ -316,6 +320,48 @@ export const SystemMessage: React.FC<SystemMessageProps> = ({
 };
 
 SystemMessage.displayName = "SystemMessage";
+
+const ExecutionStatusMessage: React.FC<{ message: ClaudeStreamMessage; className?: string }> = ({
+  message,
+  className,
+}) => {
+  const content = (message as any).result || extractMessageContent(message);
+  if (!content) return null;
+
+  const subtype = message.subtype;
+  const formattedTime = formatTimestamp((message as any).receivedAt ?? (message as any).timestamp);
+  const isComplete = subtype === "execution-complete";
+  const isCancelled = subtype === "execution-cancelled";
+  const title = isComplete ? "AI 执行完成" : isCancelled ? "已取消当前会话" : "AI 执行失败";
+  const Icon = isComplete ? Info : isCancelled ? Terminal : AlertCircle;
+
+  return (
+    <div className={cn("my-4", className)}>
+      <div
+        className={cn(
+          "rounded-lg border px-4 py-3 text-sm",
+          isComplete && "border-green-500/30 bg-green-500/10 text-green-800 dark:text-green-200",
+          isCancelled && "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200",
+          !isComplete && !isCancelled && "border-destructive/30 bg-destructive/10 text-destructive"
+        )}
+      >
+        <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-wide">
+          <Icon className="h-3.5 w-3.5" />
+          {title}
+          {formattedTime && (
+            <>
+              <span className="opacity-50">•</span>
+              <span className="font-mono normal-case opacity-80">{formattedTime}</span>
+            </>
+          )}
+        </div>
+        <div className="whitespace-pre-wrap text-sm leading-relaxed">
+          {content}
+        </div>
+      </div>
+    </div>
+  );
+};
 
 /**
  * 可折叠的命令输出消息组件

@@ -39,6 +39,8 @@ export interface GeminiExecutionOptions {
   includeDirectories?: string[];
   sessionId?: string;
   debug?: boolean;
+  /** Unique frontend tab identifier used to scope early global events */
+  tabId?: string;
 }
 
 /**

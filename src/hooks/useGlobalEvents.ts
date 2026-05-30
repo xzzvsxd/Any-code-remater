@@ -12,7 +12,7 @@ const isClaudeCompleteSuccess = (payload: ClaudeCompletePayload) => {
 };
 
 export const useGlobalEvents = () => {
-  const { loadProjects, refreshSessions, selectedProject } = useProject();
+  const { scheduleProjectRefresh, selectedProject } = useProject();
   const { navigateTo, currentView } = useNavigation();
   const { openSessionInBackground, switchToTab } = useTabs();
 
@@ -56,10 +56,7 @@ export const useGlobalEvents = () => {
       try {
         unlisten = await listen<ClaudeCompletePayload>('claude-complete', async (event) => {
           if (isClaudeCompleteSuccess(event.payload)) {
-            await loadProjects();
-            if (selectedProject) {
-              await refreshSessions();
-            }
+            scheduleProjectRefresh(Boolean(selectedProject));
           }
         });
       } catch (err) {
@@ -71,7 +68,7 @@ export const useGlobalEvents = () => {
     return () => {
       if (unlisten) unlisten();
     };
-  }, [selectedProject, loadProjects, refreshSessions]);
+  }, [selectedProject, scheduleProjectRefresh]);
 
   // Handle Prompt API Settings
   useEffect(() => {

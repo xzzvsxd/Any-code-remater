@@ -67,7 +67,7 @@ interface UserQuestionContextValue {
   /** 触发问答对话框（当检测到 AskUserQuestion 工具调用时） */
   triggerQuestionDialog: (questions: Question[]) => void;
   /** 提交答案 - 格式化并发送给 Claude */
-  submitAnswers: (answers: UserAnswers) => void;
+  submitAnswers: (answers: UserAnswers) => boolean;
   /** 关闭问答对话框 */
   closeQuestionDialog: () => void;
 
@@ -83,6 +83,10 @@ interface UserQuestionContextValue {
 const UserQuestionContext = createContext<UserQuestionContextValue | undefined>(
   undefined
 );
+
+function getAnsweredQuestionStorageKey(): string {
+  return 'answered_question_ids';
+}
 
 interface UserQuestionProviderProps {
   children: ReactNode;
@@ -135,7 +139,7 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
   const [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(null);
   const [showQuestionDialog, setShowQuestionDialog] = useState(false);
   const [answeredQuestionIds, setAnsweredQuestionIds] = useState<Set<string>>(() =>
-    loadAnsweredQuestionIds('answered_question_ids')
+    loadAnsweredQuestionIds(getAnsweredQuestionStorageKey())
   );
 
   // 发送消息的回调引用
@@ -187,14 +191,24 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
 
   // 提交答案 - 格式化并发送给 Claude
   const submitAnswers = useCallback((answers: UserAnswers) => {
-    if (!pendingQuestion) return;
+    if (!pendingQuestion) return false;
+
+    if (!sendMessageCallbackRef.current) {
+      console.warn("[UserQuestion] Cannot submit answers: send callback is not available");
+      setShowQuestionDialog(true);
+      return false;
+    }
+
+    const sendMessage = sendMessageCallbackRef.current;
 
     const { questionId, questions } = pendingQuestion;
+    const message = formatAnswersAsMessage(answers, questions);
+
     // 标记为已回答
     setAnsweredQuestionIds(prev => {
       const newSet = new Set(prev);
       newSet.add(questionId);
-      saveAnsweredQuestionIds('answered_question_ids', newSet);
+      saveAnsweredQuestionIds(getAnsweredQuestionStorageKey(), newSet);
       return newSet;
     });
 
@@ -202,14 +216,12 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
     setPendingQuestion(null);
     setShowQuestionDialog(false);
 
-    // 格式化答案并自动发送给 Claude
-    if (sendMessageCallbackRef.current) {
-      const message = formatAnswersAsMessage(answers, questions);
-      // 延迟发送，确保状态已更新
-      setTimeout(() => {
-        sendMessageCallbackRef.current?.(message);
-      }, 100);
-    }
+    // 延迟发送，确保状态已更新；捕获当前 callback，避免切 tab/卸载时答案静默丢失。
+    setTimeout(() => {
+      sendMessage(message);
+    }, 100);
+
+    return true;
   }, [pendingQuestion, formatAnswersAsMessage]);
 
   // 关闭问答对话框（不提交答案）
@@ -245,6 +257,13 @@ export function useUserQuestion() {
     throw new Error("useUserQuestion must be used within UserQuestionProvider");
   }
   return context;
+}
+
+/**
+ * Optional hook for widgets that may render outside UserQuestionProvider.
+ */
+export function useOptionalUserQuestion() {
+  return useContext(UserQuestionContext);
 }
 
 /**

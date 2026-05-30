@@ -9,6 +9,7 @@ use chrono::Utc;
  * - Session truncation and revert operations
  */
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -16,7 +17,8 @@ use std::path::PathBuf;
 use super::super::simple_git;
 // Import rewind helpers/types shared with Claude
 use super::super::prompt_tracker::{
-    load_execution_config, PromptRecord as ClaudePromptRecord, RewindCapabilities, RewindMode,
+    has_valid_rewind_commit, load_execution_config, PromptRecord as ClaudePromptRecord,
+    PromptRecordWithCapabilities, RewindCapabilities, RewindMode,
 };
 // Import Gemini config helpers
 use super::config::get_gemini_dir;
@@ -204,12 +206,10 @@ pub fn truncate_gemini_git_records(session_id: &str, prompt_index: usize) -> Res
 // Prompt Extraction from Gemini Session Files
 // ============================================================================
 
-/// Extract prompts from Gemini session chat file
-/// Gemini stores sessions in chats/session-*.json files with structured format
-fn extract_gemini_prompts(
+fn extract_gemini_prompts_with_records(
     session_id: &str,
     project_path: &str,
-) -> Result<Vec<PromptRecord>, String> {
+) -> Result<(Vec<PromptRecord>, GeminiGitRecords), String> {
     let sessions_dir = get_gemini_sessions_dir(project_path)?;
 
     // Find session file using helper function (handles Gemini's 8-char prefix naming)
@@ -272,14 +272,14 @@ fn extract_gemini_prompts(
         prompt_index += 1;
     }
 
-    // Enrich with git records (if present)
     let git_records = load_gemini_git_records(session_id)?;
+    let records_by_prompt: HashMap<usize, &GeminiPromptGitRecord> = git_records
+        .records
+        .iter()
+        .map(|record| (record.prompt_index, record))
+        .collect();
     for prompt in prompts.iter_mut() {
-        if let Some(record) = git_records
-            .records
-            .iter()
-            .find(|r| r.prompt_index == prompt.index)
-        {
+        if let Some(record) = records_by_prompt.get(&prompt.index) {
             prompt.git_commit_before = record.commit_before.clone();
             prompt.git_commit_after = record.commit_after.clone();
 
@@ -291,7 +291,16 @@ fn extract_gemini_prompts(
         }
     }
 
-    Ok(prompts)
+    Ok((prompts, git_records))
+}
+
+/// Extract prompts from Gemini session chat file
+/// Gemini stores sessions in chats/session-*.json files with structured format
+fn extract_gemini_prompts(
+    session_id: &str,
+    project_path: &str,
+) -> Result<Vec<PromptRecord>, String> {
+    extract_gemini_prompts_with_records(session_id, project_path).map(|(prompts, _)| prompts)
 }
 
 /// Get prompt list for Gemini sessions (for revert picker)
@@ -300,7 +309,88 @@ pub async fn get_gemini_prompt_list(
     session_id: String,
     project_path: String,
 ) -> Result<Vec<PromptRecord>, String> {
-    extract_gemini_prompts(&session_id, &project_path)
+    tokio::task::spawn_blocking(move || extract_gemini_prompts(&session_id, &project_path))
+        .await
+        .map_err(|e| format!("get_gemini_prompt_list task failed: {}", e))?
+}
+
+fn gemini_rewind_capabilities_for_prompt(
+    prompt: &PromptRecord,
+    git_record: Option<&GeminiPromptGitRecord>,
+    git_operations_disabled: bool,
+) -> RewindCapabilities {
+    if git_operations_disabled {
+        return RewindCapabilities {
+            conversation: true,
+            code: false,
+            both: false,
+            warning: Some(
+                "Git 操作已在配置中禁用。只能撤回对话历史，无法回滚代码变更。".to_string(),
+            ),
+            source: prompt.source.clone(),
+        };
+    }
+
+    if let Some(record) = git_record {
+        let has_valid_commit =
+            has_valid_rewind_commit(&record.commit_before, record.commit_after.as_ref());
+
+        RewindCapabilities {
+            conversation: true,
+            code: has_valid_commit,
+            both: has_valid_commit,
+            warning: if !has_valid_commit {
+                Some("此提示词没有关联的 Git 记录，只能删除消息，无法回滚代码".to_string())
+            } else {
+                None
+            },
+            source: "project".to_string(),
+        }
+    } else {
+        RewindCapabilities {
+            conversation: true,
+            code: false,
+            both: false,
+            warning: Some("此提示词没有关联的 Git 记录，只能删除消息".to_string()),
+            source: "project".to_string(),
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn get_gemini_prompt_list_with_capabilities(
+    session_id: String,
+    project_path: String,
+) -> Result<Vec<PromptRecordWithCapabilities>, String> {
+    tokio::task::spawn_blocking(move || {
+        let execution_config =
+            load_execution_config().map_err(|e| format!("Failed to load execution config: {}", e))?;
+        let git_operations_disabled = execution_config.disable_rewind_git_operations;
+        let (prompts, git_records) =
+            extract_gemini_prompts_with_records(&session_id, &project_path)?;
+        let records_by_prompt: HashMap<usize, &GeminiPromptGitRecord> = git_records
+            .records
+            .iter()
+            .map(|record| (record.prompt_index, record))
+            .collect();
+
+        Ok(prompts
+            .into_iter()
+            .map(|prompt| {
+                let capabilities = gemini_rewind_capabilities_for_prompt(
+                    &prompt,
+                    records_by_prompt.get(&prompt.index).copied(),
+                    git_operations_disabled,
+                );
+                PromptRecordWithCapabilities {
+                    prompt,
+                    capabilities,
+                }
+            })
+            .collect())
+    })
+    .await
+    .map_err(|e| format!("get_gemini_prompt_list_with_capabilities task failed: {}", e))?
 }
 
 fn build_prompt_commit_message(
@@ -337,75 +427,27 @@ pub async fn check_gemini_rewind_capabilities(
         prompt_index
     );
 
-    // Respect global execution config for git operations
-    let execution_config =
-        load_execution_config().map_err(|e| format!("Failed to load execution config: {}", e))?;
-    let git_operations_disabled = execution_config.disable_rewind_git_operations;
+    tokio::task::spawn_blocking(move || {
+        let execution_config =
+            load_execution_config().map_err(|e| format!("Failed to load execution config: {}", e))?;
+        let git_operations_disabled = execution_config.disable_rewind_git_operations;
+        let (prompts, git_records) =
+            extract_gemini_prompts_with_records(&session_id, &project_path)?;
+        let prompt = prompts
+            .get(prompt_index)
+            .ok_or_else(|| format!("Prompt #{} not found", prompt_index))?;
 
-    // Extract prompts to validate index
-    let prompts = extract_gemini_prompts(&session_id, &project_path)?;
-    let prompt = prompts
-        .get(prompt_index)
-        .ok_or_else(|| format!("Prompt #{} not found", prompt_index))?;
-
-    if git_operations_disabled {
-        return Ok(RewindCapabilities {
-            conversation: true,
-            code: false,
-            both: false,
-            warning: Some(
-                "Git 操作已在配置中禁用。只能撤回对话历史，无法回滚代码变更。".to_string(),
-            ),
-            source: prompt.source.clone(),
-        });
-    }
-
-    // Look up git record for this prompt index
-    let git_records = load_gemini_git_records(&session_id)?;
-    let git_record = git_records
-        .records
-        .iter()
-        .find(|r| r.prompt_index == prompt_index);
-
-    if let Some(record) = git_record {
-        let has_valid_commit = !record.commit_before.is_empty()
-            && record.commit_before != "NONE"
-            && record
-                .commit_after
-                .as_ref()
-                .map(|commit_after| commit_after != &record.commit_before)
-                .unwrap_or(false);
-
-        log::info!(
-            "[Gemini Rewind] ✅ Prompt #{} with git record: has_valid_commit={}",
-            prompt_index,
-            has_valid_commit
-        );
-
-        Ok(RewindCapabilities {
-            conversation: true,
-            code: has_valid_commit,
-            both: has_valid_commit,
-            warning: if !has_valid_commit {
-                Some("此提示词没有关联的 Git 记录，只能删除消息，无法回滚代码".to_string())
-            } else {
-                None
-            },
-            source: "project".to_string(),
-        })
-    } else {
-        log::warn!(
-            "[Gemini Rewind] ⚠️ No git record found for prompt #{}",
-            prompt_index
-        );
-        Ok(RewindCapabilities {
-            conversation: true,
-            code: false,
-            both: false,
-            warning: Some("此提示词没有关联的 Git 记录，只能删除消息".to_string()),
-            source: "project".to_string(),
-        })
-    }
+        Ok(gemini_rewind_capabilities_for_prompt(
+            prompt,
+            git_records
+                .records
+                .iter()
+                .find(|r| r.prompt_index == prompt_index),
+            git_operations_disabled,
+        ))
+    })
+    .await
+    .map_err(|e| format!("check_gemini_rewind_capabilities task failed: {}", e))?
 }
 
 // ============================================================================

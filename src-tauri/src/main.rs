@@ -104,8 +104,8 @@ use commands::storage::{init_database, AgentDb};
 
 use commands::clipboard::{read_from_clipboard, save_clipboard_image, write_to_clipboard};
 use commands::prompt_tracker::{
-    check_rewind_capabilities, get_prompt_list, get_unified_prompt_list, mark_prompt_completed,
-    record_prompt_sent, revert_to_prompt,
+    check_rewind_capabilities, get_prompt_list, get_prompt_list_with_capabilities,
+    get_unified_prompt_list, mark_prompt_completed, record_prompt_sent, revert_to_prompt,
 };
 use commands::provider::{
     add_provider_config, clear_provider_config, delete_provider_config,
@@ -124,7 +124,9 @@ use commands::translator::{
     get_translation_config, init_translation_service_command, translate, translate_batch,
     update_translation_config,
 };
-use commands::usage::{get_session_stats, get_usage_by_date_range, get_usage_stats};
+use commands::usage::{
+    get_session_stats, get_usage_by_date_range, get_usage_dashboard_stats, get_usage_stats,
+};
 use commands::window::{
     broadcast_to_session_windows, close_session_window, create_session_window, emit_to_window,
     focus_session_window, list_session_windows, set_titlebar_theme,
@@ -149,6 +151,7 @@ use commands::codex::{
     get_codex_multi_agent_config,
     get_codex_path,
     get_codex_prompt_list,
+    get_codex_prompt_list_with_capabilities,
     // Codex provider management
     get_codex_provider_presets,
     // Codex usage statistics
@@ -197,6 +200,7 @@ use commands::gemini::{
     get_gemini_models,
     // Gemini Rewind commands
     get_gemini_prompt_list,
+    get_gemini_prompt_list_with_capabilities,
     // Gemini Provider commands
     get_gemini_provider_presets,
     get_gemini_session_detail,
@@ -406,6 +410,7 @@ fn main() {
             get_usage_stats,
             get_usage_by_date_range,
             get_session_stats,
+            get_usage_dashboard_stats,
             // MCP (Model Context Protocol)
             mcp_add,
             mcp_list,
@@ -492,6 +497,7 @@ fn main() {
             mark_prompt_completed,
             revert_to_prompt,
             get_prompt_list,
+            get_prompt_list_with_capabilities,
             get_unified_prompt_list,
             check_rewind_capabilities,
             // Claude Extensions (Plugins, Subagents, Skills & Custom Commands)
@@ -526,6 +532,7 @@ fn main() {
             delete_codex_session,
             load_codex_session_history,
             get_codex_prompt_list,
+            get_codex_prompt_list_with_capabilities,
             check_codex_rewind_capabilities,
             check_codex_availability,
             // Codex Mode Configuration
@@ -584,6 +591,7 @@ fn main() {
             save_gemini_system_prompt,
             // Gemini Rewind Commands
             get_gemini_prompt_list,
+            get_gemini_prompt_list_with_capabilities,
             check_gemini_rewind_capabilities,
             record_gemini_prompt_sent,
             record_gemini_prompt_completed,

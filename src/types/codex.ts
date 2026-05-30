@@ -166,6 +166,9 @@ export interface CodexExecutionOptions {
 
   /** Resume last session */
   resumeLast?: boolean;
+
+  /** Unique frontend tab identifier used to scope early global events */
+  tabId?: string;
 }
 
 // ============================================================================

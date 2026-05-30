@@ -29,6 +29,7 @@ import {
   cacheCodexModelFromStream,
   cacheGeminiModelFromStream,
 } from '@/lib/modelNameParser';
+import { notifyAiExecutionComplete } from '@/lib/aiCompletionNotification';
 
 /**
  * Hook 配置
@@ -64,6 +65,7 @@ interface UseSessionStreamConfig {
    * 状态更新回调
    */
   setIsLoading: (loading: boolean) => void;
+  setIsHistoryLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   setMessages: React.Dispatch<React.SetStateAction<ClaudeStreamMessage[]>>;
   setRawJsonlOutput: React.Dispatch<React.SetStateAction<string[]>>;
@@ -92,6 +94,11 @@ interface UseSessionStreamConfig {
    * This prevents the "reverting to latest session" bug.
    */
   isNewSessionInstance?: boolean;
+
+  /**
+   * 返回当前重连/运行任务的已运行秒数，用于完成提醒。
+   */
+  getRunElapsedSeconds?: () => number | null;
 }
 
 /**
@@ -130,6 +137,7 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
     hasActiveSessionRef,
     unlistenRefs,
     setIsLoading,
+    setIsHistoryLoading,
     setError,
     setMessages,
     setRawJsonlOutput,
@@ -138,6 +146,7 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
     processMessageWithTranslation,
     onSessionNotFound,
     isNewSessionInstance,
+    getRunElapsedSeconds,
   } = config;
 
   // Internal refs
@@ -188,7 +197,7 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
     loadingSessionIdRef.current = currentSessionId;
 
     try {
-      setIsLoading(true);
+      setIsHistoryLoading(true);
       setError(null);
 
       const engine = getEngine();
@@ -314,7 +323,7 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
       // 更新状态
       setMessages(processedMessages);
       setRawJsonlOutput(history.map(h => JSON.stringify(h)));
-      setIsLoading(false);
+      setIsHistoryLoading(false);
 
     } catch (err) {
       console.error('[useSessionStream] Failed to load session history:', err);
@@ -330,19 +339,19 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
       if (isSessionNotFound) {
         console.debug('[useSessionStream] Session not found (new session), continuing');
         onSessionNotFound?.();
-        setIsLoading(false);
+        setIsHistoryLoading(false);
         return;
       }
 
       setError('加载会话历史记录失败');
-      setIsLoading(false);
+      setIsHistoryLoading(false);
     }
   }, [
     session,
     isNewSessionInstance,
     isMountedRef,
     getEngine,
-    setIsLoading,
+    setIsHistoryLoading,
     setError,
     setMessages,
     setRawJsonlOutput,
@@ -408,6 +417,7 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
 
     const engine = getEngine();
     const eventPrefix = engine === 'codex' ? 'codex' : engine === 'gemini' ? 'gemini' : 'claude';
+    const notificationEngine = engine === 'codex' ? 'codex' : engine === 'gemini' ? 'gemini' : 'claude';
 
     // 创建消息队列（新架构核心）
     messageQueueRef.current = new AsyncQueue<ClaudeStreamMessage>();
@@ -451,6 +461,12 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
         console.error('[useSessionStream] Error:', event.payload);
         if (isMountedRef.current) {
           setError(event.payload);
+          setIsLoading(false);
+          messageQueueRef.current?.done();
+          hasActiveSessionRef.current = false;
+          isListeningRef.current = false;
+          unlistenRefs.current.forEach(u => u && typeof u === 'function' && u());
+          unlistenRefs.current = [];
         }
       }
     );
@@ -470,6 +486,13 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
           // 清理监听器
           unlistenRefs.current.forEach(u => u && typeof u === 'function' && u());
           unlistenRefs.current = [];
+          await notifyAiExecutionComplete({
+            engine: notificationEngine,
+            sessionId,
+            runId: sessionId,
+            elapsedSeconds: getRunElapsedSeconds?.() ?? null,
+            projectPath: session?.project_path ?? null,
+          });
         }
       }
     );
@@ -487,7 +510,10 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
     setClaudeSessionId,
     setError,
     setIsLoading,
+    setIsHistoryLoading,
     processMessage,
+    getRunElapsedSeconds,
+    session?.project_path,
   ]);
 
   // 清理（组件卸载时）

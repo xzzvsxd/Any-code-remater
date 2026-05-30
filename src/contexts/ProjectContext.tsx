@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react';
 import { api, Project, Session } from '@/lib/api';
 import { useTranslation } from 'react-i18next';
 
@@ -12,6 +12,7 @@ interface ProjectContextType {
   selectProject: (project: Project) => Promise<void>;
   registerProjectByPath: (projectPath: string) => Promise<void>;
   refreshSessions: () => Promise<void>;
+  scheduleProjectRefresh: (includeSessions?: boolean) => void;
   deleteProject: (project: Project) => Promise<void>;
   clearSelection: () => void;
 }
@@ -26,6 +27,9 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const codexSessionsCacheRef = useRef<{ value: any[]; expiresAt: number } | null>(null);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshPromiseRef = useRef<Promise<void> | null>(null);
 
   const normalizeProjectPath = useCallback((path: string) => {
     return path ? path.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase() : '';
@@ -53,6 +57,21 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     sessions: [],
     created_at: Math.floor(Date.now() / 1000),
   }), [normalizeProjectPath]);
+
+  const getCachedCodexSessions = useCallback(async () => {
+    const now = Date.now();
+    const cached = codexSessionsCacheRef.current;
+    if (cached && cached.expiresAt > now) {
+      return cached.value;
+    }
+
+    const value = await api.listCodexSessions();
+    codexSessionsCacheRef.current = {
+      value,
+      expiresAt: now + 30_000,
+    };
+    return value;
+  }, []);
 
   const mergeProjects = useCallback((primaryProjects: Project[], secondaryProjects: Project[]) => {
     const mergedProjects: Project[] = [];
@@ -84,7 +103,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       claudeCodexSessions = await api.getProjectSessions(matchedProject.id, matchedProject.path);
     } else {
       try {
-        const codexSessions = await api.listCodexSessions();
+        const codexSessions = await getCachedCodexSessions();
         const normalizedProjectPath = normalizeProjectPath(project.path);
 
         claudeCodexSessions = codexSessions
@@ -128,7 +147,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       effectiveProject,
       sessions: allSessions,
     };
-  }, [findProjectByPath, findRealProjectByPath, isVirtualProject, normalizeProjectPath, projects]);
+  }, [findProjectByPath, findRealProjectByPath, getCachedCodexSessions, isVirtualProject, normalizeProjectPath, projects]);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -139,7 +158,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       // 1. 获取 Codex 会话列表（全局获取，开销小）
       let codexSessions: any[] = [];
       try {
-        codexSessions = await api.listCodexSessions();
+        codexSessions = await getCachedCodexSessions();
       } catch (e) {
         console.warn("Failed to load codex sessions for sorting:", e);
       }
@@ -194,7 +213,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     } finally {
       setLoading(false);
     }
-  }, [manualProjects, mergeProjects, t]);
+  }, [getCachedCodexSessions, manualProjects, mergeProjects, t]);
 
   const selectProject = useCallback(async (project: Project) => {
     try {
@@ -301,6 +320,38 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     setSessions([]);
   }, []);
 
+  const scheduleProjectRefresh = useCallback((includeSessions: boolean = true) => {
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+    }
+
+    refreshTimerRef.current = setTimeout(() => {
+      refreshTimerRef.current = null;
+      if (refreshPromiseRef.current) {
+        return;
+      }
+
+      refreshPromiseRef.current = (async () => {
+        await loadProjects();
+        if (includeSessions && selectedProject) {
+          await refreshSessions();
+        }
+      })()
+        .catch(err => console.error("Failed to refresh projects after AI completion:", err))
+        .finally(() => {
+          refreshPromiseRef.current = null;
+        });
+    }, 500);
+  }, [loadProjects, refreshSessions, selectedProject]);
+
+  useEffect(() => {
+    return () => {
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+      }
+    };
+  }, []);
+
   // Load projects on mount
   useEffect(() => {
     loadProjects();
@@ -317,6 +368,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       selectProject,
       registerProjectByPath,
       refreshSessions,
+      scheduleProjectRefresh,
       deleteProject,
       clearSelection
     }}>

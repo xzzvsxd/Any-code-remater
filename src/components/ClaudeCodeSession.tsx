@@ -26,6 +26,7 @@ import { useSmartAutoScroll } from '@/hooks/useSmartAutoScroll';
 import { useMessageTranslation } from '@/hooks/useMessageTranslation';
 import { useSessionStream } from '@/hooks/useSessionStream';
 import { usePromptExecution } from '@/hooks/usePromptExecution';
+import { formatDuration } from '@/lib/pricing';
 import { MessagesProvider, useMessagesContext } from '@/contexts/MessagesContext';
 import { SessionProvider } from '@/contexts/SessionContext';
 import { PlanModeProvider, usePlanMode } from '@/contexts/PlanModeContext';
@@ -42,6 +43,7 @@ import * as SessionHelpers from '@/lib/sessionHelpers';
 
 import type { ClaudeStreamMessage } from '@/types/claude';
 import type { CodexRateLimits } from '@/types/codex';
+import type { ExecutionStatusInfo } from '@/components/FloatingPromptInput';
 
 interface ClaudeCodeSessionProps {
   /**
@@ -83,6 +85,18 @@ interface ClaudeCodeSessionProps {
   planModeStorageKey?: string;
 }
 
+const engineDisplayNames: Record<'claude' | 'codex' | 'gemini', string> = {
+  claude: 'Claude',
+  codex: 'Codex',
+  gemini: 'Gemini',
+};
+
+const getProjectLabel = (path: string) => {
+  if (!path) return '';
+  const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '');
+  return normalized.split('/').pop() || normalized;
+};
+
 /**
  * ClaudeCodeSession component for interactive Claude Code sessions
  * 
@@ -113,6 +127,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   const isLoading = isStreaming;
   const setIsLoading = setIsStreaming;
   const [error, setError] = useState<string | null>(null);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [_rawJsonlOutput, setRawJsonlOutput] = useState<string[]>([]); // Kept for hooks, not directly used
   const [isFirstPrompt, setIsFirstPrompt] = useState(!session); // Key state for session continuation
   const [extractedSessionInfo, setExtractedSessionInfo] = useState<{ sessionId: string; projectId: string; engine?: 'claude' | 'codex' | 'gemini' } | null>(null);
@@ -120,7 +135,52 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   // 当为 true 时，effectiveSession 应返回 null，显示路径选择界面
   const [sessionNotFound, setSessionNotFound] = useState(false);
   const [claudeSessionId, setClaudeSessionId] = useState<string | null>(null);
+  const claudeSessionIdRef = useRef<string | null>(null);
+  const activeSessionIdRef = useRef<string | null>(null);
   const [codexRateLimits, setCodexRateLimits] = useState<CodexRateLimits | null>(null);
+  const [isCancellingExecution, setIsCancellingExecution] = useState(false);
+  const [executionStartedAt, setExecutionStartedAt] = useState<number | null>(null);
+  const [lastOutputAt, setLastOutputAt] = useState<number | null>(null);
+  const [executionClockTick, setExecutionClockTick] = useState(0);
+  const executionStartedAtRef = useRef<number | null>(null);
+  const lastOutputAtRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    claudeSessionIdRef.current = claudeSessionId;
+  }, [claudeSessionId]);
+
+  useEffect(() => {
+    const now = Date.now();
+    if (isLoading) {
+      setIsCancellingExecution(false);
+      setExecutionStartedAt(prev => prev ?? now);
+      setLastOutputAt(prev => prev ?? now);
+    } else {
+      setIsCancellingExecution(false);
+      setExecutionStartedAt(null);
+      setLastOutputAt(null);
+    }
+  }, [isLoading]);
+
+  useEffect(() => {
+    executionStartedAtRef.current = executionStartedAt;
+  }, [executionStartedAt]);
+
+  useEffect(() => {
+    lastOutputAtRef.current = lastOutputAt;
+  }, [lastOutputAt]);
+
+  useEffect(() => {
+    if (!isLoading) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setExecutionClockTick(tick => tick + 1);
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [isLoading]);
 
   // 🔧 FIX: Track whether this component instance was created as a "new session" (no session prop).
   // When true, we must NOT auto-load/resume any session even if the session prop later
@@ -225,6 +285,58 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   const displayableMessages = useDisplayableMessages(messages, {
     hideWarmupMessages: filterConfig.hideWarmupMessages
   });
+
+  useEffect(() => {
+    if (isLoading) {
+      setLastOutputAt(Date.now());
+    }
+  }, [messages.length, isLoading]);
+
+  const executionStatus = useMemo<ExecutionStatusInfo>(() => {
+    const now = Date.now();
+    const startedAt = executionStartedAt ?? now;
+    const outputAt = lastOutputAt ?? startedAt;
+    const elapsedSeconds = isLoading ? Math.max(0, Math.floor((now - startedAt) / 1000)) : 0;
+    const idleSeconds = isLoading ? Math.max(0, Math.floor((now - outputAt) / 1000)) : 0;
+    const engine = executionEngineConfig.engine;
+    const engineName = engineDisplayNames[engine];
+    const projectLabel = getProjectLabel(projectPath);
+    const canCancel = Boolean(activeSessionIdRef.current);
+    const statusLabel = isCancellingExecution
+      ? `正在取消当前 ${engineName} 会话...`
+      : `${engineName} 正在执行 · 已运行 ${formatDuration(elapsedSeconds)}`;
+    const statusHint = idleSeconds >= 60
+      ? `已 ${formatDuration(idleSeconds)} 无新输出，可能仍在后台执行。完成后会弹出提醒。`
+      : canCancel
+        ? `取消只会影响当前会话${projectLabel ? `（${projectLabel}）` : ''}，不会断开其他对话。`
+        : '正在建立安全取消通道，建立后即可只取消当前会话。';
+
+    // executionClockTick 用于每秒刷新 useMemo，值本身不参与计算。
+    void executionClockTick;
+
+    return {
+      engine,
+      engineName,
+      isRunning: isLoading,
+      canCancel,
+      isCancelling: isCancellingExecution,
+      startedAt,
+      elapsedSeconds,
+      idleSeconds,
+      activeSessionId: activeSessionIdRef.current,
+      projectLabel,
+      statusLabel,
+      statusHint,
+    };
+  }, [
+    executionEngineConfig.engine,
+    executionStartedAt,
+    executionClockTick,
+    isCancellingExecution,
+    isLoading,
+    lastOutputAt,
+    projectPath,
+  ]);
 
   // 🆕 将消息分组（处理子代理消息）
   const messageGroups = useGroupedMessages(displayableMessages, {
@@ -356,6 +468,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     hasActiveSessionRef,
     unlistenRefs,
     setIsLoading,
+    setIsHistoryLoading,
     setError,
     setMessages,
     setRawJsonlOutput,
@@ -367,6 +480,10 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     // 🔧 FIX: Pass isNewSessionInstance flag to prevent auto-loading/reconnecting
     // when the session prop later gets upgraded (after tab session update + isActive change).
     isNewSessionInstance: wasCreatedAsNewSessionRef.current,
+    getRunElapsedSeconds: () => {
+      const startedAt = executionStartedAtRef.current;
+      return startedAt ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : null;
+    },
   });
 
   // Keep ref in sync with state
@@ -437,6 +554,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     geminiModel: executionEngineConfig.geminiModel,           // 🆕 Gemini integration
     geminiApprovalMode: executionEngineConfig.geminiApprovalMode, // 🆕 Gemini integration
     hasActiveSessionRef,
+    activeSessionIdRef,
     unlistenRefs,
     isMountedRef,
     isListeningRef,
@@ -451,6 +569,10 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     setExtractedSessionInfo,
     setIsFirstPrompt,
     setCodexRateLimits,
+    getRunElapsedSeconds: () => {
+      const startedAt = executionStartedAtRef.current;
+      return startedAt ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : null;
+    },
     processMessageWithTranslation
   });
 
@@ -540,9 +662,6 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
           return;
         }
       }
-
-      // Set the claudeSessionId immediately when we have a session
-      setClaudeSessionId(session.id);
 
       // 🆕 Auto-switch execution engine based on session type
       const sessionEngine = (session as any).engine;
@@ -662,14 +781,32 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   }, [messages]);
 
   const handleCancelExecution = async () => {
-    if (!isLoading) return;
+    if (!isLoading || !hasActiveSessionRef.current) return;
+    const activeSessionId = activeSessionIdRef.current;
+    if (!activeSessionId) {
+      const message = '当前运行进程尚未建立安全取消通道，请稍后再试。';
+      setError(message);
+      window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: { message, type: 'info' }
+      }));
+      return;
+    }
 
     try {
+      setIsCancellingExecution(true);
+      window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: {
+          message: `正在取消当前 ${engineDisplayNames[executionEngineConfig.engine]} 会话，其他对话不会受影响`,
+          type: 'info',
+        }
+      }));
       // 🆕 根据执行引擎调用相应的取消方法
       if (executionEngineConfig.engine === 'codex') {
-        await api.cancelCodex(claudeSessionId || undefined);
+        await api.cancelCodex(activeSessionId);
+      } else if (executionEngineConfig.engine === 'gemini') {
+        await api.cancelGemini(activeSessionId);
       } else {
-        await api.cancelClaudeExecution(claudeSessionId || undefined);
+        await api.cancelClaudeExecution(activeSessionId);
       }
       
       // Clean up listeners
@@ -680,6 +817,8 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       setIsLoading(false);
       hasActiveSessionRef.current = false;
       isListeningRef.current = false;
+      activeSessionIdRef.current = null;
+      setIsCancellingExecution(false);
       setError(null);
       
       // Reset session state on cancel
@@ -691,21 +830,31 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       // Add a message indicating the session was cancelled
       const cancelMessage: ClaudeStreamMessage = {
         type: "system",
-        subtype: "info",
-        result: "__USER_CANCELLED__", // Will be translated in render
+        subtype: "execution-cancelled",
+        result: `已取消当前 ${engineDisplayNames[executionEngineConfig.engine]} 会话，其他对话不会受影响。`,
+        engine: executionEngineConfig.engine,
+        elapsedSeconds: executionStatus.elapsedSeconds,
         timestamp: new Date().toISOString(),
         receivedAt: new Date().toISOString()
       };
       setMessages(prev => [...prev, cancelMessage]);
+      window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: {
+          message: `已取消当前 ${engineDisplayNames[executionEngineConfig.engine]} 会话`,
+          type: 'success',
+        }
+      }));
     } catch (err) {
       console.error("Failed to cancel execution:", err);
       
       // Even if backend fails, we should update UI to reflect stopped state
       // Add error message but still stop the UI loading state
+      const details = err instanceof Error ? err.message : 'Unknown error';
       const errorMessage: ClaudeStreamMessage = {
         type: "system",
-        subtype: "error",
-        result: `Failed to cancel execution: ${err instanceof Error ? err.message : 'Unknown error'}. The process may still be running in the background.`,
+        subtype: "execution-error",
+        result: `取消当前 ${engineDisplayNames[executionEngineConfig.engine]} 会话失败。界面已停止监听，请确认后台进程状态后重试。\n\n${details}`,
+        engine: executionEngineConfig.engine,
         timestamp: new Date().toISOString(),
         receivedAt: new Date().toISOString()
       };
@@ -719,7 +868,15 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       setIsLoading(false);
       hasActiveSessionRef.current = false;
       isListeningRef.current = false;
+      activeSessionIdRef.current = null;
+      setIsCancellingExecution(false);
       setError(null);
+      window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: {
+          message: `取消失败：${details}`,
+          type: 'error',
+        }
+      }));
     }
   };
 
@@ -971,6 +1128,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
         isLoading={isLoading}
         error={error}
         parentRef={parentRef}
+        executionStatus={executionStatus}
         onCancel={handleCancelExecution}
       />
     </SessionProvider>
@@ -1072,12 +1230,12 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
               <PlanModeStatusBar isPlanMode={isPlanMode} />
               {messagesList}
 
-              {isLoading && messages.length === 0 && (
+              {(isLoading || isHistoryLoading) && messages.length === 0 && (
                 <div className="flex items-center justify-center h-full">
                   <div className="flex items-center gap-3">
                     <div className="rotating-symbol text-primary" />
                     <span className="text-sm text-muted-foreground">
-                      {session ? t('claudeSession.loadingHistory') : t('claudeSession.initializingClaude')}
+                      {session || isHistoryLoading ? t('claudeSession.loadingHistory') : t('claudeSession.initializingClaude')}
                     </span>
                   </div>
                 </div>
@@ -1243,6 +1401,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
             session={effectiveSession || undefined}  // 🆕 传递完整会话信息用于导出
             codexRateLimits={codexRateLimits}
             executionEngineConfig={executionEngineConfig}              // 🆕 Codex 集成
+            executionStatus={executionStatus}
             onExecutionEngineConfigChange={setExecutionEngineConfig}   // 🆕 Codex 集成
           />
 

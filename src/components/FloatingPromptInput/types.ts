@@ -54,6 +54,38 @@ export interface ImageAttachment {
 export type ExecutionEngineConfig = import('@/components/ExecutionEngineSelector').ExecutionEngineConfig;
 
 /**
+ * 人性化执行状态信息。
+ *
+ * 只包含 UI 需要展示的轻量状态，避免把底层进程对象、完整路径或敏感参数透出到输入框组件。
+ */
+export interface ExecutionStatusInfo {
+  /** 当前执行引擎 */
+  engine: 'claude' | 'codex' | 'gemini';
+  /** 适合展示给用户的引擎名 */
+  engineName: string;
+  /** 是否有正在运行的 AI 任务 */
+  isRunning: boolean;
+  /** 当前是否已经建立安全取消通道 */
+  canCancel: boolean;
+  /** 是否正在请求取消 */
+  isCancelling?: boolean;
+  /** 当前运行开始时间（ms timestamp） */
+  startedAt?: number | null;
+  /** 已运行秒数 */
+  elapsedSeconds: number;
+  /** 距离上次输出的秒数 */
+  idleSeconds: number;
+  /** 当前运行通道 ID，仅用于 UI 判断，不展示完整值 */
+  activeSessionId?: string | null;
+  /** 项目短名，不包含完整路径 */
+  projectLabel?: string;
+  /** 主状态文案 */
+  statusLabel?: string;
+  /** 次级提示文案 */
+  statusHint?: string;
+}
+
+/**
  * Floating prompt input props
  */
 export interface FloatingPromptInputProps {
@@ -153,6 +185,10 @@ export interface FloatingPromptInputProps {
    * 🆕 Execution engine configuration (optional, for Codex integration)
    */
   executionEngineConfig?: ExecutionEngineConfig;
+  /**
+   * 🆕 人性化执行状态（耗时、取消通道、无输出提示等）
+   */
+  executionStatus?: ExecutionStatusInfo;
   /**
    * 🆕 Callback when execution engine config changes
    */

@@ -1,7 +1,5 @@
 //! Unix/macOS-specific platform implementations
 
-use std::process::Command;
-
 /// Resolve a .cmd wrapper file to its actual Node.js script path
 ///
 /// On Unix-like systems, .cmd files are not used, so this always returns None.
@@ -9,11 +7,11 @@ pub fn resolve_cmd_wrapper(_cmd_path: &str) -> Option<(String, String)> {
     None
 }
 
-/// Kill a process tree on Unix using kill signal
+/// Kill a process tree on Unix.
 ///
-/// Sends SIGKILL to the specified process. On Unix systems, this will
-/// terminate the process but may not automatically kill child processes
-/// depending on how they were spawned.
+/// AI CLI processes are started in their own process group, so the root pid is
+/// also the pgid.  Target the registered process group first; never use
+/// process-name based cleanup.
 ///
 /// # Arguments
 /// * `pid` - Process ID to kill
@@ -22,28 +20,8 @@ pub fn resolve_cmd_wrapper(_cmd_path: &str) -> Option<(String, String)> {
 /// * `Ok(())` if the process was successfully killed
 /// * `Err(String)` with error description if the operation failed
 pub fn kill_process_tree_impl(pid: u32) -> Result<(), String> {
-    log::info!("Attempting to kill process {} on Unix", pid);
-
-    let mut cmd = Command::new("kill");
-    cmd.args(["-KILL", &pid.to_string()]);
-
-    match cmd.output() {
-        Ok(output) if output.status.success() => {
-            log::info!("Successfully killed process {}", pid);
-            Ok(())
-        }
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let error_msg = format!("Failed to kill process: {}", stderr);
-            log::error!("{}", error_msg);
-            Err(error_msg)
-        }
-        Err(e) => {
-            let error_msg = format!("Failed to execute kill command: {}", e);
-            log::error!("{}", error_msg);
-            Err(error_msg)
-        }
-    }
+    log::info!("Attempting to kill process group rooted at {} on Unix", pid);
+    crate::process::kill_process_group(pid)
 }
 
 /// Setup Unix-specific environment variables for a command

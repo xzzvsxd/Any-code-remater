@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
@@ -24,6 +25,13 @@ use crate::process::JobObject;
 use super::super::wsl_utils;
 // Import config module for sessions directory
 use super::config::get_codex_sessions_dir;
+
+lazy_static::lazy_static! {
+    static ref CODEX_SESSION_FILE_CACHE: std::sync::Mutex<HashMap<String, (std::path::PathBuf, Instant)>> =
+        std::sync::Mutex::new(HashMap::new());
+}
+
+const CODEX_SESSION_FILE_CACHE_TTL: Duration = Duration::from_secs(300);
 
 // ============================================================================
 // Type Definitions
@@ -87,6 +95,9 @@ pub struct CodexExecutionOptions {
     /// Resume last session
     #[serde(default)]
     pub resume_last: bool,
+
+    /// Frontend tab id used to scope early global events before the runtime session id is known.
+    pub tab_id: Option<String>,
 }
 
 fn default_json_mode() -> bool {
@@ -131,6 +142,95 @@ pub struct CodexProcessHandle {
     pub pid: u32,
     /// Windows Job Object (kills all child processes when dropped); no-op on non-Windows.
     pub job_object: Option<JobObject>,
+    #[cfg(target_os = "windows")]
+    pub wsl_spec: Option<wsl_utils::WslCommandSpec>,
+}
+
+impl CodexProcessHandle {
+    async fn terminate(mut self, reason: &str) {
+        log::info!(
+            "[Codex] Terminating process PID {} for {}",
+            self.pid,
+            reason
+        );
+
+        let mut terminated_via_job = false;
+        #[cfg(target_os = "windows")]
+        if let Some(spec) = self.wsl_spec.as_ref() {
+            match wsl_utils::build_wsl_termination_command(spec, self.pid, reason) {
+                Ok(mut termination_cmd) => match termination_cmd.output() {
+                    Ok(output) if output.status.success() => {
+                        log::info!(
+                            "[Codex] Terminated WSL-side process for host PID {}",
+                            self.pid
+                        );
+                    }
+                    Ok(output) => {
+                        log::warn!(
+                            "[Codex] WSL-side termination command failed for host PID {}: {}",
+                            self.pid,
+                            String::from_utf8_lossy(&output.stderr)
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[Codex] Failed to run WSL-side termination for host PID {}: {}",
+                            self.pid,
+                            e
+                        );
+                    }
+                },
+                Err(e) => {
+                    log::warn!(
+                        "[Codex] Refused unsafe WSL-side termination for host PID {}: {}",
+                        self.pid,
+                        e
+                    );
+                }
+            }
+        }
+
+        if let Some(job) = self.job_object.as_ref() {
+            match job.terminate_all(1) {
+                Ok(_) => {
+                    terminated_via_job = true;
+                    log::info!("[Codex] Terminated Job Object for PID {}", self.pid);
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[Codex] Failed to terminate Job Object for PID {}: {}",
+                        self.pid,
+                        e
+                    );
+                }
+            }
+        }
+
+        if !terminated_via_job {
+            #[cfg(target_os = "windows")]
+            if self.wsl_spec.is_some() {
+                log::warn!(
+                    "[Codex] Refusing unsafe Windows taskkill fallback for WSL host PID {}",
+                    self.pid
+                );
+                if let Err(e2) = self.child.kill().await {
+                    log::error!("[Codex] Fallback child.kill failed for PID {}: {}", self.pid, e2);
+                }
+                return;
+            }
+
+            if let Err(e) = crate::commands::claude::kill_process_tree(self.pid) {
+                log::warn!(
+                    "[Codex] Failed to terminate process tree for PID {}: {}",
+                    self.pid,
+                    e
+                );
+                if let Err(e2) = self.child.kill().await {
+                    log::error!("[Codex] Fallback child.kill failed for PID {}: {}", self.pid, e2);
+                }
+            }
+        }
+    }
 }
 
 /// Global state to track Codex processes
@@ -175,7 +275,7 @@ pub async fn execute_codex(
     );
 
     // Build codex exec command
-    let (cmd, prompt) = build_codex_command(&options, false, None)?;
+    let (cmd, prompt, wsl_spec) = build_codex_command(&options, false, None)?;
 
     // Execute and stream output
     let session_id = format!("codex-{}", uuid::Uuid::new_v4());
@@ -183,7 +283,9 @@ pub async fn execute_codex(
         session_id,
         cmd,
         prompt,
+        wsl_spec,
         options.project_path.clone(),
+        options.tab_id.clone(),
         app_handle,
     )
     .await
@@ -199,7 +301,7 @@ pub async fn resume_codex(
     log::info!("resume_codex called for session: {}", session_id);
 
     // Build codex exec resume command (session_id added inside build function)
-    let (cmd, prompt) = build_codex_command(&options, true, Some(&session_id))?;
+    let (cmd, prompt, wsl_spec) = build_codex_command(&options, true, Some(&session_id))?;
 
     // Execute and stream output
     let channel_session_id = format!("codex-{}", uuid::Uuid::new_v4());
@@ -207,7 +309,9 @@ pub async fn resume_codex(
         channel_session_id,
         cmd,
         prompt,
+        wsl_spec,
         options.project_path.clone(),
+        options.tab_id.clone(),
         app_handle,
     )
     .await
@@ -222,7 +326,7 @@ pub async fn resume_last_codex(
     log::info!("resume_last_codex called");
 
     // Build codex exec resume --last command
-    let (cmd, prompt) = build_codex_command(&options, true, Some("--last"))?;
+    let (cmd, prompt, wsl_spec) = build_codex_command(&options, true, Some("--last"))?;
 
     // Execute and stream output
     let session_id = format!("codex-{}", uuid::Uuid::new_v4());
@@ -230,7 +334,9 @@ pub async fn resume_last_codex(
         session_id,
         cmd,
         prompt,
+        wsl_spec,
         options.project_path.clone(),
+        options.tab_id.clone(),
         app_handle,
     )
     .await
@@ -239,63 +345,20 @@ pub async fn resume_last_codex(
 /// Cancels a running Codex execution
 #[tauri::command]
 pub async fn cancel_codex(session_id: Option<String>, app_handle: AppHandle) -> Result<(), String> {
-    use crate::commands::claude::kill_process_tree;
-
     log::info!("cancel_codex called for session: {:?}", session_id);
+
+    let sid = session_id
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| "session_id is required to cancel a Codex session".to_string())?;
 
     let state: tauri::State<'_, CodexProcessState> = app_handle.state();
     let mut processes = state.processes.lock().await;
 
-    if let Some(sid) = session_id {
-        // Cancel specific session
-        if let Some(handle) = processes.remove(&sid) {
-            let pid = handle.pid;
-            log::info!(
-                "Killing Codex process tree for session: {} (PID: {})",
-                sid,
-                pid
-            );
-
-            // Kill the entire process tree (parent + all children)
-            if let Err(e) = kill_process_tree(pid) {
-                log::error!("Failed to kill process tree for session {}: {}", sid, e);
-                // Fallback: try to kill main process directly
-                let mut child = handle.child;
-                if let Err(e2) = child.kill().await {
-                    log::error!("Fallback kill also failed: {}", e2);
-                }
-            } else {
-                log::info!(
-                    "Successfully killed Codex process tree for session: {}",
-                    sid
-                );
-            }
-        } else {
-            log::warn!("No running process found for session: {}", sid);
-        }
+    if let Some(handle) = processes.remove(&sid) {
+        drop(processes);
+        handle.terminate(&format!("cancel session {}", sid)).await;
     } else {
-        // Cancel all processes
-        for (sid, handle) in processes.drain() {
-            let pid = handle.pid;
-            log::info!(
-                "Killing Codex process tree for session: {} (PID: {})",
-                sid,
-                pid
-            );
-
-            if let Err(e) = kill_process_tree(pid) {
-                log::error!("Failed to kill process tree for session {}: {}", sid, e);
-                let mut child = handle.child;
-                if let Err(e2) = child.kill().await {
-                    log::error!("Fallback kill also failed: {}", e2);
-                }
-            } else {
-                log::info!(
-                    "Successfully killed Codex process tree for session: {}",
-                    sid
-                );
-            }
-        }
+        log::warn!("No running process found for session: {}", sid);
     }
 
     Ok(())
@@ -310,6 +373,13 @@ pub async fn cancel_codex(session_id: Option<String>, app_handle: AppHandle) -> 
 #[tauri::command]
 pub async fn list_codex_sessions() -> Result<Vec<CodexSession>, String> {
     log::info!("list_codex_sessions called");
+
+    tokio::task::spawn_blocking(list_codex_sessions_blocking)
+        .await
+        .map_err(|e| format!("list_codex_sessions task failed: {}", e))?
+}
+
+fn list_codex_sessions_blocking() -> Result<Vec<CodexSession>, String> {
 
     // Use unified sessions directory function (supports WSL)
     let sessions_dir = get_codex_sessions_dir()?;
@@ -342,6 +412,7 @@ pub async fn list_codex_sessions() -> Result<Vec<CodexSession>, String> {
                                         {
                                             match parse_codex_session_file(&path) {
                                                 Some(session) => {
+                                                    cache_session_file(&session.id, path.clone());
                                                     log::debug!(
                                                         "Found session: {} ({})",
                                                         session.id,
@@ -409,12 +480,20 @@ pub fn parse_codex_session_file(path: &std::path::Path) -> Option<CodexSession> 
     #[cfg(not(target_os = "windows"))]
     let cwd = cwd_raw.to_string();
 
+    let metadata_updated_at = std::fs::metadata(path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|modified| modified.duration_since(std::time::SystemTime::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs());
+
     // Extract first user message and other metadata from subsequent lines
     let mut first_message: Option<String> = None;
     let mut last_timestamp: Option<String> = None;
     let mut model: Option<String> = None;
 
-    // Parse remaining lines to find first user message
+    // Parse only until list-card metadata is known.  `updated_at` uses file
+    // mtime, so list rendering no longer needs to scan every long Codex JSONL
+    // to the end just to discover the last timestamp.
     for line_result in lines {
         if let Ok(line) = line_result {
             if let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) {
@@ -467,11 +546,20 @@ pub fn parse_codex_session_file(path: &std::path::Path) -> Option<CodexSession> 
         }
     }
 
-    let updated_at = last_timestamp
-        .as_ref()
-        .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
-        .map(|dt| dt.timestamp() as u64)
-        .unwrap_or(created_at);
+    let updated_at = metadata_updated_at.or_else(|| {
+        last_timestamp
+            .as_ref()
+            .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
+            .map(|dt| dt.timestamp() as u64)
+    })
+    .unwrap_or(created_at);
+
+    let display_last_timestamp = last_timestamp.clone().or_else(|| {
+        metadata_updated_at.and_then(|updated| {
+            chrono::DateTime::<chrono::Utc>::from_timestamp(updated as i64, 0)
+                .map(|dt| dt.to_rfc3339())
+        })
+    });
 
     Some(CodexSession {
         id: session_id,
@@ -482,7 +570,7 @@ pub fn parse_codex_session_file(path: &std::path::Path) -> Option<CodexSession> 
         model,
         status: "completed".to_string(),
         first_message,
-        last_message_timestamp: last_timestamp,
+        last_message_timestamp: display_last_timestamp,
     })
 }
 
@@ -493,6 +581,15 @@ pub async fn load_codex_session_history(
     session_id: String,
 ) -> Result<Vec<serde_json::Value>, String> {
     log::info!("load_codex_session_history called for: {}", session_id);
+
+    tokio::task::spawn_blocking(move || load_codex_session_history_blocking(session_id))
+        .await
+        .map_err(|e| format!("load_codex_session_history task failed: {}", e))?
+}
+
+fn load_codex_session_history_blocking(
+    session_id: String,
+) -> Result<Vec<serde_json::Value>, String> {
 
     // Use unified sessions directory function (supports WSL)
     let sessions_dir = get_codex_sessions_dir()?;
@@ -563,6 +660,12 @@ pub fn find_session_file(
     use std::io::{BufRead, BufReader};
     use walkdir::WalkDir;
 
+    if let Some(path) = get_cached_session_file(session_id) {
+        if path.exists() {
+            return Some(path);
+        }
+    }
+
     for entry in WalkDir::new(sessions_dir).into_iter().flatten() {
         if entry.path().extension().and_then(|s| s.to_str()) == Some("jsonl") {
             // Read the first line to check session_id
@@ -574,6 +677,7 @@ pub fn find_session_file(
                         if meta["type"].as_str() == Some("session_meta") {
                             if let Some(id) = meta["payload"]["id"].as_str() {
                                 if id == session_id {
+                                    cache_session_file(session_id, entry.path().to_path_buf());
                                     log::info!(
                                         "Found session file: {:?} for session_id: {}",
                                         entry.path(),
@@ -591,6 +695,23 @@ pub fn find_session_file(
 
     log::warn!("Session file not found for session_id: {}", session_id);
     None
+}
+
+fn cache_session_file(session_id: &str, path: std::path::PathBuf) {
+    if let Ok(mut cache) = CODEX_SESSION_FILE_CACHE.lock() {
+        cache.insert(session_id.to_string(), (path, Instant::now()));
+    }
+}
+
+fn get_cached_session_file(session_id: &str) -> Option<std::path::PathBuf> {
+    let mut cache = CODEX_SESSION_FILE_CACHE.lock().ok()?;
+    let (path, inserted_at) = cache.get(session_id)?.clone();
+    if inserted_at.elapsed() <= CODEX_SESSION_FILE_CACHE_TTL {
+        Some(path)
+    } else {
+        cache.remove(session_id);
+        None
+    }
 }
 
 /// Deletes a Codex session
@@ -628,7 +749,7 @@ fn build_codex_command(
     options: &CodexExecutionOptions,
     is_resume: bool,
     session_id: Option<&str>,
-) -> Result<(Command, Option<String>), String> {
+) -> Result<(Command, Option<String>, Option<wsl_utils::WslCommandSpec>), String> {
     // Check if we should use WSL mode on Windows
     #[cfg(target_os = "windows")]
     {
@@ -739,7 +860,7 @@ fn build_codex_command(
         Some(options.prompt.clone())
     };
 
-    Ok((cmd, prompt_for_stdin))
+    Ok((cmd, prompt_for_stdin, None))
 }
 
 /// Builds a Codex command for WSL mode
@@ -750,7 +871,7 @@ fn build_wsl_codex_command(
     is_resume: bool,
     session_id: Option<&str>,
     wsl_config: &wsl_utils::WslConfig,
-) -> Result<(Command, Option<String>), String> {
+) -> Result<(Command, Option<String>, Option<wsl_utils::WslCommandSpec>), String> {
     // Build arguments for codex command
     let mut args: Vec<String> = vec!["exec".to_string()];
 
@@ -823,12 +944,15 @@ fn build_wsl_codex_command(
         (codex_program, args)
     };
 
-    let mut cmd = wsl_utils::build_wsl_command_async(
+    let marker = format!("any-code-codex-{}", uuid::Uuid::new_v4());
+    let wsl_spec = wsl_utils::build_marked_wsl_command_spec(
+        &marker,
         program_for_wsl,
         &args_for_wsl,
         Some(&options.project_path),
         wsl_config.distro.as_deref(),
     );
+    let mut cmd = wsl_spec.clone().into_command();
 
     // Set API key environment variable if provided
     // Note: This will be passed to WSL environment
@@ -847,7 +971,7 @@ fn build_wsl_codex_command(
         args_for_wsl
     );
 
-    Ok((cmd, Some(options.prompt.clone())))
+    Ok((cmd, Some(options.prompt.clone()), Some(wsl_spec)))
 }
 
 /// Executes a Codex process and streams output to frontend
@@ -855,13 +979,19 @@ async fn execute_codex_process(
     session_id: String,
     mut cmd: Command,
     prompt: Option<String>,
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
+    wsl_spec: Option<wsl_utils::WslCommandSpec>,
     _project_path: String,
+    tab_id: Option<String>,
     app_handle: AppHandle,
 ) -> Result<(), String> {
     // 启动流程一开始就发送 session_init，确保即使启动失败也能让前端拿到 session_id 做隔离与错误反馈
     let init_payload = serde_json::json!({
+        "tab_id": tab_id,
+        "payload": {
         "type": "session_init",
         "session_id": session_id
+        }
     });
     if let Err(e) = app_handle.emit("codex-session-init", init_payload) {
         log::error!("Failed to emit codex-session-init: {}", e);
@@ -876,6 +1006,7 @@ async fn execute_codex_process(
     // Fix: Apply platform-specific no-window configuration to hide console
     // This prevents the terminal window from flashing when starting Codex sessions
     apply_no_window_async(&mut cmd);
+    crate::process::apply_process_group(&mut cmd);
 
     // Spawn process
     let mut child = match cmd.spawn() {
@@ -884,6 +1015,7 @@ async fn execute_codex_process(
             emit_codex_error(
                 &app_handle,
                 &session_id,
+                tab_id.as_deref(),
                 "启动 Codex 失败",
                 Some(&e.to_string()),
             );
@@ -899,6 +1031,7 @@ async fn execute_codex_process(
             emit_codex_error(
                 &app_handle,
                 &session_id,
+                tab_id.as_deref(),
                 "启动 Codex 失败：无法获取进程 PID",
                 None,
             );
@@ -945,6 +1078,7 @@ async fn execute_codex_process(
                 emit_codex_error(
                     &app_handle,
                     &session_id,
+                    tab_id.as_deref(),
                     "Codex 写入 stdin 失败",
                     Some(&e.to_string()),
                 );
@@ -960,6 +1094,7 @@ async fn execute_codex_process(
             emit_codex_error(
                 &app_handle,
                 &session_id,
+                tab_id.as_deref(),
                 "Codex 启动失败：无法获取 stdin 句柄",
                 None,
             );
@@ -974,6 +1109,7 @@ async fn execute_codex_process(
             emit_codex_error(
                 &app_handle,
                 &session_id,
+                tab_id.as_deref(),
                 "启动 Codex 失败：无法捕获 stdout",
                 None,
             );
@@ -987,6 +1123,7 @@ async fn execute_codex_process(
             emit_codex_error(
                 &app_handle,
                 &session_id,
+                tab_id.as_deref(),
                 "启动 Codex 失败：无法捕获 stderr",
                 None,
             );
@@ -1003,6 +1140,8 @@ async fn execute_codex_process(
             child,
             pid,
             job_object,
+            #[cfg(target_os = "windows")]
+            wsl_spec,
         };
         processes.insert(session_id.clone(), handle);
 
@@ -1016,6 +1155,8 @@ async fn execute_codex_process(
     let session_id_stdout = session_id.clone(); // Clone for stdout task
     let session_id_stderr = session_id.clone(); // Clone for stderr task
     let session_id_complete = session_id.clone();
+    let tab_id_for_stdout = tab_id.clone();
+    let tab_id_for_complete = tab_id.clone();
 
     // 用于判断是否收到了任何 stdout 事件；仅当 stdout 完全无输出且存在 stderr 时，才触发 codex-error
     let saw_stdout = Arc::new(AtomicBool::new(false));
@@ -1044,8 +1185,12 @@ async fn execute_codex_process(
                 {
                     log::error!("Failed to emit codex-output (session-specific): {}", e);
                 }
-                // Also emit to global channel for backward compatibility
-                if let Err(e) = app_handle_stdout.emit("codex-output", &line) {
+                // Also emit to global channel for early-session compatibility, scoped by tab_id.
+                let global_payload = serde_json::json!({
+                    "tab_id": tab_id_for_stdout,
+                    "payload": line
+                });
+                if let Err(e) = app_handle_stdout.emit("codex-output", &global_payload) {
                     log::error!("Failed to emit codex-output (global): {}", e);
                 }
 
@@ -1104,8 +1249,6 @@ async fn execute_codex_process(
     // stderr may continue outputting logs (MCP servers, etc.) for a long time
     let pid_for_cleanup = pid; // Copy PID for cleanup task
     tokio::spawn(async move {
-        use crate::commands::claude::kill_process_tree;
-
         let state: tauri::State<'_, CodexProcessState> = app_handle_complete.state();
 
         // Only wait for stdout to close (stderr can continue logging)
@@ -1123,6 +1266,7 @@ async fn execute_codex_process(
                 emit_codex_error(
                     &app_handle_complete,
                     &session_id_complete,
+                    tab_id_for_complete.as_deref(),
                     "Codex 启动失败或未产生任何输出",
                     Some(&detail),
                 );
@@ -1141,15 +1285,18 @@ async fn execute_codex_process(
         {
             log::error!("Failed to emit codex-complete (session-specific): {}", e);
         }
-        if let Err(e) = app_handle_complete.emit("codex-complete", true) {
+        let global_payload = serde_json::json!({
+            "tab_id": tab_id_for_complete,
+            "payload": true
+        });
+        if let Err(e) = app_handle_complete.emit("codex-complete", &global_payload) {
             log::error!("Failed to emit codex-complete (global): {}", e);
         }
 
-        // Continue waiting for process exit in background (with timeout protection)
-        // This ensures proper cleanup but doesn't block the completion event
-        // After turn completion, Codex should exit promptly; keep a short grace window to
-        // let it flush session files, then force-kill to prevent orphan node.exe accumulation.
-        let timeout_duration = tokio::time::Duration::from_secs(3);
+        // Continue waiting for process exit in background (with timeout protection).
+        // Give the CLI enough time to flush history and tear down child processes;
+        // too short a window can race history writes and look like random disconnects.
+        let timeout_duration = tokio::time::Duration::from_secs(15);
         let start_time = tokio::time::Instant::now();
 
         loop {
@@ -1172,43 +1319,10 @@ async fn execute_codex_process(
                                 timeout_duration.as_secs()
                             );
 
-                            // 🔧 FIX: Kill entire process tree to prevent orphan child processes
-                            // Prefer Job Object termination (Windows) to ensure detached descendants are killed.
-                            let mut terminated_via_job = false;
-                            if let Some(job) = handle.job_object.as_ref() {
-                                match job.terminate_all(1) {
-                                    Ok(_) => {
-                                        terminated_via_job = true;
-                                        log::info!(
-                                            "[Codex] Terminated Job Object for PID: {}",
-                                            pid_for_cleanup
-                                        );
-                                    }
-                                    Err(e) => {
-                                        log::warn!(
-                                            "[Codex] Failed to terminate Job Object for PID {}: {}",
-                                            pid_for_cleanup,
-                                            e
-                                        );
-                                    }
-                                }
+                            if let Some(handle) = processes.remove(&session_id_complete) {
+                                drop(processes);
+                                handle.terminate("post-completion timeout").await;
                             }
-
-                            if !terminated_via_job {
-                                if let Err(e) = kill_process_tree(pid_for_cleanup) {
-                                    log::error!("[Codex] Failed to kill process tree: {}", e);
-                                    // Fallback: try to kill main process directly
-                                    if let Err(e2) = handle.child.kill().await {
-                                        log::error!("[Codex] Fallback kill also failed: {}", e2);
-                                    }
-                                } else {
-                                    log::info!(
-                                        "[Codex] Successfully killed process tree for PID: {}",
-                                        pid_for_cleanup
-                                    );
-                                }
-                            }
-                            processes.remove(&session_id_complete);
                             break;
                         }
 
@@ -1234,8 +1348,14 @@ async fn execute_codex_process(
     Ok(())
 }
 
-fn emit_codex_error(app_handle: &AppHandle, session_id: &str, message: &str, detail: Option<&str>) {
-    let payload = serde_json::json!({
+fn emit_codex_error(
+    app_handle: &AppHandle,
+    session_id: &str,
+    tab_id: Option<&str>,
+    message: &str,
+    detail: Option<&str>,
+) {
+    let error_payload = serde_json::json!({
         "session_id": session_id,
         "error": {
             "message": message,
@@ -1243,8 +1363,12 @@ fn emit_codex_error(app_handle: &AppHandle, session_id: &str, message: &str, det
         }
     });
 
-    let payload_str = serde_json::to_string(&payload).unwrap_or_else(|_| message.to_string());
+    let payload_str = serde_json::to_string(&error_payload).unwrap_or_else(|_| message.to_string());
+    let global_payload = serde_json::json!({
+        "tab_id": tab_id,
+        "payload": payload_str,
+    });
 
     let _ = app_handle.emit(&format!("codex-error:{}", session_id), &payload_str);
-    let _ = app_handle.emit("codex-error", &payload_str);
+    let _ = app_handle.emit("codex-error", &global_payload);
 }

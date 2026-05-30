@@ -5,6 +5,7 @@ import { StreamMessageV2 } from "@/components/message";
 import type { MessageGroup } from "@/lib/subagentGrouping";
 import { useSession } from "@/contexts/SessionContext";
 import { CliProcessingIndicator } from "./CliProcessingIndicator";
+import type { ExecutionStatusInfo } from "@/components/FloatingPromptInput/types";
 
 /**
  * ✅ MeasurableItem: 自动监听高度变化的虚拟列表项
@@ -93,6 +94,7 @@ interface SessionMessagesProps {
   isLoading: boolean;
   error?: string | null;
   parentRef: React.RefObject<HTMLDivElement>;
+  executionStatus?: ExecutionStatusInfo;
   /** 取消执行回调 - 用于CLI风格处理指示器 */
   onCancel?: () => void;
 }
@@ -102,6 +104,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
   isLoading,
   error,
   parentRef,
+  executionStatus,
   onCancel
 }, ref) => {
   // ✅ 从 SessionContext 获取配置和回调，避免 Props Drilling
@@ -364,6 +367,11 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       <CliProcessingIndicator
         isProcessing={isLoading && messageGroups.length > 0}
         onCancel={onCancel}
+        engineName={executionStatus?.engineName}
+        elapsedSeconds={executionStatus?.elapsedSeconds}
+        idleSeconds={executionStatus?.idleSeconds}
+        canCancel={executionStatus?.canCancel}
+        isCancelling={executionStatus?.isCancelling}
       />
 
       {/* Error indicator - 移除固定 marginBottom，因为输入框不再是 fixed 定位 */}

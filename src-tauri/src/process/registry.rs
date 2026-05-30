@@ -339,6 +339,7 @@ impl ProcessRegistry {
         use log::{error, info, warn};
 
         // First check if the process exists and get its PID
+        #[cfg_attr(unix, allow(unused_variables))]
         let (pid, child_arc) = {
             let processes = self.processes.lock().map_err(|e| e.to_string())?;
             if let Some(handle) = processes.get(&run_id) {
@@ -354,12 +355,44 @@ impl ProcessRegistry {
             run_id, pid
         );
 
-        // IMPORTANT: First kill all child processes to prevent orphans
-        info!(
-            "Killing child processes of PID {} before killing parent",
-            pid
-        );
-        let _ = self.kill_child_processes(pid);
+        #[cfg(unix)]
+        {
+            match self.kill_process_by_pid(run_id, pid) {
+                Ok(success) => return Ok(success),
+                Err(e) => return Err(e),
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let job_object = {
+                let processes = self.processes.lock().map_err(|e| e.to_string())?;
+                processes
+                    .get(&run_id)
+                    .and_then(|handle| handle.job_object.clone())
+            };
+
+            if let Some(job) = job_object {
+                info!("Terminating Windows JobObject for process {}", run_id);
+                match job.terminate_all(1) {
+                    Ok(_) => {
+                        self.unregister_process(run_id)?;
+                        return Ok(true);
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to terminate JobObject for process {} (PID {}): {}",
+                            run_id, pid, e
+                        );
+                    }
+                }
+            }
+
+            // Do not pre-emptively walk/kill by ParentProcessId.  Without a
+            // creation-time identity check, PID reuse can turn a child-tree
+            // fallback into a cross-application kill.  Prefer JobObject; if it
+            // is unavailable, only the original child handle is signalled below.
+        }
 
         // Send kill signal to the process
         let kill_sent = {
@@ -465,171 +498,58 @@ impl ProcessRegistry {
         Ok(true)
     }
 
-    /// Kill all child processes of a given PID
-    /// This is crucial for cleaning up orphaned node processes
-    fn kill_child_processes(&self, parent_pid: u32) -> Result<(), String> {
-        use log::info;
-
-        #[cfg(target_os = "windows")]
-        {
-            // On Windows, use WMIC to find and kill child processes
-            use std::os::windows::process::CommandExt;
-
-            info!("Searching for child processes of PID {}", parent_pid);
-
-            // Get child process IDs using WMIC
-            let output = std::process::Command::new("wmic")
-                .args([
-                    "process",
-                    "where",
-                    &format!("ParentProcessId={}", parent_pid),
-                    "get",
-                    "ProcessId",
-                ])
-                .creation_flags(0x08000000) // CREATE_NO_WINDOW
-                .output();
-
-            if let Ok(output) = output {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                // Parse PIDs from output
-                for line in stdout.lines().skip(1) {
-                    // Skip header
-                    let pid_str = line.trim();
-                    if !pid_str.is_empty() {
-                        if let Ok(child_pid) = pid_str.parse::<u32>() {
-                            info!("Found child process: PID {}", child_pid);
-                            // Kill child process with /F /T
-                            let _ = std::process::Command::new("taskkill")
-                                .args(["/F", "/T", "/PID", &child_pid.to_string()])
-                                .creation_flags(0x08000000)
-                                .output();
-                        }
-                    }
-                }
-            }
-        }
-
-        #[cfg(unix)]
-        {
-            // On Unix, use pgrep to find child processes
-            info!("Searching for child processes of PID {}", parent_pid);
-
-            let output = std::process::Command::new("pgrep")
-                .args(["-P", &parent_pid.to_string()])
-                .output();
-
-            if let Ok(output) = output {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                for line in stdout.lines() {
-                    let pid_str = line.trim();
-                    if !pid_str.is_empty() {
-                        if let Ok(child_pid) = pid_str.parse::<i32>() {
-                            info!("Found child process: PID {}", child_pid);
-                            // Kill child process
-                            let _ = std::process::Command::new("kill")
-                                .args(["-KILL", &child_pid.to_string()])
-                                .output();
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     /// Kill a process by PID using system commands (fallback method)
     pub fn kill_process_by_pid(&self, run_id: i64, pid: u32) -> Result<bool, String> {
-        use log::{error, info, warn};
+        use log::{info, warn};
 
         info!("Attempting to kill process {} by PID {}", run_id, pid);
 
-        // First, try to kill all child processes
-        let _ = self.kill_child_processes(pid);
+        #[cfg(target_os = "windows")]
+        {
+            let job_object = {
+                let processes = self.processes.lock().map_err(|e| e.to_string())?;
+                processes
+                    .get(&run_id)
+                    .and_then(|handle| handle.job_object.clone())
+            };
 
-        let kill_result = if cfg!(target_os = "windows") {
-            #[cfg(target_os = "windows")]
-            {
-                use std::os::windows::process::CommandExt;
-                std::process::Command::new("taskkill")
-                    .args(["/F", "/T", "/PID", &pid.to_string()]) // Added /T to kill process tree
-                    .creation_flags(0x08000000) // CREATE_NO_WINDOW
-                    .output()
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                // This branch will never be reached due to the outer if condition
-                // but is needed for compilation on non-Windows platforms
-                std::process::Command::new("kill")
-                    .args(["-KILL", &pid.to_string()])
-                    .output()
-            }
-        } else {
-            // On Unix, kill the entire process group
-            // First try SIGTERM to the process group (negative PID)
-            let pgid = format!("-{}", pid); // Negative PID targets the process group
-            let term_result = std::process::Command::new("kill")
-                .args(["-TERM", &pgid])
-                .output();
-
-            match &term_result {
-                Ok(output) if output.status.success() => {
-                    info!("Sent SIGTERM to process group {}", pid);
-                    // Give it 2 seconds to exit gracefully
-                    std::thread::sleep(std::time::Duration::from_secs(2));
-
-                    // Check if still running
-                    let check_result = std::process::Command::new("kill")
-                        .args(["-0", &pid.to_string()])
-                        .output();
-
-                    if let Ok(output) = check_result {
-                        if output.status.success() {
-                            // Still running, send SIGKILL to process group
-                            warn!(
-                                "Process {} still running after SIGTERM, sending SIGKILL to process group",
-                                pid
-                            );
-                            std::process::Command::new("kill")
-                                .args(["-KILL", &pgid])
-                                .output()
-                        } else {
-                            term_result
-                        }
-                    } else {
-                        term_result
+            if let Some(job) = job_object {
+                match job.terminate_all(1) {
+                    Ok(_) => {
+                        info!("Successfully terminated JobObject for process {}", run_id);
+                        self.unregister_process(run_id)?;
+                        return Ok(true);
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to terminate JobObject for process {} (PID {}): {}",
+                            run_id, pid, e
+                        );
                     }
                 }
-                _ => {
-                    // SIGTERM to process group failed, try SIGKILL to process group directly
-                    warn!(
-                        "SIGTERM failed for process group {}, trying SIGKILL to process group",
-                        pid
-                    );
-                    let pgid = format!("-{}", pid);
-                    std::process::Command::new("kill")
-                        .args(["-KILL", &pgid])
-                        .output()
-                }
             }
-        };
 
-        match kill_result {
-            Ok(output) => {
-                if output.status.success() {
-                    info!("Successfully killed process with PID {}", pid);
-                    // Remove from registry
+            warn!(
+                "Refusing unsafe taskkill fallback for process {} (PID {}) without JobObject identity",
+                run_id, pid
+            );
+            Ok(false)
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            // On Unix, AI CLI roots are started in their own process group.
+            // Kill only the registered pgid; never use a name-based fallback.
+            match crate::process::kill_process_group(pid) {
+                Ok(_) => {
+                    info!("Successfully killed process group {}", pid);
                     self.unregister_process(run_id)?;
                     Ok(true)
-                } else {
-                    let error_msg = String::from_utf8_lossy(&output.stderr);
-                    warn!("Failed to kill PID {}: {}", pid, error_msg);
+                }
+                Err(e) => {
+                    warn!("Failed to kill process group {}: {}", pid, e);
                     Ok(false)
                 }
-            }
-            Err(e) => {
-                error!("Failed to execute kill command for PID {}: {}", pid, e);
-                Err(format!("Failed to execute kill command: {}", e))
             }
         }
     }
@@ -721,40 +641,6 @@ impl ProcessRegistry {
         Ok(finished_runs)
     }
 
-    /// Kill all processes by name (last resort cleanup)
-    /// This finds and kills any remaining claude/node processes
-    fn kill_orphaned_processes_by_name(&self) {
-        use log::info;
-
-        info!("Performing last-resort cleanup: killing orphaned claude/node processes");
-
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-
-            // Kill any remaining claude.exe processes
-            let _ = std::process::Command::new("taskkill")
-                .args(["/F", "/IM", "claude.exe"])
-                .creation_flags(0x08000000)
-                .output();
-
-            // Kill any remaining node.exe processes that might be spawned by claude
-            // Note: This is aggressive and might kill unrelated node processes
-            // We'll only do this if we're sure there were claude processes
-            info!("Cleaning up any orphaned node processes related to claude");
-        }
-
-        #[cfg(unix)]
-        {
-            // Kill remaining claude processes
-            let _ = std::process::Command::new("pkill")
-                .args(["-9", "claude"])
-                .output();
-
-            info!("Cleaned up any orphaned claude processes");
-        }
-    }
-
     /// Kill all registered processes (for application shutdown)
     /// This is a critical cleanup function to prevent orphaned processes
     pub async fn kill_all_processes(&self) -> Result<usize, String> {
@@ -776,15 +662,8 @@ impl ProcessRegistry {
 
         let mut killed_count = 0;
 
-        // First pass: Kill child processes explicitly
-        for (_run_id, pid) in &process_info {
-            let _ = self.kill_child_processes(*pid);
-        }
-
-        // Small delay to let child processes terminate
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        // Second pass: Kill main processes
+        // Kill registered processes only.  On Unix this targets the isolated
+        // process group; on Windows the process/job tree is terminated.
         for (run_id, _pid) in process_info {
             match self.kill_process(run_id).await {
                 Ok(true) => {
@@ -800,8 +679,9 @@ impl ProcessRegistry {
             }
         }
 
-        // Final cleanup: Kill any remaining orphaned processes by name
-        self.kill_orphaned_processes_by_name();
+        // Never perform process-name based cleanup here.  It can terminate
+        // unrelated user applications (for example another `claude` binary on
+        // Linux).  Only registered PIDs/PGIDs/JobObjects are in scope.
 
         info!(
             "Cleanup complete: killed {}/{} processes",
@@ -828,38 +708,9 @@ impl Default for ProcessRegistryState {
 
 impl Drop for ProcessRegistryState {
     fn drop(&mut self) {
-        // When the application exits, clean up all processes
-        use log::info;
-        info!("ProcessRegistryState dropping, cleaning up all processes...");
-
-        // Use a runtime to execute the async cleanup
-        let registry = self.0.clone();
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            // We're in a tokio runtime context
-            handle.block_on(async move {
-                match registry.kill_all_processes().await {
-                    Ok(count) => {
-                        info!("Cleanup on drop: Successfully killed {} processes", count);
-                    }
-                    Err(e) => {
-                        info!("Cleanup on drop: Error killing processes: {}", e);
-                    }
-                }
-            });
-        } else {
-            // Create a temporary runtime for cleanup
-            if let Ok(rt) = tokio::runtime::Runtime::new() {
-                rt.block_on(async move {
-                    match registry.kill_all_processes().await {
-                        Ok(count) => {
-                            info!("Cleanup on drop: Successfully killed {} processes", count);
-                        }
-                        Err(e) => {
-                            info!("Cleanup on drop: Error killing processes: {}", e);
-                        }
-                    }
-                });
-            }
-        }
+        // Do not block inside Drop.  During app/runtime shutdown, `block_on`
+        // can panic or deadlock.  Per-session cancellation and platform
+        // JobObject/process-group cleanup handle normal lifecycle.
+        log::info!("ProcessRegistryState dropping; skipping async Drop cleanup");
     }
 }

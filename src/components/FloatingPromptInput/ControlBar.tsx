@@ -18,7 +18,7 @@ import { ThinkingModeToggle } from "./ThinkingModeToggle";
 import { PlanModeToggle } from "./PlanModeToggle";
 import { SessionToolbar } from "@/components/SessionToolbar";
 import { ContextWindowIndicator } from "@/components/widgets/ContextWindowIndicator";
-import { ModelType, ModelConfig, ThinkingEffort } from "./types";
+import { ModelType, ModelConfig, ThinkingEffort, type ExecutionStatusInfo } from "./types";
 import type { CodexRateLimits } from "@/types/codex";
 
 interface ControlBarProps {
@@ -45,6 +45,7 @@ interface ControlBarProps {
   session?: any;
   codexRateLimits?: CodexRateLimits | null;
   isEnhancing: boolean;
+  executionStatus?: ExecutionStatusInfo;
   projectPath?: string;
   enableProjectContext: boolean;
   setEnableProjectContext: (enable: boolean) => void;
@@ -80,6 +81,7 @@ export const ControlBar: React.FC<ControlBarProps> = ({
   session,
   codexRateLimits: providedCodexRateLimits,
   isEnhancing,
+  executionStatus,
   projectPath,
   enableProjectContext,
   setEnableProjectContext,
@@ -91,6 +93,8 @@ export const ControlBar: React.FC<ControlBarProps> = ({
   onSend
 }) => {
   const { t } = useTranslation();
+  const canCancelExecution = !executionStatus || executionStatus.canCancel;
+  const isCancellingExecution = executionStatus?.isCancelling === true;
 
   const contextWindowModel =
     executionEngineConfig.engine === 'codex'
@@ -369,15 +373,27 @@ export const ControlBar: React.FC<ControlBarProps> = ({
 
       {/* Send/Cancel Button */}
       {isLoading ? (
-        <Button
-          onClick={onCancel}
-          variant="destructive"
-          size="default"
-          disabled={disabled}
-          className="h-8 shadow-md bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700 text-white font-medium"
-        >
-          {t('buttons.cancel')}
-        </Button>
+        <div className="flex flex-col items-end gap-1">
+          <Button
+            onClick={onCancel}
+            variant="destructive"
+            size="default"
+            disabled={disabled || !canCancelExecution || isCancellingExecution}
+            title={
+              !canCancelExecution
+                ? '正在建立安全取消通道，建立后即可只取消当前会话'
+                : '只取消当前会话，不影响其他对话'
+            }
+            className="h-8 shadow-md bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700 text-white font-medium disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {isCancellingExecution ? '取消中...' : t('buttons.cancel')}
+          </Button>
+          {!canCancelExecution && (
+            <span className="max-w-44 text-[10px] leading-tight text-muted-foreground text-right">
+              正在建立安全取消通道...
+            </span>
+          )}
+        </div>
       ) : (
         <Button
           onClick={onSend}

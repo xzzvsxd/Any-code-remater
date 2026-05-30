@@ -9,12 +9,17 @@
  */
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
 use super::config::get_gemini_dir;
 use super::types::GeminiSessionDetail;
+
+fn compare_f64_desc(left: f64, right: f64) -> Ordering {
+    right.partial_cmp(&left).unwrap_or(Ordering::Equal)
+}
 
 // ============================================================================
 // Types
@@ -319,6 +324,15 @@ pub async fn get_gemini_usage_stats(
         end_date
     );
 
+    tokio::task::spawn_blocking(move || get_gemini_usage_stats_blocking(start_date, end_date))
+        .await
+        .map_err(|e| format!("get_gemini_usage_stats task failed: {}", e))?
+}
+
+fn get_gemini_usage_stats_blocking(
+    start_date: Option<String>,
+    end_date: Option<String>,
+) -> Result<GeminiUsageStats, String> {
     let all_sessions = collect_all_sessions();
 
     // Filter by date range if provided
@@ -435,13 +449,13 @@ pub async fn get_gemini_usage_stats(
 
     // Convert to sorted vectors
     let mut by_model: Vec<GeminiModelUsage> = model_stats.into_values().collect();
-    by_model.sort_by(|a, b| b.total_cost.partial_cmp(&a.total_cost).unwrap());
+    by_model.sort_by(|a, b| compare_f64_desc(a.total_cost, b.total_cost));
 
     let mut by_date: Vec<GeminiDailyUsage> = daily_stats.into_values().collect();
     by_date.sort_by(|a, b| a.date.cmp(&b.date));
 
     let mut by_project: Vec<GeminiProjectUsage> = project_stats.into_values().collect();
-    by_project.sort_by(|a, b| b.total_cost.partial_cmp(&a.total_cost).unwrap());
+    by_project.sort_by(|a, b| compare_f64_desc(a.total_cost, b.total_cost));
 
     Ok(GeminiUsageStats {
         total_cost,

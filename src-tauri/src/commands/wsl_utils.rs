@@ -23,6 +23,28 @@ use crate::claude_binary::detect_binary_for_tool;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+#[derive(Debug, Clone)]
+pub struct WslCommandSpec {
+    pub program: String,
+    pub args: Vec<String>,
+    pub working_dir: Option<String>,
+    pub distro: Option<String>,
+    pub marker: Option<String>,
+}
+
+impl WslCommandSpec {
+    /// Long-running AI sessions must be launched with a per-run marker before
+    /// they can be terminated safely.  Name/argument based kills are too broad
+    /// for concurrent Codex/Gemini/Claude sessions that often share the same
+    /// command line.
+    pub fn is_marked(&self) -> bool {
+        self.marker
+            .as_deref()
+            .map(|marker| !marker.trim().is_empty())
+            .unwrap_or(false)
+    }
+}
+
 // ============================================================================
 // Codex 模式配置
 // ============================================================================
@@ -418,7 +440,10 @@ impl WslConfig {
             return Self::default();
         }
 
-        let distro_name = distro.as_ref().unwrap();
+        let Some(distro_name) = distro.as_deref() else {
+            info!("[WSL] No WSL distro found");
+            return Self::default();
+        };
         info!("[WSL] Found WSL distro: {}", distro_name);
 
         let wsl_home = get_wsl_home_dir(Some(distro_name));
@@ -1279,7 +1304,10 @@ impl GeminiWslRuntime {
             return Self::default();
         }
 
-        let distro_name = distro.as_ref().unwrap();
+        let Some(distro_name) = distro.as_deref() else {
+            info!("[Gemini WSL] No WSL distro found");
+            return Self::default();
+        };
         info!("[Gemini WSL] Found WSL distro: {}", distro_name);
 
         let wsl_home = get_wsl_home_dir(Some(distro_name));
@@ -1681,7 +1709,10 @@ impl ClaudeWslRuntime {
             return Self::default();
         }
 
-        let distro_name = distro.as_ref().unwrap();
+        let Some(distro_name) = distro.as_deref() else {
+            info!("[Claude WSL] No WSL distro found");
+            return Self::default();
+        };
         info!("[Claude WSL] Found WSL distro: {}", distro_name);
 
         let wsl_home = get_wsl_home_dir(Some(distro_name));
@@ -1810,13 +1841,9 @@ pub fn windows_to_wsl_path(windows_path: &str) -> String {
 
     // 检查是否为标准 Windows 路径 (C:\...)
     if windows_path.len() >= 2 && windows_path.chars().nth(1) == Some(':') {
-        let drive = windows_path
-            .chars()
-            .next()
-            .unwrap()
-            .to_lowercase()
-            .next()
-            .unwrap();
+        let Some(drive) = windows_path.chars().next().map(|c| c.to_ascii_lowercase()) else {
+            return windows_path.to_string();
+        };
         let rest = &windows_path[2..].replace('\\', "/");
         let wsl_path = format!("/mnt/{}{}", drive, rest);
         log::debug!("[WSL] Path converted: {} -> {}", windows_path, wsl_path);
@@ -1894,13 +1921,9 @@ pub fn windows_to_wsl_path_with_distro(windows_path: &str, _distro: Option<&str>
 /// ```
 pub fn wsl_to_windows_path(wsl_path: &str) -> String {
     if wsl_path.starts_with("/mnt/") && wsl_path.len() >= 6 {
-        let drive = wsl_path
-            .chars()
-            .nth(5)
-            .unwrap()
-            .to_uppercase()
-            .next()
-            .unwrap();
+        let Some(drive) = wsl_path.chars().nth(5).map(|c| c.to_ascii_uppercase()) else {
+            return wsl_path.to_string();
+        };
         let mut rest = wsl_path[6..].replace('/', "\\");
         if rest.is_empty() {
             rest = "\\".to_string();
@@ -1979,10 +2002,52 @@ pub fn build_wsl_command_async(
     working_dir: Option<&str>,
     distro: Option<&str>,
 ) -> tokio::process::Command {
-    let mut cmd = tokio::process::Command::new("wsl");
+    build_wsl_command_spec(program, args, working_dir, distro).into_command()
+}
 
+#[cfg(target_os = "windows")]
+pub fn build_wsl_command_spec(
+    program: &str,
+    args: &[String],
+    working_dir: Option<&str>,
+    distro: Option<&str>,
+) -> WslCommandSpec {
     // 如果 working_dir 是 \\wsl... UNC，则优先用其 distro（避免用户选择的目录在另一个发行版里）
-    let (effective_distro, effective_cd) = match working_dir {
+    let (effective_distro, effective_cd) = effective_wsl_target(working_dir, distro);
+
+    WslCommandSpec {
+        program: program.to_string(),
+        args: args.to_vec(),
+        working_dir: effective_cd,
+        distro: resolve_wsl_distro(effective_distro),
+        marker: None,
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub fn build_marked_wsl_command_spec(
+    marker: &str,
+    program: &str,
+    args: &[String],
+    working_dir: Option<&str>,
+    distro: Option<&str>,
+) -> WslCommandSpec {
+    let mut spec = build_wsl_command_spec(program, args, working_dir, distro);
+    spec.marker = Some(marker.to_string());
+    spec
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_wsl_distro(distro: Option<String>) -> Option<String> {
+    distro.or_else(get_default_wsl_distro)
+}
+
+#[cfg(target_os = "windows")]
+fn effective_wsl_target(
+    working_dir: Option<&str>,
+    distro: Option<&str>,
+) -> (Option<String>, Option<String>) {
+    match working_dir {
         Some(dir) => {
             if let Some((unc_distro, wsl_dir)) = try_parse_wsl_unc_path(dir) {
                 if let Some(d) = distro {
@@ -2002,39 +2067,103 @@ pub fn build_wsl_command_async(
             }
         }
         None => (distro.map(|d| d.to_string()), None),
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl WslCommandSpec {
+    pub fn into_command(&self) -> tokio::process::Command {
+        let mut cmd = tokio::process::Command::new("wsl");
+
+        // 指定发行版（如果提供）
+        if let Some(ref d) = self.distro {
+            cmd.arg("-d").arg(d);
+        }
+
+        // 设置工作目录（转换为 WSL 路径）
+        if let Some(wsl_dir) = self.working_dir.as_deref() {
+            cmd.arg("--cd").arg(wsl_dir);
+        }
+
+        // 添加分隔符和程序。若 marker 存在，通过环境变量写入 WSL 侧
+        // 进程环境，取消时优先按该唯一 marker 清理，避免 pkill -f
+        // 误命中同项目同参数的其他会话。
+        cmd.arg("--");
+        if let Some(marker) = self.marker.as_ref() {
+            cmd.arg("env").arg(format!("ANY_CODE_RUN_ID={marker}"));
+        }
+        cmd.arg(&self.program);
+
+        // 添加程序参数
+        for arg in &self.args {
+            cmd.arg(arg);
+        }
+
+        // 隐藏控制台窗口
+        cmd.creation_flags(CREATE_NO_WINDOW);
+
+        log::debug!(
+            "[WSL] Built async command: wsl -d {:?} --cd {:?} -- marker={:?} {} {:?}",
+            self.distro,
+            self.working_dir,
+            self.marker,
+            self.program,
+            self.args
+        );
+
+        cmd
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub fn build_wsl_termination_command(
+    spec: &WslCommandSpec,
+    pid: u32,
+    reason: &str,
+) -> Result<std::process::Command, String> {
+    let Some(marker) = spec.marker.as_deref().filter(|marker| !marker.trim().is_empty()) else {
+        return Err(format!(
+            "refusing WSL termination without unique marker for host PID {} ({})",
+            pid, reason
+        ));
     };
 
-    // 指定发行版（如果提供）
-    if let Some(ref d) = effective_distro {
-        cmd.arg("-d").arg(d);
-    }
+    let Some(distro) = spec.distro.as_deref().filter(|distro| !distro.trim().is_empty()) else {
+        return Err(format!(
+            "refusing WSL termination without resolved distro for host PID {} ({})",
+            pid, reason
+        ));
+    };
 
-    // 设置工作目录（转换为 WSL 路径）
-    if let Some(wsl_dir) = effective_cd.as_deref() {
-        cmd.arg("--cd").arg(wsl_dir);
-    }
+    let mut cmd = std::process::Command::new("wsl");
+    cmd.arg("-d").arg(distro);
 
-    // 添加分隔符和程序
-    cmd.arg("--");
-    cmd.arg(program);
-
-    // 添加程序参数
-    for arg in args {
-        cmd.arg(arg);
-    }
-
-    // 隐藏控制台窗口
-    cmd.creation_flags(CREATE_NO_WINDOW);
-
-    log::debug!(
-        "[WSL] Built async command: wsl -d {:?} --cd {:?} -- {} {:?}",
-        effective_distro,
-        effective_cd,
-        program,
-        args
+    let marker = shell_quote(marker);
+    let script = format!(
+        "pids=$(grep -R -l -z -- {marker} /proc/[0-9]*/environ 2>/dev/null | sed -E 's#/proc/([0-9]+)/environ#\\1#' | grep -v \"^$$$\" || true); \
+         if [ -n \"$pids\" ]; then kill -TERM $pids 2>/dev/null || true; sleep 1; kill -KILL $pids 2>/dev/null || true; fi; \
+         remaining=$(grep -R -l -z -- {marker} /proc/[0-9]*/environ 2>/dev/null | sed -E 's#/proc/([0-9]+)/environ#\\1#' | grep -v \"^$$$\" || true); \
+         if [ -n \"$remaining\" ]; then echo \"remaining marker pids: $remaining\" >&2; exit 1; fi",
+        marker = marker
     );
 
-    cmd
+    cmd.arg("--").arg("sh").arg("-lc").arg(script);
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    log::warn!(
+        "[WSL] Terminating marked WSL-side process for host PID {} ({}): marker={:?}, distro={:?}",
+        pid,
+        reason,
+        spec.marker,
+        spec.distro
+    );
+
+    Ok(cmd)
+}
+
+#[cfg(target_os = "windows")]
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r#"'\''"#))
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -2050,6 +2179,33 @@ pub fn build_wsl_command_async(
         cmd.arg(arg);
     }
     cmd
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn build_wsl_command_spec(
+    program: &str,
+    args: &[String],
+    _working_dir: Option<&str>,
+    _distro: Option<&str>,
+) -> WslCommandSpec {
+    WslCommandSpec {
+        program: program.to_string(),
+        args: args.to_vec(),
+        working_dir: None,
+        distro: None,
+        marker: None,
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+impl WslCommandSpec {
+    pub fn into_command(&self) -> tokio::process::Command {
+        let mut cmd = tokio::process::Command::new(&self.program);
+        for arg in &self.args {
+            cmd.arg(arg);
+        }
+        cmd
+    }
 }
 
 // ============================================================================
@@ -2098,5 +2254,91 @@ mod tests {
             "Path should contain wsl and Debian: {}",
             path_str
         );
+    }
+
+    #[test]
+    fn test_wsl_command_spec_preserves_launch_identity() {
+        let args = vec!["exec".to_string(), "--json".to_string(), "-".to_string()];
+        let spec = build_wsl_command_spec("codex", &args, Some("C:\\Projects\\demo"), Some("Ubuntu"));
+
+        assert_eq!(spec.program, "codex");
+        assert_eq!(spec.args, args);
+
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(spec.distro.as_deref(), Some("Ubuntu"));
+            assert!(spec
+                .working_dir
+                .as_deref()
+                .map(|path| path.starts_with('/'))
+                .unwrap_or(false));
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_marked_wsl_command_spec_uses_unique_marker_for_termination() {
+        let args = vec!["exec".to_string(), "--json".to_string(), "-".to_string()];
+        let marker = "any-code-codex-test-marker";
+        let spec =
+            build_marked_wsl_command_spec(marker, "codex", &args, Some("C:\\Projects\\demo"), Some("Ubuntu"));
+
+        assert_eq!(spec.marker.as_deref(), Some(marker));
+
+        let termination = build_wsl_termination_command(&spec, 12345, "test")
+            .expect("marked WSL spec should build a termination command");
+        let script = termination
+            .get_args()
+            .last()
+            .expect("termination script should be passed as the final arg")
+            .to_string_lossy()
+            .to_string();
+
+        assert!(
+            script.contains(marker),
+            "termination script should search for the unique marker: {script}"
+        );
+        assert!(
+            script.contains("/proc/[0-9]*/environ"),
+            "termination should inspect WSL-side process environments: {script}"
+        );
+        assert!(
+            script.contains("kill -TERM") && script.contains("kill -KILL"),
+            "termination should kill only marker-matched pids: {script}"
+        );
+        assert!(
+            !script.contains("pkill"),
+            "marked termination must not fall back to pattern pkill: {script}"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_unmarked_wsl_termination_is_refused() {
+        let args = vec!["exec".to_string(), "--json".to_string(), "-".to_string()];
+        let spec = build_wsl_command_spec("codex", &args, Some("C:\\Projects\\demo"), Some("Ubuntu"));
+
+        let err = build_wsl_termination_command(&spec, 12345, "test")
+            .expect_err("unmarked WSL specs must not be terminable by command pattern");
+
+        assert!(
+            err.contains("without unique marker"),
+            "unexpected error for unmarked termination refusal: {err}"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_wsl_command_spec_resolves_distro_for_windows_paths() {
+        let args = vec!["exec".to_string(), "--json".to_string(), "-".to_string()];
+        let spec = build_marked_wsl_command_spec(
+            "any-code-codex-test-marker",
+            "codex",
+            &args,
+            Some("C:\\Projects\\demo"),
+            Some("Ubuntu"),
+        );
+
+        assert_eq!(spec.distro.as_deref(), Some("Ubuntu"));
     }
 }

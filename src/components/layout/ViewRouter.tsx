@@ -55,7 +55,8 @@ export const ViewRouter: React.FC = () => {
   const { currentView, navigateTo, viewParams, setNavigationInterceptor, goBack } = useNavigation();
   const {
     projects, selectedProject, sessions, loading, error,
-    loadProjects, selectProject, registerProjectByPath, deleteProject, clearSelection, refreshSessions
+    loadProjects, selectProject, registerProjectByPath, deleteProject, clearSelection, refreshSessions,
+    scheduleProjectRefresh
   } = useProject();
   const { openSessionInBackground, switchToTab } = useTabs();
 
@@ -86,8 +87,23 @@ export const ViewRouter: React.FC = () => {
     const handleOpenPromptAPISettings = () => {
       navigateTo("settings", { initialTab: "prompt-api" });
     };
+    const handleShowToast = (event: CustomEvent) => {
+      const detail = event.detail || {};
+      const message = typeof detail.message === 'string' ? detail.message : String(detail.message || '');
+      const type = detail.type === 'success' || detail.type === 'error' || detail.type === 'info'
+        ? detail.type
+        : 'info';
+
+      if (message.trim()) {
+        setToast({ message, type });
+      }
+    };
     window.addEventListener('open-prompt-api-settings', handleOpenPromptAPISettings as EventListener);
-    return () => window.removeEventListener('open-prompt-api-settings', handleOpenPromptAPISettings as EventListener);
+    window.addEventListener('show-toast', handleShowToast as EventListener);
+    return () => {
+      window.removeEventListener('open-prompt-api-settings', handleOpenPromptAPISettings as EventListener);
+      window.removeEventListener('show-toast', handleShowToast as EventListener);
+    };
   }, [currentView, navigateTo]);
 
   // Listen for claude-session-selected
@@ -123,10 +139,7 @@ export const ViewRouter: React.FC = () => {
     const setupListener = async () => {
       unlistenComplete = await listen<ClaudeCompletePayload>('claude-complete', async (event) => {
         if (isClaudeCompleteSuccess(event.payload)) {
-          loadProjects(); // Refresh projects to update counts/timestamps
-          if (selectedProject) {
-            refreshSessions();
-          }
+          scheduleProjectRefresh(Boolean(selectedProject));
         }
       });
     };
@@ -134,7 +147,7 @@ export const ViewRouter: React.FC = () => {
     return () => {
       if (unlistenComplete) unlistenComplete();
     };
-  }, [loadProjects, selectedProject, refreshSessions]);
+  }, [selectedProject, scheduleProjectRefresh]);
 
   // Handlers
   const handleSessionDelete = async (sessionId: string, projectId: string) => {

@@ -51,15 +51,23 @@ pub use platform::{apply_no_window_async, kill_process_tree};
 
 #[tauri::command]
 pub async fn list_projects() -> Result<Vec<Project>, String> {
-    let store = ProjectStore::new()?;
-    store.list_projects()
+    tokio::task::spawn_blocking(|| {
+        let store = ProjectStore::new()?;
+        store.list_projects()
+    })
+    .await
+    .map_err(|e| format!("list_projects task failed: {}", e))?
 }
 
 /// Gets sessions for a specific project
 #[tauri::command]
 pub async fn get_project_sessions(project_id: String) -> Result<Vec<Session>, String> {
-    let store = ProjectStore::new()?;
-    store.get_project_sessions(&project_id)
+    tokio::task::spawn_blocking(move || {
+        let store = ProjectStore::new()?;
+        store.get_project_sessions(&project_id)
+    })
+    .await
+    .map_err(|e| format!("get_project_sessions task failed: {}", e))?
 }
 
 /// Deletes a session and all its associated data
@@ -169,5 +177,9 @@ pub async fn load_session_history(
     session_id: String,
     project_id: String,
 ) -> Result<Vec<serde_json::Value>, String> {
-    session_history::load_session_history(&session_id, &project_id)
+    tokio::task::spawn_blocking(move || {
+        session_history::load_session_history(&session_id, &project_id)
+    })
+    .await
+    .map_err(|e| format!("load_session_history task failed: {}", e))?
 }
