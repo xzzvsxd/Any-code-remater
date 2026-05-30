@@ -78,17 +78,16 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
 
   // 检查是否已回答
   const answered = questionId && isQuestionAnswered ? isQuestionAnswered(questionId) : false;
+  const canAnswerQuestion = safeQuestions.length > 0 && !hasAnswers && !answered;
 
   // 🆕 自动触发问答对话框（仅在有问题且未回答时）
+  // 即使 AskUserQuestion 的后端工具参数校验失败（例如 questions 被传成 string），
+  // 只要前端能从 input 中恢复出问题，也继续弹出对话框让用户回答。
   useEffect(() => {
     if (
-      safeQuestions.length > 0 &&
-      !hasAnswers &&
-      !answered &&
+      canAnswerQuestion &&
       triggerQuestionDialog &&
-      !hasTriggered.current &&
-      !isError &&
-      !result // 如果已有结果，不再触发
+      !hasTriggered.current
     ) {
       hasTriggered.current = true;
       // 延迟触发，确保 UI 已渲染
@@ -97,11 +96,11 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [safeQuestions, hasAnswers, answered, triggerQuestionDialog, isError, result]);
+  }, [safeQuestions, canAnswerQuestion, triggerQuestionDialog]);
 
   const handleAnswerNow = (event: React.MouseEvent) => {
     event.stopPropagation();
-    if (!triggerQuestionDialog || safeQuestions.length === 0 || hasAnswers || answered || isError || result) {
+    if (!triggerQuestionDialog || !canAnswerQuestion) {
       return;
     }
     triggerQuestionDialog(safeQuestions);
@@ -247,7 +246,7 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
             </div>
 
             {/* 折叠按钮 */}
-            {!hasAnswers && !answered && triggerQuestionDialog && safeQuestions.length > 0 && !isError && !result && (
+            {canAnswerQuestion && triggerQuestionDialog && (
               <Button
                 variant="outline"
                 size="sm"

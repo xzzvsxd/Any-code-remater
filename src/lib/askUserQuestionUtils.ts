@@ -44,35 +44,111 @@ export function normalizeAnswers(value: unknown): UserAnswers {
   }, {});
 }
 
+function parseQuestionJsonString(value: string): unknown | null {
+  const trimmed = value.trim();
+  if (!trimmed || (!trimmed.startsWith("[") && !trimmed.startsWith("{"))) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeOptions(value: unknown): Question["options"] {
+  if (Array.isArray(value)) {
+    return value.map((rawOption, optionIndex) => {
+      if (!isRecord(rawOption)) {
+        return {
+          label: toDisplayString(rawOption, `选项 ${optionIndex + 1}`),
+          description: undefined,
+        };
+      }
+
+      return {
+        label: toDisplayString(
+          rawOption.label,
+          toDisplayString(
+            rawOption.text,
+            toDisplayString(rawOption.value, `选项 ${optionIndex + 1}`)
+          )
+        ),
+        description: toDisplayString(rawOption.description) || undefined,
+      };
+    });
+  }
+
+  const singleOption = toDisplayString(value);
+  return singleOption ? [{ label: singleOption, description: undefined }] : [];
+}
+
+function normalizeQuestion(rawQuestion: unknown, questionIndex: number): Question {
+  if (!isRecord(rawQuestion)) {
+    return {
+      question: toDisplayString(rawQuestion, `问题 ${questionIndex + 1}`),
+      options: [],
+      multiSelect: false,
+    };
+  }
+
+  const question = toDisplayString(
+    rawQuestion.question,
+    toDisplayString(
+      rawQuestion.text,
+      toDisplayString(
+        rawQuestion.content,
+        toDisplayString(
+          rawQuestion.prompt,
+          toDisplayString(rawQuestion.header, `问题 ${questionIndex + 1}`)
+        )
+      )
+    )
+  );
+  const header = toDisplayString(rawQuestion.header, toDisplayString(rawQuestion.title));
+  const options = normalizeOptions(rawQuestion.options ?? rawQuestion.choices);
+
+  return {
+    question,
+    header: header || undefined,
+    options,
+    multiSelect: rawQuestion.multiSelect === true
+      || rawQuestion.multi_select === true
+      || rawQuestion.multiple === true,
+  };
+}
+
 export function normalizeQuestions(value: unknown): Question[] {
+  if (typeof value === "string") {
+    const parsed = parseQuestionJsonString(value);
+    if (parsed !== null) {
+      const normalized = normalizeQuestions(parsed);
+      if (normalized.length > 0) {
+        return normalized;
+      }
+    }
+
+    const question = toDisplayString(value);
+    return question ? [normalizeQuestion(question, 0)] : [];
+  }
+
+  if (isRecord(value)) {
+    if ("questions" in value) {
+      const normalized = normalizeQuestions(value.questions);
+      if (normalized.length > 0) {
+        return normalized;
+      }
+    }
+
+    return [normalizeQuestion(value, 0)];
+  }
+
   if (!Array.isArray(value)) {
     return [];
   }
 
-  return value.map((rawQuestion, questionIndex) => {
-    const record = isRecord(rawQuestion) ? rawQuestion : {};
-    const question = toDisplayString(
-      record.question,
-      toDisplayString(record.header, `问题 ${questionIndex + 1}`)
-    );
-    const header = toDisplayString(record.header);
-    const rawOptions = Array.isArray(record.options) ? record.options : [];
-
-    const options = rawOptions.map((rawOption, optionIndex) => {
-      const optionRecord = isRecord(rawOption) ? rawOption : {};
-      return {
-        label: toDisplayString(optionRecord.label, `选项 ${optionIndex + 1}`),
-        description: toDisplayString(optionRecord.description) || undefined,
-      };
-    });
-
-    return {
-      question,
-      header: header || undefined,
-      options,
-      multiSelect: record.multiSelect === true,
-    };
-  });
+  return value.map(normalizeQuestion).filter(question => question.question.length > 0);
 }
 
 export function getQuestionKey(question: Pick<Question, "question" | "header">): string {
