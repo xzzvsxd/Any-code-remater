@@ -318,6 +318,13 @@ export function getPricingForModel(model?: string, engine?: string): ModelPricin
     normalized = normalized.substring(0, atIndex);
   }
 
+  if (normalized === 'default') {
+    return MODEL_PRICING['claude-sonnet-4.6'];
+  }
+  if (normalized === 'best' || normalized === 'opusplan') {
+    return MODEL_PRICING['claude-opus-4.7'];
+  }
+
   // ============================================================================
   // Gemini Models (Google)
   // ============================================================================

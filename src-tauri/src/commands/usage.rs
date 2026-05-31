@@ -221,6 +221,13 @@ fn parse_model_family(model: &str) -> ModelFamily {
     // Priority-based matching (order matters!)
     // Check for specific model families in order from most to least specific
 
+    if normalized == "default" {
+        return ModelFamily::Sonnet46;
+    }
+    if normalized == "best" || normalized == "opusplan" {
+        return ModelFamily::Opus47;
+    }
+
     // Claude 4.7 Series (Latest)
     if normalized.contains("opus") && (normalized.contains("4.7") || normalized.contains("4-7")) {
         return ModelFamily::Opus47;

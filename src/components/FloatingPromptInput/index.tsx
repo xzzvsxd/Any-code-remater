@@ -67,6 +67,10 @@ const FloatingPromptInputInner = (
     if (!modelStr) return null;
 
     const lowerModel = modelStr.toLowerCase();
+    if (lowerModel === "default") return "default";
+    if (lowerModel === "best") return "best";
+    if (lowerModel === "opusplan") return "opusplan";
+    if (lowerModel === "haiku" || lowerModel.includes("haiku")) return "haiku";
     if (lowerModel.includes("opus") && lowerModel.includes("1m")) return "opus1m";
     if (lowerModel.includes("opus")) return "opus";
     if (lowerModel.includes("sonnet") && lowerModel.includes("1m")) return "sonnet1m";
@@ -383,8 +387,17 @@ const FloatingPromptInputInner = (
                              envVars.ANTHROPIC_DEFAULT_OPUS_MODEL;
 
           if (customModel && typeof customModel === 'string') {
-            // Check if it's a built-in model ID (sonnet, opus, sonnet1m)
-            const isBuiltInModel = ['sonnet', 'opus', 'sonnet1m', 'opus1m'].includes(customModel.toLowerCase());
+            // Check if it's a built-in Claude Code model ID/alias.
+            const isBuiltInModel = [
+              'default',
+              'best',
+              'sonnet',
+              'opus',
+              'sonnet1m',
+              'opus1m',
+              'haiku',
+              'opusplan',
+            ].includes(customModel.toLowerCase());
 
             if (!isBuiltInModel) {
               // This is a custom model - add it to the list

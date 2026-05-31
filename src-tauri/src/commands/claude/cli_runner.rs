@@ -45,11 +45,15 @@ impl Drop for ClaudeProcessState {
 /// Updated to use Claude 4.6 (released February 2026) as the latest models
 pub(super) fn map_model_to_claude_alias(model: &str) -> String {
     match model {
+        "default" => "default".to_string(),
+        "best" => "best".to_string(),
         "sonnet1m" => "sonnet[1m]".to_string(),
         "sonnet" => "sonnet".to_string(),
         "opus1m" => "opus[1m]".to_string(),
-        // Use 'opus' alias which automatically resolves to latest Opus (Claude 4.6)
+        // Use 'opus' alias which automatically resolves to latest Opus.
         "opus" => "opus".to_string(),
+        "haiku" => "haiku".to_string(),
+        "opusplan" => "opusplan".to_string(),
         // Pass through any other model names unchanged (for future compatibility)
         _ => model.to_string(),
     }

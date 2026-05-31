@@ -297,6 +297,8 @@ export function getContextWindowSize(model?: string, engine?: string): number {
   return CLAUDE_CONTEXT_WINDOWS['default'];
 }
 export const MODEL_ALIASES = {
+  'default': 'claude-sonnet-4-6',
+  'best': 'claude-opus-4-7',
   'opus': 'claude-opus-4-7',
   'opus1m': 'claude-opus-4-7[1m]',
   'opus4.7': 'claude-opus-4-7',
@@ -316,6 +318,7 @@ export const MODEL_ALIASES = {
   'haiku': 'claude-haiku-4-5',
   'haiku4.5': 'claude-haiku-4-5',
   'haiku-4.5': 'claude-haiku-4-5',
+  'opusplan': 'claude-opus-4-7',
 } as const;
 
 /**
@@ -475,6 +478,13 @@ export class TokenCounterService {
     }
 
     // Priority-based matching (order matters! MUST match backend logic)
+
+    if (normalized === 'default') {
+      return 'claude-sonnet-4-6';
+    }
+    if (normalized === 'best' || normalized === 'opusplan') {
+      return 'claude-opus-4-7';
+    }
 
     // Claude 4.7 Series (Latest)
     if (normalized.includes('opus') && (normalized.includes('4.7') || normalized.includes('4-7'))) {

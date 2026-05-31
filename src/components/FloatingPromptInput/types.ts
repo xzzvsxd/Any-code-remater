@@ -3,7 +3,16 @@ import { ReactNode } from "react";
 /**
  * Model type definition
  */
-export type ModelType = "sonnet" | "opus" | "sonnet1m" | "opus1m" | "custom";
+export type ModelType =
+  | "default"
+  | "best"
+  | "sonnet"
+  | "opus"
+  | "sonnet1m"
+  | "opus1m"
+  | "haiku"
+  | "opusplan"
+  | "custom";
 
 /**
  * Thinking mode type definition
