@@ -228,9 +228,11 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     // Default config
     return {
       engine: 'claude',
+      claudeFastMode: false,
       codexMode: 'read-only',
       codexModel: 'gpt-5.5',
-      geminiModel: 'gemini-3-flash',
+      codexFastMode: false,
+      geminiModel: 'auto-gemini-3',
     };
   });
 
@@ -556,8 +558,11 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     isFirstPrompt,
     extractedSessionInfo,
     executionEngine: executionEngineConfig.engine, // 🆕 Codex integration
+    claudeFastMode: executionEngineConfig.claudeFastMode,
     codexMode: executionEngineConfig.codexMode,    // 🆕 Codex integration
     codexModel: executionEngineConfig.codexModel,  // 🆕 Codex integration
+    codexFastMode: executionEngineConfig.codexFastMode,
+    codexReasoningLevel: executionEngineConfig.codexReasoningLevel,
     geminiModel: executionEngineConfig.geminiModel,           // 🆕 Gemini integration
     geminiApprovalMode: executionEngineConfig.geminiApprovalMode, // 🆕 Gemini integration
     hasActiveSessionRef,

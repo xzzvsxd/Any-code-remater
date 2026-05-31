@@ -317,6 +317,11 @@ pub async fn switch_provider_config(
 
     // 清理Claude Code 2025的新环境变量
     env_obj.remove("ANTHROPIC_SMALL_FAST_MODEL");
+    env_obj.remove("ANTHROPIC_DEFAULT_OPUS_MODEL");
+    env_obj.remove("ANTHROPIC_DEFAULT_SONNET_MODEL");
+    env_obj.remove("ANTHROPIC_CUSTOM_MODEL_OPTION");
+    env_obj.remove("CLAUDE_CODE_ENABLE_OPUS_4_7_FAST_MODE");
+    env_obj.remove("CLAUDE_CODE_FAST_MODE");
     env_obj.remove("API_TIMEOUT_MS");
     env_obj.remove("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC");
 

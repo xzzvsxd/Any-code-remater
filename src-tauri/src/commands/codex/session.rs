@@ -70,8 +70,14 @@ pub struct CodexExecutionOptions {
     #[serde(default)]
     pub mode: CodexExecutionMode,
 
-    /// Model to use (e.g., "gpt-5.1-codex-max")
+    /// Model to use (e.g., "gpt-5.5")
     pub model: Option<String>,
+
+    /// Enable Codex fast service tier for supported models
+    pub fast_mode: Option<bool>,
+
+    /// Reasoning effort for this run (minimal, low, medium, high, xhigh)
+    pub reasoning_effort: Option<String>,
 
     /// Enable JSON output mode
     #[serde(default = "default_json_mode")]
@@ -261,10 +267,12 @@ pub async fn execute_codex(
 ) -> Result<(), String> {
     // Avoid logging sensitive fields (prompt/api_key). Log only non-sensitive metadata.
     log::info!(
-        "execute_codex called: project_path={}, mode={:?}, model={:?}, json={}, output_schema_present={}, output_file_present={}, skip_git_repo_check={}, session_id_present={}, resume_last={}, api_key_present={}, prompt_len={}",
+        "execute_codex called: project_path={}, mode={:?}, model={:?}, fast_mode={:?}, reasoning_effort={:?}, json={}, output_schema_present={}, output_file_present={}, skip_git_repo_check={}, session_id_present={}, resume_last={}, api_key_present={}, prompt_len={}",
         options.project_path,
         options.mode,
         options.model,
+        options.fast_mode,
+        options.reasoning_effort,
         options.json,
         options.output_schema.is_some(),
         options.output_file.is_some(),
@@ -818,7 +826,19 @@ fn build_codex_command(
 
         if let Some(ref model) = options.model {
             cmd.arg("--model");
-            cmd.arg(model);
+            cmd.arg(model.strip_suffix("-fast").unwrap_or(model));
+        }
+
+        if let Some(ref effort) = options.reasoning_effort {
+            cmd.arg("--config");
+            cmd.arg(format!("model_reasoning_effort=\"{}\"", effort));
+        }
+
+        if options.fast_mode.unwrap_or(false) {
+            cmd.arg("--config");
+            cmd.arg("service_tier=\"fast\"");
+            cmd.arg("--config");
+            cmd.arg("features.fast_mode=true");
         }
 
         if let Some(ref schema) = options.output_schema {
@@ -900,7 +920,19 @@ fn build_wsl_codex_command(
 
         if let Some(ref model) = options.model {
             args.push("--model".to_string());
-            args.push(model.clone());
+            args.push(model.strip_suffix("-fast").unwrap_or(model).to_string());
+        }
+
+        if let Some(ref effort) = options.reasoning_effort {
+            args.push("--config".to_string());
+            args.push(format!("model_reasoning_effort=\"{}\"", effort));
+        }
+
+        if options.fast_mode.unwrap_or(false) {
+            args.push("--config".to_string());
+            args.push("service_tier=\"fast\"".to_string());
+            args.push("--config".to_string());
+            args.push("features.fast_mode=true".to_string());
         }
 
         if let Some(ref schema) = options.output_schema {

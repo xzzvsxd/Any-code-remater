@@ -68,7 +68,7 @@ const codexSessionToProjectSession = (
   project_id: projectId,
   project_path: session.projectPath || fallbackProjectPath,
   created_at: session.createdAt,
-  model: session.model || 'gpt-5.3-codex',
+  model: session.model || 'gpt-5.5',
   engine: 'codex' as const,
   first_message: session.firstMessage || 'Codex Session',
   last_message_timestamp: session.lastMessageTimestamp,

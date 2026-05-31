@@ -16,14 +16,14 @@ export type ModelType =
 
 /**
  * Thinking mode type definition
- * Claude 4.6 Adaptive Thinking with effort levels
+ * Claude adaptive thinking with effort levels
  */
 export type ThinkingMode = "off" | "adaptive";
 
 /**
- * Thinking effort level (Claude 4.6 Adaptive Thinking)
+ * Thinking effort level
  */
-export type ThinkingEffort = "low" | "medium" | "high" | "max";
+export type ThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 /**
  * Model configuration
@@ -43,7 +43,7 @@ export interface ThinkingModeConfig {
   effort?: ThinkingEffort; // Effort level for adaptive thinking
   name: string;
   description: string;
-  level: number; // 0-4 for visual indicator
+  level: number; // 0-5 for visual indicator
 }
 
 /**

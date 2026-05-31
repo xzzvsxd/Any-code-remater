@@ -39,6 +39,7 @@ pub use self::config::{
     set_claude_wsl_mode_config,
     set_custom_claude_path,
     update_claude_execution_config,
+    update_claude_fast_mode,
     update_claude_permission_config,
     update_thinking_mode,
     validate_permission_config,

@@ -103,6 +103,9 @@ const FloatingPromptInputInner = (
     selectedModel: getInitialModel(),
     executionEngineConfig: externalEngineConfig || initialState.executionEngineConfig,
   });
+  const lastExternalEngineConfigJsonRef = useRef<string | null>(
+    externalEngineConfig ? JSON.stringify(externalEngineConfig) : null
+  );
 
   // 草稿持久化 Hook - 确保输入内容在页面切换后不丢失
   const { saveDraft, clearDraft } = useDraftPersistence({
@@ -126,13 +129,13 @@ const FloatingPromptInputInner = (
   }, []);
 
   // Initialize thinking mode from settings.json (source of truth)
-  // Claude 4.6: Read CLAUDE_CODE_THINKING_EFFORT from settings.json env
+  // Prefer current CLAUDE_CODE_EFFORT_LEVEL, with legacy env fallback.
   useEffect(() => {
     const initThinkingMode = async () => {
       try {
         const settings = await api.getClaudeSettings();
-        const effort = settings?.env?.CLAUDE_CODE_THINKING_EFFORT;
-        if (effort && ['low', 'medium', 'high', 'max'].includes(effort)) {
+        const effort = settings?.env?.CLAUDE_CODE_EFFORT_LEVEL ?? settings?.env?.CLAUDE_CODE_THINKING_EFFORT;
+        if (effort && ['low', 'medium', 'high', 'xhigh', 'max'].includes(effort)) {
           dispatch({ type: "SET_THINKING_MODE", payload: { mode: 'adaptive', effort: effort as ThinkingEffort } });
           localStorage.setItem('thinking_mode', 'adaptive');
           localStorage.setItem('thinking_effort', effort);
@@ -169,7 +172,15 @@ const FloatingPromptInputInner = (
 
   // Sync external config changes
   useEffect(() => {
-    if (externalEngineConfig && externalEngineConfig.engine !== state.executionEngineConfig.engine) {
+    if (!externalEngineConfig) return;
+
+    const externalJson = JSON.stringify(externalEngineConfig);
+    if (externalJson === lastExternalEngineConfigJsonRef.current) {
+      return;
+    }
+
+    lastExternalEngineConfigJsonRef.current = externalJson;
+    if (externalJson !== JSON.stringify(state.executionEngineConfig)) {
       dispatch({ type: "SET_EXECUTION_ENGINE_CONFIG", payload: externalEngineConfig });
     }
   }, [externalEngineConfig]);
@@ -432,7 +443,7 @@ const FloatingPromptInputInner = (
   }));
 
   // Toggle thinking mode - cycle through: off → high → max → low → medium → off
-  const EFFORT_CYCLE: (ThinkingEffort | 'off')[] = ['off', 'high', 'max', 'low', 'medium'];
+  const EFFORT_CYCLE: (ThinkingEffort | 'off')[] = ['off', 'high', 'xhigh', 'max', 'low', 'medium'];
 
   const handleToggleThinkingMode = useCallback(async () => {
     const currentMode = state.selectedThinkingMode;

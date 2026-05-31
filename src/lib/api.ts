@@ -776,7 +776,7 @@ export const api = {
           project_id: projectId,
           project_path: cs.projectPath,
           created_at: cs.createdAt,
-          model: cs.model || 'gpt-5.3-codex',
+          model: cs.model || 'gpt-5.5',
           engine: 'codex' as const,
           // 🆕 Use actual first message from JSONL file
           first_message: cs.firstMessage || `Codex Session`,
@@ -828,7 +828,7 @@ export const api = {
           project_id: projectId,
           project_path: cs.projectPath,
           created_at: cs.createdAt,
-          model: cs.model || 'gpt-5.3-codex',
+          model: cs.model || 'gpt-5.5',
           engine: 'codex' as const,
           first_message: cs.firstMessage || `Codex Session`,
           last_message_timestamp: cs.lastMessageTimestamp,
@@ -1084,10 +1084,9 @@ export const api = {
   },
 
   /**
-   * Updates the thinking mode using Claude 4.6 Adaptive Thinking
-   * Sets CLAUDE_CODE_THINKING_EFFORT env var in settings.json
+   * Updates the Claude Code effort level in settings.json.
    * @param enabled - Whether to enable adaptive thinking
-   * @param effort - Effort level: low, medium, high, max (only used when enabled)
+   * @param effort - Effort level: low, medium, high, xhigh, max (only used when enabled)
    * @returns Promise resolving when the settings are updated
    */
   async updateThinkingMode(enabled: boolean, effort?: string): Promise<string> {
@@ -1095,6 +1094,15 @@ export const api = {
       return await invoke<string>("update_thinking_mode", { enabled, effort });
     } catch (error) {
       console.error("Failed to update thinking mode:", error);
+      throw error;
+    }
+  },
+
+  async updateClaudeFastMode(enabled: boolean): Promise<string> {
+    try {
+      return await invoke<string>("update_claude_fast_mode", { enabled });
+    } catch (error) {
+      console.error("Failed to update Claude fast mode:", error);
       throw error;
     }
   },
@@ -1199,8 +1207,8 @@ export const api = {
    * @param planMode - Enable Plan Mode for read-only research and planning
    * @param tabId - Unique identifier for the tab, used to filter global events
    */
-  async executeClaudeCode(projectPath: string, prompt: string, model: string, planMode?: boolean, maxThinkingTokens?: number, tabId?: string): Promise<void> {
-    return invoke("execute_claude_code", { projectPath, prompt, model, planMode, maxThinkingTokens, tabId });
+  async executeClaudeCode(projectPath: string, prompt: string, model: string, planMode?: boolean, maxThinkingTokens?: number, tabId?: string, fastMode?: boolean): Promise<void> {
+    return invoke("execute_claude_code", { projectPath, prompt, model, planMode, maxThinkingTokens, tabId, fastMode });
   },
 
   /**
@@ -1208,8 +1216,8 @@ export const api = {
    * @param planMode - Enable Plan Mode for read-only research and planning
    * @param tabId - Unique identifier for the tab, used to filter global events
    */
-  async continueClaudeCode(projectPath: string, prompt: string, model: string, planMode?: boolean, maxThinkingTokens?: number, tabId?: string): Promise<void> {
-    return invoke("continue_claude_code", { projectPath, prompt, model, planMode, maxThinkingTokens, tabId });
+  async continueClaudeCode(projectPath: string, prompt: string, model: string, planMode?: boolean, maxThinkingTokens?: number, tabId?: string, fastMode?: boolean): Promise<void> {
+    return invoke("continue_claude_code", { projectPath, prompt, model, planMode, maxThinkingTokens, tabId, fastMode });
   },
 
   /**
@@ -1217,8 +1225,8 @@ export const api = {
    * @param planMode - Enable Plan Mode for read-only research and planning
    * @param tabId - Unique identifier for the tab, used to filter global events
    */
-  async resumeClaudeCode(projectPath: string, sessionId: string, prompt: string, model: string, planMode?: boolean, maxThinkingTokens?: number, tabId?: string): Promise<void> {
-    return invoke("resume_claude_code", { projectPath, sessionId, prompt, model, planMode, maxThinkingTokens, tabId });
+  async resumeClaudeCode(projectPath: string, sessionId: string, prompt: string, model: string, planMode?: boolean, maxThinkingTokens?: number, tabId?: string, fastMode?: boolean): Promise<void> {
+    return invoke("resume_claude_code", { projectPath, sessionId, prompt, model, planMode, maxThinkingTokens, tabId, fastMode });
   },
 
   /**

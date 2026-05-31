@@ -57,8 +57,11 @@ interface UsePromptExecutionConfig {
 
   // 🆕 Execution Engine Integration (Claude/Codex/Gemini)
   executionEngine?: 'claude' | 'codex' | 'gemini'; // 执行引擎选择 (默认: 'claude')
+  claudeFastMode?: boolean;              // Claude Fast 模式
   codexMode?: CodexExecutionMode;       // Codex 执行模式
-  codexModel?: string;                  // Codex 模型 (e.g., 'gpt-5.2')
+  codexModel?: string;                  // Codex 模型 (e.g., 'gpt-5.5')
+  codexFastMode?: boolean;              // Codex Fast 模式
+  codexReasoningLevel?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   geminiModel?: string;                 // Gemini 模型 (e.g., 'gemini-3-flash')
   geminiApprovalMode?: 'auto_edit' | 'yolo' | 'default'; // Gemini 审批模式
 
@@ -146,8 +149,11 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
     isFirstPrompt,
     extractedSessionInfo,
     executionEngine = 'claude', // 🆕 默认使用 Claude Code
+    claudeFastMode = false,     // 🆕 Claude Fast 模式
     codexMode = 'read-only',     // 🆕 Codex 默认只读模式
     codexModel,                  // 🆕 Codex 模型
+    codexFastMode = false,       // 🆕 Codex Fast 模式
+    codexReasoningLevel,         // 🆕 Codex 推理强度
     geminiModel,                 // 🆕 Gemini 模型
     geminiApprovalMode,          // 🆕 Gemini 审批模式
     hasActiveSessionRef,
@@ -1779,6 +1785,13 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         // - 新会话：在事件监听器 codex-output 收到 thread.started 后记录
         // 此处仅设置 pendingPrompt 供 completion 使用
 
+        const selectedCodexModel = codexModel || model;
+        const effectiveCodexModel = sanitizeCodexModelId(
+          codexFastMode && selectedCodexModel.includes('gpt-5.5')
+            ? 'gpt-5.5-fast'
+            : selectedCodexModel
+        );
+
         if (effectiveSession && !isFirstPrompt) {
           // Resume existing Codex session
           try {
@@ -1786,7 +1799,9 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
               projectPath,
               prompt: processedPrompt,
               mode: codexMode || 'read-only',
-              model: sanitizeCodexModelId(codexModel || model),
+              model: effectiveCodexModel,
+              fastMode: codexFastMode,
+              reasoningEffort: codexReasoningLevel,
               json: true,
               skipGitRepoCheck: true,
               tabId: tabIdRef.current
@@ -1797,7 +1812,9 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
               projectPath,
               prompt: processedPrompt,
               mode: codexMode || 'read-only',
-              model: sanitizeCodexModelId(codexModel || model),
+              model: effectiveCodexModel,
+              fastMode: codexFastMode,
+              reasoningEffort: codexReasoningLevel,
               json: true,
               skipGitRepoCheck: true,
               tabId: tabIdRef.current
@@ -1810,7 +1827,9 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             projectPath,
             prompt: processedPrompt,
             mode: codexMode || 'read-only',
-            model: sanitizeCodexModelId(codexModel || model),
+            model: effectiveCodexModel,
+            fastMode: codexFastMode,
+            reasoningEffort: codexReasoningLevel,
             json: true,
             skipGitRepoCheck: true,
             tabId: tabIdRef.current
@@ -1850,7 +1869,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           await api.executeGemini({
             projectPath,
             prompt: processedPrompt,
-            model: geminiModel || 'gemini-3-flash',
+            model: geminiModel || 'auto-gemini-3',
             approvalMode: geminiApprovalMode || 'auto_edit',
             sessionId: sessionId,  // 🔑 Pass session ID for resumption
             debug: false,
@@ -1882,16 +1901,16 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         if (effectiveSession && !isFirstPrompt) {
           // Resume existing session
           try {
-            await api.resumeClaudeCode(projectPath, effectiveSession.id, processedPrompt, model, currentPlanMode, maxThinkingTokens, tabId);
+            await api.resumeClaudeCode(projectPath, effectiveSession.id, processedPrompt, model, currentPlanMode, maxThinkingTokens, tabId, claudeFastMode);
           } catch (resumeError) {
             console.warn('[usePromptExecution] Resume failed, falling back to continue mode:', resumeError);
             // Fallback to continue mode if resume fails
-            await api.continueClaudeCode(projectPath, processedPrompt, model, currentPlanMode, maxThinkingTokens, tabId);
+            await api.continueClaudeCode(projectPath, processedPrompt, model, currentPlanMode, maxThinkingTokens, tabId, claudeFastMode);
           }
         } else {
           // Start new session
           setIsFirstPrompt(false);
-          await api.executeClaudeCode(projectPath, processedPrompt, model, currentPlanMode, maxThinkingTokens, tabId);
+          await api.executeClaudeCode(projectPath, processedPrompt, model, currentPlanMode, maxThinkingTokens, tabId, claudeFastMode);
         }
       }
 
@@ -1920,8 +1939,11 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
     isFirstPrompt,
     extractedSessionInfo,
     executionEngine,  // 🆕 Codex/Gemini integration
+    claudeFastMode,   // 🆕 Claude integration
     codexMode,        // 🆕 Codex integration
     codexModel,       // 🆕 Codex integration
+    codexFastMode,    // 🆕 Codex integration
+    codexReasoningLevel, // 🆕 Codex integration
     geminiModel,      // 🆕 Gemini integration
     geminiApprovalMode, // 🆕 Gemini integration
     hasActiveSessionRef,

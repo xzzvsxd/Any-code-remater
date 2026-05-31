@@ -37,6 +37,13 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     cacheWrite: 6.25,
     cacheRead: 0.50
   },
+  // Claude Opus 4.7/4.6 Fast Mode (2.5x faster, higher cost)
+  'claude-opus-4.7-fast': {
+    input: 30.0,
+    output: 150.0,
+    cacheWrite: 37.5,
+    cacheRead: 3.0
+  },
   // Claude 4.6 Series
   'claude-opus-4.6': {
     input: 5.0,
@@ -50,7 +57,6 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     cacheWrite: 6.25,
     cacheRead: 0.50
   },
-  // Claude Opus 4.6 Fast Mode (2.5x faster, higher cost)
   'claude-opus-4.6-fast': {
     input: 30.0,       // $30 / 1M input tokens (<200K context)
     output: 150.0,     // $150 / 1M output tokens
@@ -111,6 +117,13 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     cacheWrite: 0,
     cacheRead: 0.50
   },
+  // GPT-5.5 Fast Mode - 1.5x speed, 2.5x credit consumption
+  'gpt-5.5-fast': {
+    input: 12.50,
+    output: 75.00,
+    cacheWrite: 0,
+    cacheRead: 1.25
+  },
   // GPT-5.5 Pro - higher-compute variant, no cached-input discount
   'gpt-5.5-pro': {
     input: 30.00,
@@ -139,6 +152,18 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     output: 180.00,   // $180.00 / 1M output tokens
     cacheWrite: 0,
     cacheRead: 3.00
+  },
+  'gpt-5.4-mini': {
+    input: 0.75,
+    output: 4.50,
+    cacheWrite: 0,
+    cacheRead: 0.075
+  },
+  'gpt-5.4-nano': {
+    input: 0.20,
+    output: 1.25,
+    cacheWrite: 0,
+    cacheRead: 0.02
   },
 
   // GPT-5.3-Codex 系列 - 专用代码模型（2026年2月5日发布）
@@ -298,10 +323,10 @@ export function getPricingForModel(model?: string, engine?: string): ModelPricin
   if (!model) {
     // 根据引擎选择默认定价
     if (engine === 'codex') {
-      return MODEL_PRICING['codex-mini-latest'];
+      return MODEL_PRICING['gpt-5.5'];
     }
     if (engine === 'gemini') {
-      return MODEL_PRICING['gemini-2.5-pro'];
+      return MODEL_PRICING['gemini-3-pro-preview'];
     }
     return MODEL_PRICING['default'];
   }
@@ -329,9 +354,22 @@ export function getPricingForModel(model?: string, engine?: string): ModelPricin
   // Gemini Models (Google)
   // ============================================================================
 
+  if (normalized === 'auto' || normalized === 'pro' || normalized.includes('auto-gemini-3')) {
+    return MODEL_PRICING['gemini-3-pro-preview'];
+  }
+  if (normalized === 'flash') {
+    return MODEL_PRICING['gemini-3-flash'];
+  }
+  if (normalized === 'flash-lite') {
+    return MODEL_PRICING['gemini-2.5-flash-lite'];
+  }
+
   if (normalized.includes('gemini')) {
     if (normalized.includes('gemini-3.1-pro') || normalized.includes('gemini_3_1_pro') || normalized.includes('3.1-pro')) {
       return MODEL_PRICING['gemini-3.1-pro-preview'];
+    }
+    if (normalized.includes('auto-gemini-3')) {
+      return MODEL_PRICING['gemini-3-pro-preview'];
     }
     if (normalized.includes('gemini-3-pro') || normalized.includes('gemini_3_pro')) {
       return MODEL_PRICING['gemini-3-pro-preview'];
@@ -352,8 +390,8 @@ export function getPricingForModel(model?: string, engine?: string): ModelPricin
       return MODEL_PRICING['gemini-2.0-flash'];
     }
 
-    // Unknown Gemini model - default to Gemini 2.5 Pro
-    return MODEL_PRICING['gemini-2.5-pro'];
+    // Unknown Gemini model - default to Gemini 3 Pro Preview
+    return MODEL_PRICING['gemini-3-pro-preview'];
   }
 
   // ============================================================================
@@ -361,6 +399,9 @@ export function getPricingForModel(model?: string, engine?: string): ModelPricin
   // ============================================================================
 
   // GPT-5.5 系列（当前旗舰）
+  if (normalized.includes('5.5') && normalized.includes('fast')) {
+    return MODEL_PRICING['gpt-5.5-fast'];
+  }
   if (normalized.includes('5.5-pro') || normalized.includes('5_5_pro')) {
     return MODEL_PRICING['gpt-5.5-pro'];
   }
@@ -371,6 +412,12 @@ export function getPricingForModel(model?: string, engine?: string): ModelPricin
   // GPT-5.4 系列（上一代旗舰）
   if (normalized.includes('5.4-pro') || normalized.includes('5_4_pro')) {
     return MODEL_PRICING['gpt-5.4-pro'];
+  }
+  if (normalized.includes('5.4-mini') || normalized.includes('5_4_mini')) {
+    return MODEL_PRICING['gpt-5.4-mini'];
+  }
+  if (normalized.includes('5.4-nano') || normalized.includes('5_4_nano')) {
+    return MODEL_PRICING['gpt-5.4-nano'];
   }
   if (normalized.includes('5.4') && normalized.includes('fast')) {
     return MODEL_PRICING['gpt-5.4-fast'];
@@ -435,6 +482,9 @@ export function getPricingForModel(model?: string, engine?: string): ModelPricin
 
   // Claude 4.7 Series (Latest)
   if (normalized.includes('opus') && (normalized.includes('4.7') || normalized.includes('4-7'))) {
+    if (normalized.includes('fast')) {
+      return MODEL_PRICING['claude-opus-4.7-fast'];
+    }
     return MODEL_PRICING['claude-opus-4.7'];
   }
 
@@ -483,7 +533,7 @@ export function getPricingForModel(model?: string, engine?: string): ModelPricin
 
   // Gemini 引擎使用 Gemini 默认定价
   if (engine === 'gemini') {
-    return MODEL_PRICING['gemini-3-flash'];
+    return MODEL_PRICING['gemini-3-pro-preview'];
   }
 
   // Unknown model - use default
@@ -505,8 +555,8 @@ function getGeminiTieredPricing(model: string, promptTokens: number): ModelPrici
     };
   }
 
-  // Gemini 3 Pro Preview
-  if (lower.includes('gemini-3-pro') || lower.includes('gemini_3_pro')) {
+  // Gemini CLI Auto/Pro alias and Gemini 3 Pro Preview
+  if (lower === 'auto' || lower === 'pro' || lower.includes('auto-gemini-3') || lower.includes('gemini-3-pro') || lower.includes('gemini_3_pro')) {
     return {
       input: isOver200k ? 4.00 : 2.00,
       output: isOver200k ? 18.00 : 12.00,
@@ -546,7 +596,7 @@ export function calculateMessageCost(
   model?: string,
   engine?: string
 ): number {
-  const resolvedModel = model || (engine === 'gemini' ? 'gemini-2.5-pro' : undefined);
+  const resolvedModel = model || (engine === 'gemini' ? 'auto-gemini-3' : undefined);
 
   // Gemini: tiered pricing depends on prompt length (<=200k vs >200k)
   const pricing =

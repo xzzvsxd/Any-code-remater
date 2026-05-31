@@ -100,7 +100,37 @@ struct ModelPricing {
 fn get_gemini_pricing(model: &str) -> ModelPricing {
     let normalized = model.to_lowercase();
 
-    // Gemini 3.1 Pro Preview (Latest - February 2026)
+    // Gemini CLI Auto/Pro alias maps to Gemini 3 Pro Preview for conservative estimates.
+    if normalized.contains("auto-gemini-3") || normalized == "auto" || normalized == "pro" {
+        return ModelPricing {
+            input: 2.00,
+            output: 12.00,
+            cache_read: 0.20,
+        };
+    }
+
+    // Gemini CLI Flash-Lite alias
+    if normalized == "flash-lite" {
+        return ModelPricing {
+            input: 0.10,
+            output: 0.40,
+            cache_read: 0.01,
+        };
+    }
+
+    // Gemini CLI Flash alias / Gemini 3 Flash Preview
+    if normalized == "flash"
+        || normalized.contains("gemini-3-flash")
+        || normalized.contains("gemini_3_flash")
+    {
+        return ModelPricing {
+            input: 0.50,
+            output: 3.00,
+            cache_read: 0.05,
+        };
+    }
+
+    // Gemini 3.1 Pro Preview
     if normalized.contains("gemini-3.1-pro")
         || normalized.contains("gemini_3_1_pro")
         || normalized.contains("3.1-pro")
@@ -112,12 +142,21 @@ fn get_gemini_pricing(model: &str) -> ModelPricing {
         };
     }
 
-    // Gemini 3 Pro Preview
+    // Gemini 3 Pro Preview / legacy Gemini 3 Pro ID
     if normalized.contains("gemini-3-pro") || normalized.contains("gemini_3_pro") {
         return ModelPricing {
             input: 2.00,
             output: 12.00,
             cache_read: 0.20,
+        };
+    }
+
+    // Auto route between Gemini 2.5 Pro and Flash; use Pro for conservative estimates.
+    if normalized.contains("auto-gemini-2.5") {
+        return ModelPricing {
+            input: 1.25,
+            output: 10.00,
+            cache_read: 0.125,
         };
     }
 
@@ -157,23 +196,13 @@ fn get_gemini_pricing(model: &str) -> ModelPricing {
         };
     }
 
-    // Gemini 3 Flash (default for new sessions)
-    if normalized.contains("gemini-3-flash") || normalized.contains("gemini_3_flash") {
-        return ModelPricing {
-            input: 0.30,
-            output: 2.50,
-            cache_read: 0.03,
-        };
-    }
-
-    // Default to Gemini 2.5 Pro pricing
+    // Default to Gemini 3 Pro Preview pricing
     ModelPricing {
-        input: 1.25,
-        output: 10.00,
-        cache_read: 0.125,
+        input: 2.00,
+        output: 12.00,
+        cache_read: 0.20,
     }
 }
-
 fn calculate_cost(model: &str, input_tokens: u64, output_tokens: u64) -> f64 {
     let pricing = get_gemini_pricing(model);
 
@@ -200,7 +229,7 @@ fn parse_session_for_usage(path: &PathBuf, project_hash: &str) -> Option<GeminiS
     // Extract token usage from messages
     let mut total_input_tokens: u64 = 0;
     let mut total_output_tokens: u64 = 0;
-    let mut model = "gemini-3-flash".to_string();
+    let mut model = "auto-gemini-3".to_string();
     let mut first_message: Option<String> = None;
 
     for message in &detail.messages {

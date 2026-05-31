@@ -90,8 +90,8 @@ export const MODELS: ModelConfig[] = getModels();
 
 /**
  * Thinking modes configuration
- * Claude 4.6 Adaptive Thinking with effort levels
- * Controls thinking depth via CLAUDE_CODE_THINKING_EFFORT env var
+ * Claude adaptive effort levels.
+ * Controls thinking depth via CLAUDE_CODE_EFFORT_LEVEL env var
  *
  * Note: Names and descriptions are translation keys that will be resolved at runtime
  */
@@ -125,9 +125,16 @@ export const THINKING_MODES: ThinkingModeConfig[] = [
   },
   {
     id: "adaptive",
+    effort: "xhigh",
+    name: "promptInput.thinkingEffortXHigh",
+    description: "promptInput.thinkingEffortXHighDesc",
+    level: 4,
+  },
+  {
+    id: "adaptive",
     effort: "max",
     name: "promptInput.thinkingEffortMax",
     description: "promptInput.thinkingEffortMaxDesc",
-    level: 4,
+    level: 5,
   }
 ];

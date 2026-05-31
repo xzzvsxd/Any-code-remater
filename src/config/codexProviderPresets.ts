@@ -43,7 +43,7 @@ export function generateThirdPartyAuth(apiKey: string): Record<string, any> {
 export function generateThirdPartyConfig(
   providerName: string,
   baseUrl: string,
-  modelName = "gpt-5-codex",
+  modelName = "gpt-5.5",
 ): string {
   // 清理供应商名称，确保符合TOML键名规范
   const cleanProviderName =
@@ -85,7 +85,7 @@ export function extractModelFromConfig(configText: string): string {
       if (match) return match[1];
     }
   }
-  return "gpt-5-codex";
+  return "gpt-5.5";
 }
 
 /**
@@ -149,7 +149,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     isOfficial: true,
     auth: generateThirdPartyAuth(""),
     config: `model_provider = "azure"
-model = "gpt-5-codex"
+model = "gpt-5.5"
 model_reasoning_effort = "high"
 disable_response_storage = true
 
@@ -170,7 +170,7 @@ requires_openai_auth = true`,
     category: "custom",
     isCustomTemplate: true,
     auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig("custom", "https://your-api-endpoint.com/v1", "gpt-5-codex"),
+    config: generateThirdPartyConfig("custom", "https://your-api-endpoint.com/v1", "gpt-5.5"),
     description: "provider.codexPresets.customDesc",
   },
 ];

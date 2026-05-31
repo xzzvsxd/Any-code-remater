@@ -276,7 +276,7 @@ pub struct GeminiExecutionOptions {
     /// User prompt
     pub prompt: String,
 
-    /// Model to use (e.g., "gemini-2.5-pro", "gemini-2.5-flash")
+    /// Model to use (e.g., "auto-gemini-3", "pro", "flash", "gemini-2.5-pro")
     pub model: Option<String>,
 
     /// Approval mode: "auto_edit" or "yolo"
@@ -301,7 +301,7 @@ impl Default for GeminiExecutionOptions {
         Self {
             project_path: String::new(),
             prompt: String::new(),
-            model: Some("gemini-2.5-pro".to_string()),
+            model: Some("auto-gemini-3".to_string()),
             approval_mode: Some("auto_edit".to_string()),
             include_directories: None,
             session_id: None,

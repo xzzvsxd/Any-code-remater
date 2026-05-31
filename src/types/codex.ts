@@ -143,8 +143,14 @@ export interface CodexExecutionOptions {
   /** Execution mode (default: read-only) */
   mode?: CodexExecutionMode;
 
-  /** Model to use (e.g., gpt-5.3-codex) */
+  /** Model to use (e.g., gpt-5.5) */
   model?: string;
+
+  /** Enable Codex fast service tier for supported models */
+  fastMode?: boolean;
+
+  /** Reasoning effort for this run */
+  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
 
   /** Enable JSON output mode */
   json?: boolean;
