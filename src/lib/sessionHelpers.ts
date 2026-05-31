@@ -222,6 +222,19 @@ export function extractTextFromContent(content: MessageContent): string {
   return "";
 }
 
+const UPSTREAM_CONTEXT_TRUNCATION_MARKER =
+  /\s*\uFFFD?\s*\[content truncated to fit context limit\][\s\S]*$/i;
+
+/**
+ * Removes upstream-injected context truncation markers before text is reused as
+ * AI context. The visible chat transcript still keeps the original upstream
+ * text; this only prevents the marker and any impossible-to-trust tail from
+ * being fed into the next prompt.
+ */
+export function sanitizeAiContextText(text: string): string {
+  return text.replace(UPSTREAM_CONTEXT_TRUNCATION_MARKER, "").trimEnd();
+}
+
 /**
  * Extracts conversation context from recent messages for prompt enhancement
  * @param messages Array of Claude stream messages
@@ -276,14 +289,19 @@ export function getConversationContext(
       const assistantText = extractTextFromContent(msg.message.content);
 
       if (assistantText) {
-        const truncated = maybeTruncateContextText(assistantText, config.maxAssistantMessageLength, config);
-        contextLine = `助手: ${truncated}`;
+        const sanitized = sanitizeAiContextText(assistantText);
+        if (sanitized) {
+          const truncated = maybeTruncateContextText(sanitized, config.maxAssistantMessageLength, config);
+          contextLine = `助手: ${truncated}`;
+        }
       }
     } else if (msg.type === "result" && msg.result && config.includeExecutionResults) {
       // Include execution results if enabled in config
-      const resultText = msg.result;
-      const truncated = maybeTruncateContextText(resultText, config.maxExecutionResultLength, config);
-      contextLine = `执行结果: ${truncated}`;
+      const resultText = sanitizeAiContextText(msg.result);
+      if (resultText) {
+        const truncated = maybeTruncateContextText(resultText, config.maxExecutionResultLength, config);
+        contextLine = `执行结果: ${truncated}`;
+      }
     }
 
     if (contextLine) {

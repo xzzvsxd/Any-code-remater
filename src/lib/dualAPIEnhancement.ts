@@ -14,7 +14,7 @@
  */
 
 import { ClaudeStreamMessage } from '@/types/claude';
-import { extractTextFromContent } from './sessionHelpers';
+import { extractTextFromContent, sanitizeAiContextText } from './sessionHelpers';
 import { LLMApiService, type LLMProvider } from '@/lib/services/llmApiService';
 import { callEnhancementAPI } from './promptEnhancementService';
 import { loadContextConfig, maybeTruncateContextText } from './promptContextConfig';
@@ -121,6 +121,11 @@ const ACEMCP_REFINEMENT_THRESHOLDS = {
   maxRefinedLength: 120000,  // 整理后的安全上限，正常不截断
 };
 
+function getReusableMessageText(msg: ClaudeStreamMessage): string {
+  const text = extractTextFromContent(msg.message?.content || []);
+  return msg.type === 'assistant' ? sanitizeAiContextText(text) : text;
+}
+
 /**
  * 🆕 双 API 调用优化方案（混合策略版）
  *
@@ -179,7 +184,7 @@ export async function enhancePromptWithDualAPI(
       selectedContext = meaningful
         .slice(-config.maxMessages)
         .map(msg => {
-          const text = extractTextFromContent(msg.message?.content || []);
+          const text = getReusableMessageText(msg);
           return `${msg.type === 'user' ? '用户' : '助手'}: ${text}`;
         });
     }
@@ -198,7 +203,7 @@ export async function enhancePromptWithDualAPI(
       selectedContext = meaningful
         .slice(-config.maxMessages)
         .map(msg => {
-          const text = extractTextFromContent(msg.message?.content || []);
+          const text = getReusableMessageText(msg);
           return `${msg.type === 'user' ? '用户' : '助手'}: ${text}`;
         });
     }
@@ -207,7 +212,7 @@ export async function enhancePromptWithDualAPI(
     // 都不需要第一次 API 调用
     
     selectedContext = meaningful.map(msg => {
-      const text = extractTextFromContent(msg.message?.content || []);
+      const text = getReusableMessageText(msg);
       return `${msg.type === 'user' ? '用户' : '助手'}: ${text}`;
     });
   }
@@ -240,7 +245,7 @@ async function extractContextWithAPI(
 
   // 1️⃣ 构建消息列表（精简版，节省 token）
   const messageList = messages.map((msg, idx) => {
-    const text = extractTextFromContent(msg.message?.content || []);
+    const text = getReusableMessageText(msg);
     // 每条消息只取前 120 字符（节省成本）
     const preview = text.length > 120
       ? text.substring(0, 120) + '...'
@@ -282,7 +287,7 @@ ${messageList}
   const config = loadContextConfig();
 
   return selectedMessages.map(msg => {
-    const text = extractTextFromContent(msg.message?.content || []);
+    const text = getReusableMessageText(msg);
     const maxLen = msg.type === 'user'
       ? config.maxUserMessageLength
       : config.maxAssistantMessageLength;
