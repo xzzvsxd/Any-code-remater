@@ -35,13 +35,13 @@
 当前版本：
 
 ```text
-5.29.1
+5.29.2
 ```
 
 当前 tag：
 
 ```text
-v5.29.1
+v5.29.2
 ```
 
 主发布 workflow：
@@ -55,12 +55,14 @@ v5.29.1
 ```text
 Resolve release tag
   -> Build (Windows)
+  -> Publish Windows assets early
   -> Build (Linux)
+  -> Publish Linux assets early
   -> Build (macOS-ARM / macOS-Intel)
   -> Create Release
 ```
 
-原因：先让 Windows 产物出来，再跑 Linux，最后跑 macOS，方便定位和控制失败面。
+原因：先让 Windows 产物出来并立刻上传，再跑 Linux 并立刻上传 AppImage/deb，最后跑 macOS；这样 Windows/Linux 用户不用等 macOS 全部编译完才能下载最新版本。
 
 ## 已完成的关键修复
 
@@ -283,8 +285,8 @@ git push origin main
 仅在用户要求发布时更新 tag：
 
 ```powershell
-git tag -f -a v5.29.1 -m "Release v5.29.1" HEAD
-git push --force origin v5.29.1
+git tag -f -a v5.29.2 -m "Release v5.29.2" HEAD
+git push --force origin v5.29.2
 ```
 
 这会触发：

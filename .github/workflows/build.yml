@@ -438,6 +438,101 @@ jobs:
             src-tauri/target/release/build/*/output
           retention-days: 3
 
+  publish-linux:
+    name: Publish Linux assets early
+    needs: [resolve-release, build-linux]
+    runs-on: ubuntu-latest
+    if: needs.resolve-release.outputs.is_release == 'true'
+    env:
+      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-Linux
+          path: artifacts
+
+      - name: Download existing latest.json
+        continue-on-error: true
+        run: |
+          gh release download "$RELEASE_TAG" \
+            --pattern latest.json \
+            --output latest-existing.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Normalize Linux assets and latest.json
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          mkdir -p linux-assets
+
+          LINUX_APPIMAGE=$(find artifacts -name "*.AppImage" ! -name "*.sig" -type f | head -n 1)
+          LINUX_APPIMAGE_SIG=$(find artifacts -name "*.AppImage.sig" -type f | head -n 1)
+          LINUX_DEB=$(find artifacts -name "*.deb" -type f | head -n 1)
+          LINUX_RPM=$(find artifacts -name "*.rpm" -type f | head -n 1)
+
+          for required in "$LINUX_APPIMAGE" "$LINUX_APPIMAGE_SIG" "$LINUX_DEB"; do
+            if [ -z "$required" ] || [ ! -f "$required" ]; then
+              echo "::error::Missing expected Linux AppImage/signature/deb artifact."
+              find artifacts -maxdepth 6 -type f | sort
+              exit 1
+            fi
+          done
+
+          cp "$LINUX_APPIMAGE" "linux-assets/any-code_${VERSION}_amd64.AppImage"
+          cp "$LINUX_APPIMAGE_SIG" "linux-assets/any-code_${VERSION}_amd64.AppImage.sig"
+          cp "$LINUX_DEB" "linux-assets/any-code_${VERSION}_amd64.deb"
+
+          if [ -n "$LINUX_RPM" ] && [ -f "$LINUX_RPM" ]; then
+            cp "$LINUX_RPM" "linux-assets/any-code_${VERSION}_x86_64.rpm"
+          fi
+
+          python3 .github/scripts/merge_latest_json.py \
+            --version "$VERSION" \
+            --tag "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --existing latest-existing.json \
+            --output linux-assets/latest.json \
+            --platform "linux-x86_64|linux-assets/any-code_${VERSION}_amd64.AppImage.sig|any-code_${VERSION}_amd64.AppImage"
+
+      - name: Prepare Linux-ready release notes
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          python3 .github/scripts/generate_release_notes.py \
+            --version "$VERSION" \
+            --tag "$RELEASE_TAG" \
+            --output release-notes.md
+
+          {
+            echo "## Windows / Linux 版本已优先上传"
+            echo
+            echo "Windows 安装包和 Linux AppImage/deb 已可下载；macOS 构建完成后会继续补充对应安装包，并刷新完整的 latest.json。"
+            echo
+            cat release-notes.md
+          } > release-notes-linux.md
+
+      - name: Create or update release and upload Linux assets
+        run: |
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --title "Any Code $RELEASE_TAG" \
+              --notes-file release-notes-linux.md
+          else
+            gh release create "$RELEASE_TAG" \
+              --title "Any Code $RELEASE_TAG" \
+              --notes-file release-notes-linux.md
+          fi
+
+          gh release upload "$RELEASE_TAG" linux-assets/* --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   release:
     name: Create Release
     needs: [resolve-release, build-windows, build-linux, build-macos]
