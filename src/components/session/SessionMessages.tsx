@@ -372,6 +372,8 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
         idleSeconds={executionStatus?.idleSeconds}
         canCancel={executionStatus?.canCancel}
         isCancelling={executionStatus?.isCancelling}
+        statusLabel={executionStatus?.statusLabel}
+        statusHint={executionStatus?.statusHint}
       />
 
       {/* Error indicator - 移除固定 marginBottom，因为输入框不再是 fixed 定位 */}

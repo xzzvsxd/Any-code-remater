@@ -237,7 +237,75 @@ const StreamMessageV2Component: React.FC<StreamMessageV2Props> = ({
  * - 优先使用引用比较和浅比较
  * - 只在必要时进行深度比较
  */
-const isMessageEqual = (prev: ClaudeStreamMessage | undefined, next: ClaudeStreamMessage | undefined): boolean => {
+const shallowArrayEqual = (prev: unknown, next: unknown): boolean => {
+  if (prev === next) return true;
+  if (!Array.isArray(prev) || !Array.isArray(next)) return false;
+  if (prev.length !== next.length) return false;
+  for (let index = 0; index < prev.length; index += 1) {
+    if (prev[index] !== next[index]) return false;
+  }
+  return true;
+};
+
+const isPrimitiveOrSameReference = (prev: unknown, next: unknown): boolean => {
+  if (prev === next) return true;
+  if (prev == null || next == null) return prev === next;
+  const prevType = typeof prev;
+  const nextType = typeof next;
+  if (prevType !== nextType) return false;
+  return prevType !== 'object' && prevType !== 'function' && prev === next;
+};
+
+const isContentItemEqual = (prevItem: LegacyAny, nextItem: LegacyAny): boolean => {
+  if (prevItem === nextItem) return true;
+  if (!prevItem || !nextItem) return prevItem === nextItem;
+  if (prevItem.type !== nextItem.type) return false;
+
+  const renderFields = [
+    'text',
+    'thinking',
+    'signature',
+    'id',
+    'name',
+    'tool_use_id',
+    'is_error',
+  ];
+
+  for (const field of renderFields) {
+    if (prevItem[field] !== nextItem[field]) return false;
+  }
+
+  // Object-valued fields are intentionally compared by reference.  If a stream
+  // event replaces tool input/result/content with a new object, the row must
+  // re-render; silently treating new objects as equal was the root cause of
+  // "backend has output but UI still looks stuck" regressions.
+  for (const field of ['input', 'content', 'result'] as const) {
+    if (!isPrimitiveOrSameReference(prevItem[field], nextItem[field])) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const isMessageContentEqual = (prevContent: LegacyAny, nextContent: LegacyAny): boolean => {
+  if (prevContent === nextContent) return true;
+  if (Array.isArray(prevContent) && Array.isArray(nextContent)) {
+    if (prevContent.length !== nextContent.length) return false;
+    for (let index = 0; index < prevContent.length; index += 1) {
+      if (!isContentItemEqual(prevContent[index], nextContent[index])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return prevContent === nextContent;
+};
+
+export const isStreamMessageRenderEqual = (
+  prev: ClaudeStreamMessage | undefined,
+  next: ClaudeStreamMessage | undefined
+): boolean => {
   // 引用相同，直接返回
   if (prev === next) return true;
 
@@ -247,46 +315,50 @@ const isMessageEqual = (prev: ClaudeStreamMessage | undefined, next: ClaudeStrea
   // 比较关键属性
   if (prev.type !== next.type) return false;
 
+  const prevAny = prev as LegacyAny;
+  const nextAny = next as LegacyAny;
+
+  const topLevelRenderFields = [
+    'subtype',
+    'id',
+    'session_id',
+    'sessionId',
+    'model',
+    'cwd',
+    'engine',
+    'isMeta',
+    'leafUuid',
+    'summary',
+    'result',
+    'error',
+    'receivedAt',
+    'parent_tool_use_id',
+    'isSidechain',
+  ];
+
+  for (const field of topLevelRenderFields) {
+    if (field === 'tools') continue;
+    if (prevAny[field] !== nextAny[field]) return false;
+  }
+
+  if (!shallowArrayEqual(prevAny.tools, nextAny.tools)) return false;
+
   // 比较消息 ID（如果存在）
-  const prevId = (prev as LegacyAny).id;
-  const nextId = (next as LegacyAny).id;
+  const prevId = prevAny.id;
+  const nextId = nextAny.id;
   if (prevId && nextId && prevId !== nextId) return false;
 
   // 比较时间戳（如果存在）
-  const prevTimestamp = (prev as LegacyAny).timestamp;
-  const nextTimestamp = (next as LegacyAny).timestamp;
+  const prevTimestamp = prevAny.timestamp;
+  const nextTimestamp = nextAny.timestamp;
   if (prevTimestamp !== nextTimestamp) return false;
 
   // 比较内容数组长度
   const prevContent = prev.message?.content;
   const nextContent = next.message?.content;
 
-  if (Array.isArray(prevContent) && Array.isArray(nextContent)) {
-    if (prevContent.length !== nextContent.length) return false;
-
-    // 快速检查：比较每个元素的类型和文本内容
-    for (let i = 0; i < prevContent.length; i++) {
-      const prevItem = prevContent[i];
-      const nextItem = nextContent[i];
-
-      if (prevItem?.type !== nextItem?.type) return false;
-
-      // 对于文本内容，比较文本
-      if (prevItem?.type === 'text' && prevItem?.text !== nextItem?.text) return false;
-
-      // 对于工具调用，比较 ID 和名称
-      if (prevItem?.type === 'tool_use') {
-        if (prevItem?.id !== nextItem?.id || prevItem?.name !== nextItem?.name) return false;
-      }
-
-      // 对于工具结果，比较 tool_use_id
-      if (prevItem?.type === 'tool_result' && prevItem?.tool_use_id !== nextItem?.tool_use_id) {
-        return false;
-      }
-    }
-  } else if (prevContent !== nextContent) {
-    return false;
-  }
+  if (!isMessageContentEqual(prevContent, nextContent)) return false;
+  if (!isMessageContentEqual(prevAny.content, nextAny.content)) return false;
 
   // 比较 usage 信息
   const prevUsage = prev.usage || prev.message?.usage;
@@ -314,7 +386,7 @@ const isMessageGroupEqual = (prev: MessageGroup | undefined, next: MessageGroup 
 
   // 对于普通消息，比较 message
   if (prev.type === 'normal' && next.type === 'normal') {
-    return isMessageEqual(prev.message, next.message);
+    return isStreamMessageRenderEqual(prev.message, next.message);
   }
 
   // 对于子代理组，比较子消息数量
@@ -325,7 +397,7 @@ const isMessageGroupEqual = (prev: MessageGroup | undefined, next: MessageGroup 
     if (!prevGroup || !nextGroup) return prevGroup === nextGroup;
 
     // 比较任务消息
-    if (!isMessageEqual(prevGroup.taskMessage, nextGroup.taskMessage)) return false;
+    if (!isStreamMessageRenderEqual(prevGroup.taskMessage, nextGroup.taskMessage)) return false;
 
     // 比较子消息数量
     if (prevGroup.subagentMessages.length !== nextGroup.subagentMessages.length) return false;
@@ -334,7 +406,7 @@ const isMessageGroupEqual = (prev: MessageGroup | undefined, next: MessageGroup 
     for (let i = 0; i < prevGroup.subagentMessages.length; i++) {
       if (prevGroup.subagentMessages[i] !== nextGroup.subagentMessages[i]) {
         // 如果引用不同，进行深度比较
-        if (!isMessageEqual(prevGroup.subagentMessages[i], nextGroup.subagentMessages[i])) {
+        if (!isStreamMessageRenderEqual(prevGroup.subagentMessages[i], nextGroup.subagentMessages[i])) {
           return false;
         }
       }
@@ -346,7 +418,7 @@ const isMessageGroupEqual = (prev: MessageGroup | undefined, next: MessageGroup 
     if (prev.messages.length !== next.messages.length) return false;
     // 比较每条消息
     for (let i = 0; i < prev.messages.length; i++) {
-      if (!isMessageEqual(prev.messages[i], next.messages[i])) return false;
+      if (!isStreamMessageRenderEqual(prev.messages[i], next.messages[i])) return false;
     }
   }
 
@@ -389,7 +461,7 @@ export const StreamMessageV2 = React.memo(
 
     // 使用智能消息比较
     return (
-      isMessageEqual(prevProps.message, nextProps.message) &&
+      isStreamMessageRenderEqual(prevProps.message, nextProps.message) &&
       prevProps.isStreaming === nextProps.isStreaming &&
       prevProps.promptIndex === nextProps.promptIndex &&
       prevProps.sessionId === nextProps.sessionId &&

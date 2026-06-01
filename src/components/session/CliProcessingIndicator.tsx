@@ -10,6 +10,8 @@ interface CliProcessingIndicatorProps {
   idleSeconds?: number;
   canCancel?: boolean;
   isCancelling?: boolean;
+  statusLabel?: string;
+  statusHint?: string;
 }
 
 // CLI风格的处理状态词汇
@@ -36,6 +38,8 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
   idleSeconds = 0,
   canCancel = true,
   isCancelling = false,
+  statusLabel,
+  statusHint,
 }) => {
   const { t } = useTranslation();
   const [dotCount, setDotCount] = useState(0);
@@ -91,6 +95,7 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
   }, [isProcessing, onCancel, canCancel, isCancelling]);
 
   const currentVerb = PROCESSING_VERBS[verbIndex];
+  const displayLabel = statusLabel || currentVerb;
   const dots = ".".repeat(dotCount);
   const paddedDots = dots.padEnd(3, " ");
   const formatElapsed = (seconds: number) => {
@@ -131,18 +136,20 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
             {/* 动态处理文本 */}
             <span className="text-foreground/90">
               <motion.span
-                key={currentVerb}
+                key={displayLabel}
                 initial={{ opacity: 0, x: -5 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: 5 }}
                 transition={{ duration: 0.2 }}
                 className="text-primary font-medium"
               >
-                {currentVerb}
+                {displayLabel}
               </motion.span>
-              <span className="text-muted-foreground font-mono w-[24px] inline-block">
-                {paddedDots}
-              </span>
+              {!statusLabel && (
+                <span className="text-muted-foreground font-mono w-[24px] inline-block">
+                  {paddedDots}
+                </span>
+              )}
             </span>
 
             {/* 提示信息 */}
@@ -182,6 +189,12 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
               )
             </span>
           </div>
+
+          {statusHint && (
+            <div className="mt-2 rounded-md border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
+              {statusHint}
+            </div>
+          )}
 
           {idleNotice && (
             <div className="mt-2 rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">

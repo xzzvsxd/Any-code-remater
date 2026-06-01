@@ -321,12 +321,14 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     const canCancel = Boolean(cancelSessionId);
     const statusLabel = isCancellingExecution
       ? `正在取消当前 ${engineName} 会话...`
-      : `${engineName} 正在执行 · 已运行 ${formatDuration(elapsedSeconds)}`;
+      : canCancel
+        ? `${engineName} 正在执行`
+        : `${engineName} 正在初始化会话`;
     const statusHint = idleSeconds >= 60
       ? `已 ${formatDuration(idleSeconds)} 无新输出，可能仍在后台执行。完成后会弹出提醒。`
       : canCancel
         ? `取消只会影响当前会话${projectLabel ? `（${projectLabel}）` : ''}，不会断开其他对话。`
-        : '正在启动进程，拿到当前会话 ID 后即可安全取消。';
+        : '正在启动进程并等待 system:init，会话 ID 建立后即可安全取消。';
 
     // executionClockTick 用于每秒刷新 useMemo，值本身不参与计算。
     void executionClockTick;

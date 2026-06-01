@@ -1099,6 +1099,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
         // 🔧 FIX: Track pending prompt recording Promise to avoid race condition
         let pendingClaudePromptRecordingPromise: Promise<void> | null = null;
+        let hasProcessedClaudeComplete = false;
 
         // Helper function to generate message ID for deduplication
         const getClaudeMessageId = (payload: string): string => {
@@ -1228,12 +1229,30 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         // Helper: Process Completion
         // ====================================================================
         const processComplete = async () => {
+          if (hasProcessedClaudeComplete) {
+            return;
+          }
+          hasProcessedClaudeComplete = true;
 
+          const sessionIdForCompletionRecord = currentSessionId || effectiveSession?.id || undefined;
+
+          // 先解除 UI 阻塞，再做 prompt 记录/完成标记等收尾 I/O。
+          // v5.29.0 以后这里被回退成“先 await 记录，再结束 loading”，
+          // 慢磁盘/长历史时会出现“消息已经返回但界面还一直思考中”。
+          setIsLoading(false);
+          hasActiveSessionRef.current = false;
+          bindCancelSessionId(null);
+          isListeningRef.current = false;
 
           // 🔧 FIX: Wait for pending prompt recording to complete (race condition fix)
-          if (pendingClaudePromptRecordingPromise) {
-            await pendingClaudePromptRecordingPromise;
-            pendingClaudePromptRecordingPromise = null;
+          const promptRecordingPromise = pendingClaudePromptRecordingPromise;
+          pendingClaudePromptRecordingPromise = null;
+          if (promptRecordingPromise) {
+            try {
+              await promptRecordingPromise;
+            } catch (err) {
+              console.warn('[usePromptExecution] Claude prompt recording finished with error:', err);
+            }
           }
 
           // Mark prompt as completed (record Git state after completion)
@@ -1242,7 +1261,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             // 优先使用本轮运行里最新拿到的 session_id。
             // Claude 在 plan/continue/resume 场景下可能返回新的会话 ID，
             // 如果这里继续使用旧的 effectiveSession.id，会导致记录写到旧会话里。
-            const sessionId = currentSessionId || effectiveSession?.id;
+            const sessionId = sessionIdForCompletionRecord;
             const projectId = effectiveSession?.project_id || extractedSessionInfo?.projectId || projectPath.replace(/[^a-zA-Z0-9]/g, '-');
 
             if (sessionId && projectId) {
@@ -1260,11 +1279,6 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
               console.warn('[Prompt Revert] Cannot mark completed: missing sessionId or projectId');
             }
           }
-
-          setIsLoading(false);
-          hasActiveSessionRef.current = false;
-          bindCancelSessionId(null);
-          isListeningRef.current = false;
 
           // 🆕 Clean up listeners to prevent memory leak
           unlistenRefs.current.forEach(u => u && typeof u === 'function' && u());
