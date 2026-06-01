@@ -315,6 +315,7 @@ use std::sync::Arc;
 use tokio::process::Child;
 use tokio::sync::Mutex;
 
+#[cfg(target_os = "windows")]
 use crate::commands::wsl_utils;
 use crate::process::JobObject;
 

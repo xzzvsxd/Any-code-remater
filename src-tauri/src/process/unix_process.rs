@@ -6,8 +6,6 @@
 
 #[cfg(unix)]
 pub fn apply_process_group(cmd: &mut tokio::process::Command) {
-    use std::os::unix::process::CommandExt;
-
     // Make the child process the leader of a new process group.  With this
     // invariant, pid == pgid for the root process and kill(-pid, sig) targets
     // only descendants created for this run.

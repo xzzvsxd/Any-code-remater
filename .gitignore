@@ -50,6 +50,7 @@ src-tauri/Cargo.lock
 
 # Temporary files
 .ci-cache/
+.tmp-action-logs/
 nul
 *.bak
 *.tmp

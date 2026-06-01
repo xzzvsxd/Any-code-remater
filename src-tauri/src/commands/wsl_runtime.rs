@@ -11,6 +11,7 @@ use std::process::Command;
 #[cfg(target_os = "windows")]
 use log::{debug, info, warn};
 
+#[cfg(target_os = "windows")]
 use super::wsl_utils::{
     build_wsl_unc_path, get_claude_wsl_config, get_default_wsl_distro, get_gemini_wsl_config,
     get_wsl_distros, get_wsl_home_dir, is_native_claude_available, is_native_gemini_available,
@@ -24,8 +25,10 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 use super::wsl_utils::build_wsl_path_for_program;
 
 /// Gemini WSL 版本缓存
+#[cfg(target_os = "windows")]
 static GEMINI_WSL_VERSION_CACHE: OnceLock<Option<String>> = OnceLock::new();
 
+#[cfg(target_os = "windows")]
 pub fn check_wsl_gemini(distro: Option<&str>) -> Option<String> {
     // 首先尝试使用 which 命令（依赖 PATH）
     let mut cmd = Command::new("wsl");
@@ -343,6 +346,7 @@ pub fn get_wsl_gemini_dir() -> Option<PathBuf> {
 // ============================================================================
 
 /// Claude WSL 版本缓存
+#[cfg(target_os = "windows")]
 static CLAUDE_WSL_VERSION_CACHE: OnceLock<Option<String>> = OnceLock::new();
 
 /// 检测 WSL 内是否安装了 Claude CLI，返回安装路径

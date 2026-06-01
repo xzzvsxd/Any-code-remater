@@ -1,3 +1,4 @@
+#[cfg(windows)]
 use super::JobObject;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -355,6 +356,7 @@ impl ProcessRegistry {
     }
 
     /// Kill a running process with proper cleanup
+    #[cfg_attr(unix, allow(unreachable_code))]
     pub async fn kill_process(&self, run_id: i64) -> Result<bool, String> {
         use log::{error, info, warn};
 

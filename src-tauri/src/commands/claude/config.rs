@@ -13,6 +13,7 @@ use tokio::sync::OnceCell;
 
 use super::super::wsl_utils;
 use super::paths::{get_claude_dir, get_codex_dir};
+#[cfg(target_os = "windows")]
 use super::platform;
 use super::{ClaudeMdFile, ClaudeSettings, ClaudeVersionStatus};
 use crate::commands::permission_config::{

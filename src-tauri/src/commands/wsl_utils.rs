@@ -1063,8 +1063,7 @@ pub fn get_wsl_codex_version(_distro: Option<&str>) -> Option<String> {
 // WSL Gemini 检测函数
 // ============================================================================
 
-/// 检测 WSL 内是否安装了 Gemini CLI，返回安装路径
-#[cfg(target_os = "windows")]
+/// 解析 WSL UNC 路径（例如 `\\wsl.localhost\Ubuntu\home\user`）。
 fn try_parse_wsl_unc_path(windows_path: &str) -> Option<(String, String)> {
     let raw = windows_path.trim();
     if !(raw.starts_with("\\\\") || raw.starts_with("//")) {
