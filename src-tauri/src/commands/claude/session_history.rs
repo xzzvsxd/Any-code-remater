@@ -192,14 +192,23 @@ pub fn load_session_history(session_id: &str, project_id: &str) -> Result<Vec<Va
         }
     }
 
-    // Step 3: Sort messages by timestamp to maintain chronological order
-    messages.sort_by(|a, b| {
-        let ts_a = a.get("timestamp").and_then(|t| t.as_str()).unwrap_or("");
-        let ts_b = b.get("timestamp").and_then(|t| t.as_str()).unwrap_or("");
-        ts_a.cmp(ts_b)
-    });
+    // Step 3: Add display timestamps to historical messages that don't have them.
+    //
+    // IMPORTANT: Do not sort loaded JSONL entries here. Claude/Codex/Gemini
+    // histories are append-only event logs, so file order is the conversation
+    // order. Some user prompt entries do not carry a top-level `timestamp`;
+    // sorting by timestamp moves all of those prompts to the beginning and makes
+    // long histories look like "all prompts first, all answers later".
+    apply_fallback_display_timestamps(&mut messages, base_time);
 
-    // Add timestamps to historical messages that don't have them
+    log::info!(
+        "Loaded {} total messages (including subagent messages)",
+        messages.len()
+    );
+    Ok(messages)
+}
+
+fn apply_fallback_display_timestamps(messages: &mut [Value], base_time: SystemTime) {
     let messages_count = messages.len();
     for (i, message) in messages.iter_mut().enumerate() {
         let message_type = message.get("type").and_then(|t| t.as_str()).unwrap_or("");
@@ -229,10 +238,43 @@ pub fn load_session_history(session_id: &str, project_id: &str) -> Result<Vec<Va
             }
         }
     }
+}
 
-    log::info!(
-        "Loaded {} total messages (including subagent messages)",
-        messages.len()
-    );
-    Ok(messages)
+#[cfg(test)]
+mod tests {
+    use super::apply_fallback_display_timestamps;
+    use serde_json::json;
+    use std::time::{Duration, SystemTime};
+
+    fn message_text(message: &serde_json::Value) -> String {
+        message
+            .get("message")
+            .and_then(|message| message.get("content"))
+            .and_then(|content| content.as_array())
+            .and_then(|content| content.first())
+            .and_then(|item| item.get("text"))
+            .and_then(|text| text.as_str())
+            .unwrap_or("")
+            .to_string()
+    }
+
+    #[test]
+    fn fallback_timestamps_preserve_jsonl_order_when_prompts_have_no_timestamp() {
+        let mut messages = vec![
+            json!({"type":"user","message":{"content":[{"type":"text","text":"prompt 1"}]}}),
+            json!({"type":"assistant","timestamp":"2026-01-01T00:00:02.000Z","message":{"content":[{"type":"text","text":"answer 1"}]}}),
+            json!({"type":"user","message":{"content":[{"type":"text","text":"prompt 2"}]}}),
+            json!({"type":"assistant","timestamp":"2026-01-01T00:00:04.000Z","message":{"content":[{"type":"text","text":"answer 2"}]}}),
+        ];
+
+        apply_fallback_display_timestamps(
+            &mut messages,
+            SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000),
+        );
+
+        let labels = messages.iter().map(message_text).collect::<Vec<_>>();
+        assert_eq!(labels, vec!["prompt 1", "answer 1", "prompt 2", "answer 2"]);
+        assert!(messages[0].get("sentAt").and_then(|value| value.as_str()).is_some());
+        assert!(messages[1].get("receivedAt").and_then(|value| value.as_str()).is_some());
+    }
 }
