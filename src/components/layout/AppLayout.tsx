@@ -53,8 +53,8 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-background flex text-foreground selection:bg-primary/20 selection:text-primary relative">
-      {/* ✨ Neo-Modern Fluid Background */}
-      <div className="absolute inset-0 pointer-events-none z-0">
+      {/* Subtle texture is dark-theme only: light mode must stay clean white and cheaper to repaint. */}
+      <div className="absolute inset-0 pointer-events-none z-0 hidden dark:block">
         {/* Noise Texture */}
         <div
           className="absolute inset-0 opacity-[0.015] dark:opacity-[0.03] mix-blend-overlay"
@@ -63,7 +63,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
           }}
         />
         {/* Subtle Gradient Mesh */}
-        <div className="absolute inset-0 opacity-30 dark:opacity-20 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-primary/10 via-background to-background" />
+        <div className="absolute inset-0 opacity-20 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-white/5 via-transparent to-transparent" />
       </div>
 
       {/* Sidebar */}
@@ -79,7 +79,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
       {/* Main Content Area */}
       <main className="flex-1 relative flex flex-col min-w-0 overflow-hidden z-10">
         {/* Content */}
-        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-none [overscroll-behavior-y:none] scroll-smooth">
+        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-none [overscroll-behavior-y:none]">
           {children}
         </div>
       </main>
