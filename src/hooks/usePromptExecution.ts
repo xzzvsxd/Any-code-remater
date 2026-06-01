@@ -1,4 +1,4 @@
-/**
+﻿/**
  * usePromptExecution Hook
  *
  * Manages Claude Code prompt execution including:
@@ -13,59 +13,110 @@
  */
 
 import { useCallback, useRef, useEffect } from 'react';
-import { listen } from '@tauri-apps/api/event';
-import { api } from '@/lib/api';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { api, type Session } from '@/lib/api';
 import { translationMiddleware, isSlashCommand, type TranslationResult } from '@/lib/translationMiddleware';
 import type { ClaudeStreamMessage } from '@/types/claude';
 import type { ModelType } from '@/components/FloatingPromptInput/types';
 // 🔧 FIX: 导入 CodexEventConverter 类，在每个会话中创建独立实例避免全局单例污染
 import { CodexEventConverter, extractCodexRateLimitsFromEvent } from '@/lib/codexConverter';
 import { sanitizeCodexModelId } from '@/lib/codexModelSupport';
-import type { CodexRateLimits } from '@/types/codex';
+import type { CodexExecutionMode, CodexRateLimits } from '@/types/codex';
 import { cacheCodexModelFromStream, cacheModelFromInitMessage } from '@/lib/modelNameParser';
-import { notifyAiExecutionComplete } from '@/lib/aiCompletionNotification';
-import { resolveInitialCancelSessionId } from '@/lib/cancelChannel';
-import { persistUiOnlySessionMessage } from '@/lib/uiOnlySessionEvents';
-import { awaitPromptBookkeeping } from '@/hooks/usePromptExecution/bookkeeping';
-import { setupGeminiPromptListeners } from '@/hooks/usePromptExecution/geminiListeners';
-import type {
-  ClaudeGlobalEventPayload,
-  EngineGlobalEventPayload,
-  PendingPromptRecord,
-  QueuedPrompt,
-  UsePromptExecutionConfig,
-  UsePromptExecutionReturn,
-} from '@/hooks/usePromptExecution/types';
 
-const stringifyPromptExecutionError = (error: unknown): string => {
-  if (typeof error === 'string') return error;
-  if (error instanceof Error) {
-    return error.stack || error.message;
+// ============================================================================
+// Global Type Declarations
+// ============================================================================
+
+// Extend window object for Codex/Gemini pending prompt tracking
+declare global {
+  interface Window {
+    __codexPendingPrompt?: {
+      sessionId: string;
+      projectPath: string;
+      promptIndex: number;
+      promptText: string;
+    };
+    __geminiPendingPrompt?: {
+      sessionId: string;
+      projectPath: string;
+      promptIndex: number;
+      promptText: string;
+    };
+    __geminiPendingSession?: {
+      sessionId: string;
+      projectPath: string;
+    };
   }
+}
 
-  try {
-    return JSON.stringify(error, null, 2);
-  } catch {
-    return String(error);
-  }
-};
+// ============================================================================
+// Type Definitions
+// ============================================================================
 
-const createUiEventId = () => {
-  const randomId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  return `ui-event-${randomId}`;
-};
+interface QueuedPrompt {
+  id: string;
+  prompt: string;
+  model: ModelType;
+}
+
+interface UsePromptExecutionConfig {
+  // State
+  projectPath: string;
+  isLoading: boolean;
+  claudeSessionId: string | null;
+  effectiveSession: Session | null;
+  isPlanMode: boolean;
+  lastTranslationResult?: TranslationResult | null;
+  isActive: boolean;
+  isFirstPrompt: boolean;
+  extractedSessionInfo: { sessionId: string; projectId: string } | null;
+
+  // 🆕 Execution Engine Integration (Claude/Codex/Gemini)
+  executionEngine?: 'claude' | 'codex' | 'gemini'; // 执行引擎选择 (默认: 'claude')
+  // 兼容当前 UI 配置：发送核心还原原版后，这些字段仍允许传入，
+  // 避免调用方为了还原发送逻辑而被迫大改。
+  claudeFastMode?: boolean;
+  codexMode?: CodexExecutionMode;       // Codex 执行模式
+  codexModel?: string;                  // Codex 模型 (e.g., 'gpt-5.2')
+  codexFastMode?: boolean;
+  codexReasoningLevel?: "minimal" | "low" | "medium" | "high" | "xhigh";
+  geminiModel?: string;                 // Gemini 模型 (e.g., 'gemini-3-flash')
+  geminiApprovalMode?: 'auto_edit' | 'yolo' | 'default'; // Gemini 审批模式
+
+  // Refs
+  hasActiveSessionRef: React.MutableRefObject<boolean>;
+  activeSessionIdRef?: React.MutableRefObject<string | null>;
+  unlistenRefs: React.MutableRefObject<UnlistenFn[]>;
+  isMountedRef: React.MutableRefObject<boolean>;
+  isListeningRef: React.MutableRefObject<boolean>;
+  queuedPromptsRef: React.MutableRefObject<QueuedPrompt[]>;
+
+  // State Setters
+  setIsLoading: (loading: boolean) => void;
+  setError: (error: string | null) => void;
+  setMessages: React.Dispatch<React.SetStateAction<ClaudeStreamMessage[]>>;
+  setClaudeSessionId: (id: string | null) => void;
+  setLastTranslationResult: (result: TranslationResult | null) => void;
+  setQueuedPrompts: React.Dispatch<React.SetStateAction<QueuedPrompt[]>>;
+  setRawJsonlOutput: React.Dispatch<React.SetStateAction<string[]>>;
+  setExtractedSessionInfo: React.Dispatch<React.SetStateAction<{ sessionId: string; projectId: string; engine?: 'claude' | 'codex' | 'gemini' } | null>>;
+  setIsFirstPrompt: (isFirst: boolean) => void;
+  setCodexRateLimits?: React.Dispatch<React.SetStateAction<CodexRateLimits | null>>;
+  setCancelSessionId?: (id: string | null) => void;
+
+  // External Hook Functions
+  getRunElapsedSeconds?: () => number | null;
+  processMessageWithTranslation: (message: ClaudeStreamMessage, payload: string, currentTranslationResult?: TranslationResult) => Promise<void>;
+}
+
+interface UsePromptExecutionReturn {
+  handleSendPrompt: (prompt: string, model: ModelType, maxThinkingTokens?: number) => Promise<void>;
+}
+
+type ClaudeGlobalEventPayload<T> = { tab_id?: string | null; payload: T } | T;
 
 const normalizeClaudeGlobalPayload = <T,>(payload: ClaudeGlobalEventPayload<T>) => {
-  if (payload && typeof payload === 'object' && 'payload' in payload) {
-    const typedPayload = payload as { tab_id?: string | null; payload: T };
-    return { tabId: typedPayload.tab_id ?? null, payload: typedPayload.payload };
-  }
-  return { tabId: null, payload: payload as T };
-};
-
-const normalizeEngineGlobalPayload = <T,>(payload: EngineGlobalEventPayload<T>) => {
   if (payload && typeof payload === 'object' && 'payload' in payload) {
     const typedPayload = payload as { tab_id?: string | null; payload: T };
     return { tabId: typedPayload.tab_id ?? null, payload: typedPayload.payload };
@@ -88,15 +139,11 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
     isFirstPrompt,
     extractedSessionInfo,
     executionEngine = 'claude', // 🆕 默认使用 Claude Code
-    claudeFastMode = false,     // 🆕 Claude Fast 模式
     codexMode = 'read-only',     // 🆕 Codex 默认只读模式
     codexModel,                  // 🆕 Codex 模型
-    codexFastMode = false,       // 🆕 Codex Fast 模式
-    codexReasoningLevel,         // 🆕 Codex 推理强度
     geminiModel,                 // 🆕 Gemini 模型
     geminiApprovalMode,          // 🆕 Gemini 审批模式
     hasActiveSessionRef,
-    activeSessionIdRef,
     unlistenRefs,
     isMountedRef,
     isListeningRef,
@@ -111,8 +158,6 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
     setExtractedSessionInfo,
     setIsFirstPrompt,
     setCodexRateLimits,
-    setCancelSessionId,
-    getRunElapsedSeconds,
     processMessageWithTranslation
   } = config;
 
@@ -132,31 +177,6 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
   const tabIdRef = useRef<string>(crypto.randomUUID());
 
   const codexThreadIdRef = useRef<string | null>(null);
-
-  const cleanupRuntimeListeners = useCallback(() => {
-    unlistenRefs.current.forEach((unlisten) => {
-      if (unlisten && typeof unlisten === 'function') {
-        unlisten();
-      }
-    });
-    unlistenRefs.current = [];
-    isListeningRef.current = false;
-  }, [unlistenRefs, isListeningRef]);
-
-  const bindCancelSessionId = useCallback((sessionId: string | null) => {
-    const safeSessionId = sessionId?.trim() || null;
-    if (activeSessionIdRef) {
-      activeSessionIdRef.current = safeSessionId;
-    }
-    setCancelSessionId?.(safeSessionId);
-  }, [activeSessionIdRef, setCancelSessionId]);
-
-  const resetRuntimeState = useCallback(() => {
-    setIsLoading(false);
-    hasActiveSessionRef.current = false;
-    bindCancelSessionId(null);
-    cleanupRuntimeListeners();
-  }, [setIsLoading, hasActiveSessionRef, bindCancelSessionId, cleanupRuntimeListeners]);
 
   useEffect(() => {
     if (executionEngine !== 'codex') {
@@ -254,79 +274,10 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
       return;
     }
 
-    let hasAppendedTerminalMessage = false;
-    const engineNames: Record<'claude' | 'codex' | 'gemini', string> = {
-      claude: 'Claude',
-      codex: 'Codex',
-      gemini: 'Gemini',
-    };
-    const formatElapsed = (seconds?: number | null) => {
-      if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 1) {
-        return '';
-      }
-      const wholeSeconds = Math.floor(seconds);
-      if (wholeSeconds < 60) {
-        return `${wholeSeconds} 秒`;
-      }
-      const minutes = Math.floor(wholeSeconds / 60);
-      const remainingSeconds = wholeSeconds % 60;
-      return remainingSeconds > 0 ? `${minutes} 分 ${remainingSeconds} 秒` : `${minutes} 分钟`;
-    };
-    const appendExecutionSystemMessage = (
-      subtype: 'execution-complete' | 'execution-error',
-      engine: 'claude' | 'codex' | 'gemini',
-      text: string,
-      details?: string,
-      sessionIdOverride?: string | null
-    ) => {
-      if (hasAppendedTerminalMessage) {
-        return;
-      }
-      hasAppendedTerminalMessage = true;
-      const elapsedSeconds = getRunElapsedSeconds?.() ?? null;
-      const suffix = subtype === 'execution-complete' && elapsedSeconds
-        ? `，用时 ${formatElapsed(elapsedSeconds)}`
-        : '';
-      const now = new Date().toISOString();
-      const message: ClaudeStreamMessage = {
-        type: 'system',
-        subtype,
-        result: `${text}${suffix}${details ? `\n\n${details}` : ''}`,
-        engine,
-        elapsedSeconds,
-        projectPath,
-        timestamp: now,
-        receivedAt: now,
-        uiOnly: true,
-        uiEventId: createUiEventId(),
-        excludeFromAiContext: true,
-      };
-
-      persistUiOnlySessionMessage({
-        sessionId: sessionIdOverride
-          || activeSessionIdRef?.current
-          || effectiveSession?.id
-          || extractedSessionInfo?.sessionId
-          || claudeSessionId
-          || null,
-        projectPath,
-        engine,
-        message,
-      });
-
-      setMessages(prev => [...prev, message]);
-    };
-
     try {
       setIsLoading(true);
       setError(null);
       hasActiveSessionRef.current = true;
-      bindCancelSessionId(resolveInitialCancelSessionId({
-        engine: executionEngine,
-        effectiveSession,
-        claudeSessionId,
-        extractedSessionInfo,
-      }));
 
       // Record prompt sent (save Git state before sending)
       // Only record real user input, exclude auto Warmup and Skills messages
@@ -346,53 +297,6 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         promptText: prompt,
         promptIndex: undefined as number | undefined,
       } : undefined;
-      let codexPendingPromptRecord: PendingPromptRecord | null = null;
-      let geminiPendingPromptRecord: PendingPromptRecord | null = null;
-      let hasNotifiedCompletion = false;
-      const isCurrentRunEventTab = (eventTabId: string | null) => eventTabId === tabIdRef.current;
-
-      const notifyCompletionIfIdle = async (
-        engine: 'claude' | 'codex' | 'gemini',
-        sessionId?: string | null
-      ) => {
-        if (hasNotifiedCompletion) {
-          return;
-        }
-
-        const queuedPromptCount = queuedPromptsRef.current.length;
-        if (queuedPromptCount > 0) {
-          return;
-        }
-
-        appendExecutionSystemMessage(
-          'execution-complete',
-          engine,
-          `✅ 本次 ${engineNames[engine]} 执行完成`,
-          undefined,
-          sessionId ?? null
-        );
-        hasNotifiedCompletion = true;
-        await notifyAiExecutionComplete({
-          engine,
-          queuedPromptCount,
-          sessionId: sessionId ?? activeSessionIdRef?.current ?? null,
-          runId: tabIdRef.current,
-          elapsedSeconds: getRunElapsedSeconds?.() ?? null,
-          projectPath,
-        });
-      };
-      const runNextQueuedPrompt = () => {
-        if (queuedPromptsRef.current.length === 0) {
-          return;
-        }
-
-        const [nextPrompt, ...remainingPrompts] = queuedPromptsRef.current;
-        setQueuedPrompts(remainingPrompts);
-
-        setTimeout(() => {
-          handleSendPrompt(nextPrompt.prompt, nextPrompt.model);
-        }, 100);
-      };
 
       // 对于已有会话，立即记录；对于新会话，在收到 session_id 后记录
       if (effectiveSession && isUserInitiated) {
@@ -433,17 +337,13 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
       let userInputTranslation: TranslationResult | null = null;
 
       // For resuming sessions, ensure we have the session ID
-      if (effectiveSession && executionEngine === 'claude' && !claudeSessionId) {
+      if (effectiveSession && !claudeSessionId) {
         setClaudeSessionId(effectiveSession.id);
       }
 
       // ========================================================================
       // 2️⃣ Event Listener Setup (Only for Active Tabs)
       // ========================================================================
-
-      if (!isActive) {
-        throw new Error('当前标签页未激活，无法安全发送');
-      }
 
       if (!isListeningRef.current && isActive) {
         // Clean up previous listeners
@@ -538,7 +438,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
                     .then((idx) => {
                       codexPendingInfo.promptIndex = idx;
                       codexPendingInfo.sessionId = codexThreadId;
-                      codexPendingPromptRecord = {
+                      window.__codexPendingPrompt = {
                         sessionId: codexThreadId,
                         projectPath,
                         promptIndex: idx,
@@ -550,7 +450,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
                     });
                 } else if (codexPendingInfo && codexPendingInfo.promptIndex !== undefined) {
                   // Update pending sessionId for completion handler
-                  codexPendingPromptRecord = {
+                  window.__codexPendingPrompt = {
                     sessionId: codexThreadId,
                     projectPath,
                     promptIndex: codexPendingInfo.promptIndex,
@@ -576,10 +476,8 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
           // Helper function to process Codex completion
           const processCodexComplete = async () => {
-            const completedSessionId = currentCodexSessionId || codexPendingPromptRecord?.sessionId || null;
             setIsLoading(false);
             hasActiveSessionRef.current = false;
-            bindCancelSessionId(null);
             isListeningRef.current = false;
 
             // 🆕 Clean up listeners to prevent memory leak
@@ -593,8 +491,8 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             }
 
             // 🆕 Record prompt completion for rewind support
-            if (codexPendingPromptRecord) {
-              const pendingPrompt = codexPendingPromptRecord;
+            if (window.__codexPendingPrompt) {
+              const pendingPrompt = window.__codexPendingPrompt;
               try {
                 await api.recordCodexPromptCompleted(
                   pendingPrompt.sessionId,
@@ -605,14 +503,21 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
               } catch (err) {
                 console.warn('[usePromptExecution] Failed to record Codex prompt completion:', err);
               }
-              codexPendingPromptRecord = null;
+              // Clear the pending prompt
+              delete window.__codexPendingPrompt;
             }
 
             await refreshCodexRateLimitsFromHistory();
-            await notifyCompletionIfIdle('codex', completedSessionId);
 
             // Process queued prompts
-            runNextQueuedPrompt();
+            if (queuedPromptsRef.current.length > 0) {
+              const [nextPrompt, ...remainingPrompts] = queuedPromptsRef.current;
+              setQueuedPrompts(remainingPrompts);
+
+              setTimeout(() => {
+                handleSendPrompt(nextPrompt.prompt, nextPrompt.model);
+              }, 100);
+            }
           };
 
           const parseCodexErrorPayload = (payload: string): { sessionId?: string; message: string } => {
@@ -634,19 +539,28 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           const processCodexError = async (payload: string) => {
             const parsed = parseCodexErrorPayload(payload);
             setError(parsed.message);
-            appendExecutionSystemMessage(
-              'execution-error',
-              'codex',
-              '⚠️ Codex 执行失败，已停止监听。你可以检查错误详情后重新发送。',
-              parsed.message
-            );
-            resetRuntimeState();
+            setIsLoading(false);
+            hasActiveSessionRef.current = false;
+            isListeningRef.current = false;
+
+            // 清理监听器，避免后续事件污染
+            unlistenRefs.current.forEach(u => u && typeof u === 'function' && u());
+            unlistenRefs.current = [];
 
             // 启动失败时不应保留 pending prompt
-            codexPendingPromptRecord = null;
+            if (window.__codexPendingPrompt) {
+              delete window.__codexPendingPrompt;
+            }
 
             // 继续处理队列（与完成逻辑一致）
-            runNextQueuedPrompt();
+            if (queuedPromptsRef.current.length > 0) {
+              const [nextPrompt, ...remainingPrompts] = queuedPromptsRef.current;
+              setQueuedPrompts(remainingPrompts);
+
+              setTimeout(() => {
+                handleSendPrompt(nextPrompt.prompt, nextPrompt.model);
+              }, 100);
+            }
           };
 
           // Helper function to attach session-specific listeners
@@ -670,16 +584,11 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           };
 
           // 🔧 FIX: Listen for session init event to get session ID for channel isolation
-          const codexSessionInitUnlisten = await listen<EngineGlobalEventPayload<{ type: string; session_id: string }>>('codex-session-init', async (evt) => {
+          const codexSessionInitUnlisten = await listen<{ type: string; session_id: string }>('codex-session-init', async (evt) => {
             // 🔧 FIX: Only process if this tab has an active session
             if (!hasActiveSessionRef.current) return;
-            const { tabId: eventTabId, payload } = normalizeEngineGlobalPayload(evt.payload);
-            if (!isCurrentRunEventTab(eventTabId)) {
-              return;
-            }
-            if (payload.session_id && !currentCodexSessionId) {
-              currentCodexSessionId = payload.session_id;
-              bindCancelSessionId(currentCodexSessionId);
+            if (evt.payload.session_id && !currentCodexSessionId) {
+              currentCodexSessionId = evt.payload.session_id;
               // 🔧 FIX: Set claudeSessionId to the backend channel ID for reconnection and cancellation
               // This is different from the Codex thread_id which is used for resuming sessions
               setClaudeSessionId(currentCodexSessionId);
@@ -692,33 +601,24 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           // Listen for Codex JSONL output (global fallback) - REMOVED to prevent cross-session data leakage
           // 问题: 多个标签页都监听全局 'codex-output' 事件,导致消息被多个会话接收
           // 解决: 仅在会话ID未知的早期阶段处理全局事件,且必须验证会话归属
-          const codexOutputUnlisten = await listen<EngineGlobalEventPayload<string>>('codex-output', (evt) => {
+          const codexOutputUnlisten = await listen<string>('codex-output', (evt) => {
             // 🔧 CRITICAL FIX: 只在尚未收到会话ID时处理全局事件
             if (!hasActiveSessionRef.current) return;
-            const { tabId: eventTabId, payload } = normalizeEngineGlobalPayload(evt.payload);
-            if (!isCurrentRunEventTab(eventTabId)) {
-              return;
-            }
             if (currentCodexSessionId) {
               // 已经有会话ID,不再处理全局事件(应该由会话特定监听器处理)
 
               return;
             }
             // 只在会话ID未知的早期阶段处理
-            processCodexOutput(payload);
+            processCodexOutput(evt.payload);
           });
 
           // Listen for Codex errors
-          const codexErrorUnlisten = await listen<EngineGlobalEventPayload<string>>('codex-error', async (evt) => {
+          const codexErrorUnlisten = await listen<string>('codex-error', async (evt) => {
             // 🔧 FIX: Only process if this tab has an active session
             if (!hasActiveSessionRef.current) return;
 
-            const { tabId: eventTabId, payload } = normalizeEngineGlobalPayload(evt.payload);
-            if (!isCurrentRunEventTab(eventTabId)) {
-              return;
-            }
-
-            const parsed = parseCodexErrorPayload(payload);
+            const parsed = parseCodexErrorPayload(evt.payload);
 
             // 🔒 Session Isolation：如果已确定会话 ID，则忽略其他会话的错误
             if (parsed.sessionId && currentCodexSessionId && parsed.sessionId !== currentCodexSessionId) {
@@ -728,22 +628,17 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             // 如果尚未拿到 session_init，但错误里包含 session_id，也用于绑定会话（用于隔离与 UI 展示）
             if (!currentCodexSessionId && parsed.sessionId) {
               currentCodexSessionId = parsed.sessionId;
-              bindCancelSessionId(currentCodexSessionId);
               setClaudeSessionId(currentCodexSessionId);
             }
 
-            await processCodexError(payload);
+            await processCodexError(evt.payload);
           });
 
           // 🔧 FIX: 移除全局完成事件监听器,避免跨会话串流
           // Listen for Codex completion (global fallback) - FIXED to prevent cross-session interference
-          const codexCompleteUnlisten = await listen<EngineGlobalEventPayload<boolean>>('codex-complete', async (evt) => {
+          const codexCompleteUnlisten = await listen<boolean>('codex-complete', async () => {
             // 🔧 CRITICAL FIX: 只在尚未收到会话ID时处理全局事件
             if (!hasActiveSessionRef.current) return;
-            const { tabId: eventTabId } = normalizeEngineGlobalPayload(evt.payload);
-            if (!isCurrentRunEventTab(eventTabId)) {
-              return;
-            }
             if (currentCodexSessionId) {
               // 已经有会话ID,不再处理全局完成事件(应该由会话特定监听器处理)
 
@@ -755,33 +650,407 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
           unlistenRefs.current = [codexSessionInitUnlisten, codexOutputUnlisten, codexErrorUnlisten, codexCompleteUnlisten];
         } else if (executionEngine === 'gemini') {
-          await setupGeminiPromptListeners({
-            projectPath,
-            isUserInitiated,
-            geminiPendingInfo: geminiPendingInfo ?? null,
-            isMountedRef,
-            hasActiveSessionRef,
-            isListeningRef,
-            unlistenRefs,
-            setMessages,
-            setRawJsonlOutput,
-            setIsLoading,
-            setError,
-            setClaudeSessionId,
-            setExtractedSessionInfo,
-            setIsFirstPrompt,
-            bindCancelSessionId,
-            resetRuntimeState,
-            runNextQueuedPrompt,
-            notifyCompletionIfIdle: (engine, completedSessionId) => notifyCompletionIfIdle(engine, completedSessionId),
-            appendExecutionSystemMessage,
-            normalizeEngineGlobalPayload,
-            isCurrentRunEventTab,
-            getGeminiPendingPromptRecord: () => geminiPendingPromptRecord,
-            setGeminiPendingPromptRecord: (record) => {
-              geminiPendingPromptRecord = record;
-            },
+          // ====================================================================
+          // 🆕 Gemini Event Listeners
+          // ====================================================================
+
+          // 🔧 Track current Gemini session ID for channel isolation
+          let currentGeminiSessionId: string | null = null;
+          // 🔧 Track processed message IDs to prevent duplicates
+          const processedGeminiMessages = new Set<string>();
+          // 🔧 FIX: Track pending prompt recording Promise to avoid race condition
+          let pendingGeminiPromptRecordingPromise: Promise<void> | null = null;
+
+          // Helper function to generate message ID for deduplication
+          const getGeminiMessageId = (payload: string): string => {
+            let hash = 0;
+            for (let i = 0; i < payload.length; i++) {
+              const char = payload.charCodeAt(i);
+              hash = ((hash << 5) - hash) + char;
+              hash = hash & hash;
+            }
+            return `gemini-${hash}`;
+          };
+
+          // Helper function to convert Gemini unified message to ClaudeStreamMessage
+          const convertGeminiToClaudeMessage = (data: LegacyAny): ClaudeStreamMessage | null => {
+            try {
+              // The backend already converts to unified format, we just need to ensure type compatibility
+              // Note: geminiMetadata is already included in data from backend conversion
+
+              if (data.type === 'system' && data.subtype === 'init') {
+                return {
+                  type: 'system',
+                  subtype: 'init',
+                  session_id: data.session_id,
+                  model: data.model,
+                  timestamp: data.timestamp,
+                  engine: 'gemini' as const
+                };
+              }
+
+              if (data.type === 'assistant' || data.type === 'user') {
+                // 🔧 FIX: 对于 user 类型的 tool_result 消息，提取 Gemini functionResponse 格式的实际输出
+                let message = data.message;
+
+                if (data.type === 'user' && message?.content) {
+                  const content = Array.isArray(message.content) ? message.content : [message.content];
+                  const processedContent = content.map((item: LegacyAny) => {
+                    // 检查是否是 tool_result
+                    if (item.type === 'tool_result') {
+                      let resultContent = item.content;
+
+                      // 尝试提取 Gemini functionResponse 格式: [{functionResponse: {response: {output: "..."}}}]
+                      if (Array.isArray(item.content)) {
+                        const firstResult = item.content[0];
+                        if (firstResult?.functionResponse?.response?.output !== undefined) {
+                          resultContent = firstResult.functionResponse.response.output;
+                        }
+                      }
+
+                      return {
+                        ...item,
+                        content: resultContent
+                      };
+                    }
+                    return item;
+                  });
+
+                  message = {
+                    ...message,
+                    content: processedContent
+                  };
+                }
+
+                return {
+                  type: data.type,
+                  message,
+                  timestamp: data.timestamp,
+                  engine: 'gemini' as const
+                };
+              }
+
+              if (data.type === 'result') {
+                return {
+                  type: 'result',
+                  subtype: data.subtype || 'success',
+                  usage: data.usage,
+                  timestamp: data.timestamp,
+                  engine: 'gemini' as const,
+                  model: data.model,
+                  geminiMetadata: data.geminiMetadata,
+                };
+              }
+
+              if (data.type === 'system' && data.subtype === 'error') {
+                return {
+                  type: 'system',
+                  subtype: 'error',
+                  error: data.error,
+                  timestamp: data.timestamp,
+                  engine: 'gemini' as const
+                };
+              }
+
+              // Fallback for unknown types
+              return {
+                type: 'system',
+                subtype: 'raw',
+                message: { content: [{ type: 'text', text: JSON.stringify(data) }] },
+                engine: 'gemini' as const
+              };
+            } catch (err) {
+              console.error('[usePromptExecution] Failed to convert Gemini message:', err);
+              return null;
+            }
+          };
+
+          // Helper function to process Gemini output
+          const processGeminiOutput = (payload: string) => {
+            if (!isMountedRef.current) return;
+
+            // 🔧 FIX: Deduplicate messages
+            const messageId = getGeminiMessageId(payload);
+            if (processedGeminiMessages.has(messageId)) {
+              return;
+            }
+            processedGeminiMessages.add(messageId);
+
+            try {
+              const data = JSON.parse(payload);
+
+              // 🔧 FIX: Skip user messages from Gemini - already added by frontend
+              // Gemini CLI echoes back user messages, but we already display them
+              const hasToolResult = data.message?.content?.some((c: LegacyAny) => c.type === 'tool_result');
+              if (data.type === 'user' && !hasToolResult) {
+                return;
+              }
+
+              // 🔧 FIX: Skip Gemini CLI stderr messages (debug info, metrics, startup logs)
+              // These are system messages with eventType: "stderr" that should not be shown to users
+              if (data.type === 'system' && data.geminiMetadata?.eventType === 'stderr') {
+                return;
+              }
+
+              // 🔧 FIX: Handle delta messages - merge with last message of same type
+              const isDelta = data.geminiMetadata?.delta || data.delta;
+              const msgType = data.type;
+
+              if (isDelta && msgType === 'assistant') {
+                // Delta message - merge with last assistant message
+                setMessages(prev => {
+                  const lastIdx = prev.length - 1;
+                  const lastMsg = prev[lastIdx];
+
+                  // Check if last message is assistant and can be merged
+                  if (lastMsg && lastMsg.type === 'assistant') {
+                    const lastContent = lastMsg.message?.content;
+                    const newContent = data.message?.content;
+
+                    if (Array.isArray(lastContent) && Array.isArray(newContent)) {
+                      const updatedContent = [...lastContent];
+                      let merged = false;
+
+                      // Process each item in new content
+                      for (const newItem of newContent) {
+                        if (newItem.type === 'text') {
+                          // Merge text with existing text block
+                          const lastTextIdx = updatedContent.findIndex((c: LegacyAny) => c.type === 'text');
+                          if (lastTextIdx >= 0 && newItem.text) {
+                            updatedContent[lastTextIdx] = {
+                              ...updatedContent[lastTextIdx],
+                              text: (updatedContent[lastTextIdx].text || '') + newItem.text
+                            };
+                            merged = true;
+                          }
+                        } else if (newItem.type === 'tool_use') {
+                          // 🔧 FIX: Handle tool_use delta - merge with existing tool_use if same ID
+                          // Gemini streaming often sends tool_use in chunks or duplicates
+                          const lastContentIdx = updatedContent.length - 1;
+                          const lastContentItem = updatedContent[lastContentIdx];
+
+                          // Check if we can merge with the last item (same type and ID)
+                          if (lastContentItem && lastContentItem.type === 'tool_use' &&
+                              (lastContentItem.id === newItem.id || (!lastContentItem.id && !newItem.id))) {
+
+                            // Merge input (assuming it's accumulating properties or complete update)
+                            // For safety, we merge objects
+                            const mergedInput = { ...(lastContentItem.input || {}), ...(newItem.input || {}) };
+
+                            updatedContent[lastContentIdx] = {
+                              ...lastContentItem,
+                              ...newItem, // Update other fields like name
+                              input: mergedInput
+                            };
+                            //
+                          } else {
+                            // New tool call
+                            updatedContent.push(newItem);
+                            //
+                          }
+                          merged = true;
+                        } else {
+                          // Append non-text items (thinking, etc.)
+                          updatedContent.push(newItem);
+                          merged = true;
+                        }
+                      }
+
+                      if (merged) {
+                        const updatedMsg = {
+                          ...lastMsg,
+                          message: {
+                            ...lastMsg.message,
+                            content: updatedContent
+                          }
+                        };
+
+                        return [...prev.slice(0, lastIdx), updatedMsg];
+                      }
+                    }
+                  }
+
+                  // Cannot merge, add as new message
+                  const message = convertGeminiToClaudeMessage(data);
+                  return message ? [...prev, message] : prev;
+                });
+                setRawJsonlOutput((prev) => [...prev, payload]);
+                return;
+              }
+
+              // Non-delta message - add normally
+              const message = convertGeminiToClaudeMessage(data);
+
+              if (message) {
+                setMessages(prev => [...prev, message]);
+                setRawJsonlOutput((prev) => [...prev, payload]);
+
+                // 🔧 NOTE: Session ID handling moved to gemini-cli-session-id event listener
+                // The init message from gemini-output may contain backend's temporary ID (gemini-{uuid})
+                // We now use the dedicated gemini-cli-session-id event which provides the REAL CLI session ID
+              }
+            } catch (err) {
+              console.error('[usePromptExecution] Failed to process Gemini output:', err, payload);
+            }
+          };
+
+          // Helper function to process Gemini completion
+          const processGeminiComplete = async () => {
+            setIsLoading(false);
+            hasActiveSessionRef.current = false;
+            isListeningRef.current = false;
+
+            // Clean up listeners
+            unlistenRefs.current.forEach(u => u && typeof u === 'function' && u());
+            unlistenRefs.current = [];
+
+            // 🔧 FIX: Wait for pending prompt recording to complete (race condition fix)
+            if (pendingGeminiPromptRecordingPromise) {
+              await pendingGeminiPromptRecordingPromise;
+              pendingGeminiPromptRecordingPromise = null;
+            }
+
+            // 🆕 Record prompt completion for rewind support
+            if (window.__geminiPendingPrompt) {
+              const pendingPrompt = window.__geminiPendingPrompt;
+              try {
+                await api.recordGeminiPromptCompleted(
+                  pendingPrompt.sessionId,
+                  pendingPrompt.projectPath,
+                  pendingPrompt.promptIndex,
+                  pendingPrompt.promptText
+                );
+              } catch (err) {
+                console.warn('[usePromptExecution] Failed to record Gemini prompt completion:', err);
+              }
+              // Clear the pending prompt
+              delete window.__geminiPendingPrompt;
+            }
+
+            // Clear pending session
+            delete window.__geminiPendingSession;
+
+            // Process queued prompts
+            if (queuedPromptsRef.current.length > 0) {
+              const [nextPrompt, ...remainingPrompts] = queuedPromptsRef.current;
+              setQueuedPrompts(remainingPrompts);
+
+              setTimeout(() => {
+                handleSendPrompt(nextPrompt.prompt, nextPrompt.model);
+              }, 100);
+            }
+          };
+
+          // Helper function to attach session-specific listeners
+          const attachGeminiSessionListeners = async (sessionId: string) => {
+            const specificOutputUnlisten = await listen<string>(`gemini-output:${sessionId}`, (evt) => {
+              processGeminiOutput(evt.payload);
+            });
+
+            const specificCompleteUnlisten = await listen<boolean>(`gemini-complete:${sessionId}`, async () => {
+
+              await processGeminiComplete();
+            });
+
+            // 🔧 FIX: Append session-specific listeners instead of replacing all
+            // This preserves global listeners like geminiCliSessionIdUnlisten
+            unlistenRefs.current.push(specificOutputUnlisten, specificCompleteUnlisten);
+          };
+
+          // Listen for session init event (backend emits this with backend channel ID)
+          const geminiSessionInitUnlisten = await listen<LegacyAny>('gemini-session-init', async (evt) => {
+            if (!hasActiveSessionRef.current) return;
+            // 🔧 FIX: evt.payload is already an object, no need to JSON.parse
+            const data = evt.payload;
+            if (data.session_id && !currentGeminiSessionId) {
+              const backendSessionId = data.session_id as string; // e.g., gemini-{uuid}
+              currentGeminiSessionId = backendSessionId;
+              // Note: Don't set claudeSessionId yet, wait for real Gemini CLI session ID from gemini-cli-session-id event
+
+              // Switch to session-specific listeners
+              await attachGeminiSessionListeners(backendSessionId);
+            }
           });
+
+          // 🔧 FIX: Listen for real Gemini CLI session ID (emitted when CLI returns init event)
+          // This is the REAL session ID that should be used for prompt recording
+          const geminiCliSessionIdUnlisten = await listen<{ backend_session_id: string; cli_session_id: string }>('gemini-cli-session-id', async (evt) => {
+            if (!hasActiveSessionRef.current) return;
+            const { cli_session_id: realCliSessionId } = evt.payload;
+            if (!realCliSessionId) return;
+
+            // Update state with real CLI session ID
+            setClaudeSessionId(realCliSessionId);
+            const projectId = projectPath.replace(/[^a-zA-Z0-9]/g, '-');
+            setExtractedSessionInfo({ sessionId: realCliSessionId, projectId, engine: 'gemini' });
+            setIsFirstPrompt(false);
+
+            // 🔧 FIX: Record prompt sent using REAL Gemini CLI session ID
+            if (isUserInitiated && geminiPendingInfo && geminiPendingInfo.promptIndex === undefined) {
+              pendingGeminiPromptRecordingPromise = api.recordGeminiPromptSent(realCliSessionId, projectPath, geminiPendingInfo.promptText)
+                .then((idx) => {
+                  geminiPendingInfo.promptIndex = idx;
+                  geminiPendingInfo.sessionId = realCliSessionId;
+                  window.__geminiPendingPrompt = {
+                    sessionId: realCliSessionId,
+                    projectPath,
+                    promptIndex: idx,
+                    promptText: geminiPendingInfo.promptText
+                  };
+                })
+                .catch(err => {
+                  console.warn('[Gemini Revert] Failed to record prompt with real CLI session ID:', err);
+                });
+            }
+
+            // Store pending session info with real CLI session ID
+            window.__geminiPendingSession = {
+              sessionId: realCliSessionId,
+              projectPath
+            };
+          });
+
+          // 🔧 FIX: 移除全局监听器,避免跨会话串流
+          // Listen for Gemini output (global fallback) - FIXED to prevent cross-session data leakage
+          const geminiOutputUnlisten = await listen<string>('gemini-output', (evt) => {
+            // 🔧 CRITICAL FIX: 只在尚未收到会话ID时处理全局事件
+            if (!hasActiveSessionRef.current) return;
+            if (currentGeminiSessionId) {
+              // 已经有会话ID,不再处理全局事件(应该由会话特定监听器处理)
+
+              return;
+            }
+            // 只在会话ID未知的早期阶段处理
+            processGeminiOutput(evt.payload);
+          });
+
+          // Listen for Gemini errors
+          const geminiErrorUnlisten = await listen<string>('gemini-error', (evt) => {
+            if (!hasActiveSessionRef.current) return;
+            console.error('[usePromptExecution] Gemini error:', evt.payload);
+            try {
+              const data = JSON.parse(evt.payload);
+              setError(data.error?.message || evt.payload);
+            } catch {
+              setError(evt.payload);
+            }
+          });
+
+          // 🔧 FIX: 移除全局完成事件监听器,避免跨会话串流
+          // Listen for Gemini completion (global fallback) - FIXED to prevent cross-session interference
+          const geminiCompleteUnlisten = await listen<boolean>('gemini-complete', async () => {
+            // 🔧 CRITICAL FIX: 只在尚未收到会话ID时处理全局事件
+            if (!hasActiveSessionRef.current) return;
+            if (currentGeminiSessionId) {
+              // 已经有会话ID,不再处理全局完成事件(应该由会话特定监听器处理)
+
+              return;
+            }
+
+            await processGeminiComplete();
+          });
+
+          unlistenRefs.current = [geminiSessionInitUnlisten, geminiCliSessionIdUnlisten, geminiOutputUnlisten, geminiErrorUnlisten, geminiCompleteUnlisten];
         } else {
           // --------------------------------------------------------------------
           // Claude Code Event Listener Setup Strategy
@@ -807,7 +1076,6 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
         // 🔧 FIX: Track pending prompt recording Promise to avoid race condition
         let pendingClaudePromptRecordingPromise: Promise<void> | null = null;
-        let hasProcessedClaudeComplete = false;
 
         // Helper function to generate message ID for deduplication
         const getClaudeMessageId = (payload: string): string => {
@@ -890,7 +1158,8 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           });
 
           const specificErrorUnlisten = await listen<string>(`claude-error:${sid}`, (evt) => {
-            processClaudeError(evt.payload);
+            console.error('Claude error (scoped):', evt.payload);
+            setError(evt.payload);
           });
 
           const specificCompleteUnlisten = await listen<boolean>(`claude-complete:${sid}`, () => {
@@ -936,33 +1205,12 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         // Helper: Process Completion
         // ====================================================================
         const processComplete = async () => {
-          if (hasProcessedClaudeComplete) {
-            return;
-          }
-          hasProcessedClaudeComplete = true;
 
-          const completedSessionId = currentSessionId || effectiveSession?.id || claudeSessionId || null;
-          const sessionIdForCompletionRecord = currentSessionId || effectiveSession?.id || claudeSessionId || undefined;
-
-          // 先解除 UI 阻塞，再做 prompt 记录/完成提醒等收尾 I/O。
-          // 旧逻辑先 await recordPromptSent，遇到慢磁盘/索引卡住时会表现为“消息已返回但界面一直执行中”。
-          setIsLoading(false);
-          hasActiveSessionRef.current = false;
-          bindCancelSessionId(null);
-          isListeningRef.current = false;
-
-          // 🆕 Clean up listeners to prevent memory leak
-          unlistenRefs.current.forEach(u => u && typeof u === 'function' && u());
-          unlistenRefs.current = [];
-
-          // Reset currentSessionId to allow detection of new session_id
-          currentSessionId = null;
 
           // 🔧 FIX: Wait for pending prompt recording to complete (race condition fix)
-          const promptRecordingPromise = pendingClaudePromptRecordingPromise;
-          pendingClaudePromptRecordingPromise = null;
-          if (promptRecordingPromise) {
-            await awaitPromptBookkeeping(promptRecordingPromise, 'Claude prompt recording');
+          if (pendingClaudePromptRecordingPromise) {
+            await pendingClaudePromptRecordingPromise;
+            pendingClaudePromptRecordingPromise = null;
           }
 
           // Mark prompt as completed (record Git state after completion)
@@ -971,7 +1219,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             // 优先使用本轮运行里最新拿到的 session_id。
             // Claude 在 plan/continue/resume 场景下可能返回新的会话 ID，
             // 如果这里继续使用旧的 effectiveSession.id，会导致记录写到旧会话里。
-            const sessionId = sessionIdForCompletionRecord;
+            const sessionId = currentSessionId || effectiveSession?.id;
             const projectId = effectiveSession?.project_id || extractedSessionInfo?.projectId || projectPath.replace(/[^a-zA-Z0-9]/g, '-');
 
             if (sessionId && projectId) {
@@ -990,23 +1238,26 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             }
           }
 
-          await notifyCompletionIfIdle('claude', completedSessionId);
-          // Process queued prompts after completion
-          runNextQueuedPrompt();
-        };
+          setIsLoading(false);
+          hasActiveSessionRef.current = false;
+          isListeningRef.current = false;
 
-        const processClaudeError = (payload: string) => {
-          console.error('Claude error:', payload);
-          setError(payload);
-          appendExecutionSystemMessage(
-            'execution-error',
-            'claude',
-            '⚠️ Claude 执行失败，已停止监听。你可以检查错误详情后重新发送。',
-            payload
-          );
-          resetRuntimeState();
-          pendingClaudePromptRecordingPromise = null;
-          runNextQueuedPrompt();
+          // 🆕 Clean up listeners to prevent memory leak
+          unlistenRefs.current.forEach(u => u && typeof u === 'function' && u());
+          unlistenRefs.current = [];
+
+          // Reset currentSessionId to allow detection of new session_id
+          currentSessionId = null;
+          // Process queued prompts after completion
+          if (queuedPromptsRef.current.length > 0) {
+            const [nextPrompt, ...remainingPrompts] = queuedPromptsRef.current;
+            setQueuedPrompts(remainingPrompts);
+
+            // Small delay to ensure UI updates
+            setTimeout(() => {
+              handleSendPrompt(nextPrompt.prompt, nextPrompt.model);
+            }, 100);
+          }
         };
 
         // Track if we've recorded the prompt for new sessions
@@ -1023,9 +1274,9 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           // 🔒 CRITICAL FIX: 使用 tab_id 过滤消息，这是最可靠的会话隔离方式
           const { tabId: eventTabId, payload: messagePayload } = normalizeClaudeGlobalPayload(event.payload);
 
-          // 当前 run 发起后，global 事件必须带匹配的 tab_id；缺失 tab_id 的旧式广播不再进入新会话。
-          if (!isCurrentRunEventTab(eventTabId)) {
-            // 消息来自不同标签页或缺少当前 run 的 tab_id，忽略
+          // 如果事件包含 tab_id，则只处理匹配当前标签页的消息
+          if (eventTabId && eventTabId !== tabIdRef.current) {
+            // 消息来自不同标签页，忽略
             return;
           }
 
@@ -1063,11 +1314,9 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             // 🔒 CRITICAL FIX #2: 使用 cwd 字段作为备选验证（不同项目的情况）
             // 多会话并发时，不同项目的消息会通过全局事件广播
             // 通过检查 cwd 确保只处理属于当前项目的消息
-            if (typeof msg.cwd === 'string' && msg.cwd && !claudeSessionId) {
+            if (msg.cwd && !claudeSessionId) {
               // 只有在还没有 session_id 时才使用 cwd 检查
-              const normalizePath = (p: unknown) => typeof p === 'string'
-                ? p.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '')
-                : '';
+              const normalizePath = (p: string) => p.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '');
               const msgCwd = normalizePath(msg.cwd);
               const currentPath = normalizePath(projectPath);
 
@@ -1089,7 +1338,6 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
               if (!currentSessionId || currentSessionId !== msg.session_id) {
                 currentSessionId = msg.session_id;
-                bindCancelSessionId(msg.session_id);
                 setClaudeSessionId(msg.session_id);
 
                 // Claude 在 plan/continue/resume 场景下可能切换到新的 session_id。
@@ -1182,11 +1430,12 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
           // 🔒 CRITICAL FIX: 使用 tab_id 过滤消息
           const { tabId: eventTabId, payload: errorPayload } = normalizeClaudeGlobalPayload(evt.payload);
-          if (!isCurrentRunEventTab(eventTabId)) {
+          if (eventTabId && eventTabId !== tabIdRef.current) {
             return;
           }
 
-          processClaudeError(errorPayload);
+          console.error('Claude error:', errorPayload);
+          setError(errorPayload);
         });
 
         // 🔒 CRITICAL FIX: 全局事件现在格式为 { tab_id: string | null, payload: boolean }
@@ -1196,7 +1445,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
           // 🔒 CRITICAL FIX: 使用 tab_id 过滤消息
           const { tabId: eventTabId } = normalizeClaudeGlobalPayload(evt.payload);
-          if (!isCurrentRunEventTab(eventTabId)) {
+          if (eventTabId && eventTabId !== tabIdRef.current) {
             return;
           }
 
@@ -1219,6 +1468,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             if (isEnabled) {
               userInputTranslation = await translationMiddleware.translateUserInput(prompt);
               processedPrompt = userInputTranslation.translatedText;
+
             }
           } catch (translationError) {
             console.error('[usePromptExecution] Translation failed, using original prompt:', translationError);
@@ -1236,7 +1486,6 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         // ========================================================================
 
         // maxThinkingTokens is now passed as API parameter, not added to prompt
-
         // ========================================================================
         // 5️⃣ Add User Message to UI
         // ========================================================================
@@ -1304,13 +1553,6 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         // - 新会话：在事件监听器 codex-output 收到 thread.started 后记录
         // 此处仅设置 pendingPrompt 供 completion 使用
 
-        const selectedCodexModel = codexModel || model;
-        const effectiveCodexModel = sanitizeCodexModelId(
-          codexFastMode && selectedCodexModel.includes('gpt-5.5')
-            ? 'gpt-5.5-fast'
-            : selectedCodexModel
-        );
-
         if (effectiveSession && !isFirstPrompt) {
           // Resume existing Codex session
           try {
@@ -1318,12 +1560,9 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
               projectPath,
               prompt: processedPrompt,
               mode: codexMode || 'read-only',
-              model: effectiveCodexModel,
-              fastMode: codexFastMode,
-              reasoningEffort: codexReasoningLevel,
+              model: sanitizeCodexModelId(codexModel || model),
               json: true,
-              skipGitRepoCheck: true,
-              tabId: tabIdRef.current
+              skipGitRepoCheck: true
             });
           } catch {
             // Fallback to resume last if specific resume fails
@@ -1331,12 +1570,9 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
               projectPath,
               prompt: processedPrompt,
               mode: codexMode || 'read-only',
-              model: effectiveCodexModel,
-              fastMode: codexFastMode,
-              reasoningEffort: codexReasoningLevel,
+              model: sanitizeCodexModelId(codexModel || model),
               json: true,
-              skipGitRepoCheck: true,
-              tabId: tabIdRef.current
+              skipGitRepoCheck: true
             });
           }
         } else {
@@ -1346,12 +1582,9 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             projectPath,
             prompt: processedPrompt,
             mode: codexMode || 'read-only',
-            model: effectiveCodexModel,
-            fastMode: codexFastMode,
-            reasoningEffort: codexReasoningLevel,
+            model: sanitizeCodexModelId(codexModel || model),
             json: true,
-            skipGitRepoCheck: true,
-            tabId: tabIdRef.current
+            skipGitRepoCheck: true
           });
         }
 
@@ -1361,7 +1594,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         const pendingIndex = recordedPromptIndex >= 0 ? recordedPromptIndex : codexPendingInfo?.promptIndex;
         const pendingSessionId = effectiveSession?.id || codexPendingInfo?.sessionId || null;
         if (pendingIndex !== undefined && pendingSessionId) {
-          codexPendingPromptRecord = {
+          window.__codexPendingPrompt = {
             sessionId: pendingSessionId,
             projectPath,
             promptIndex: pendingIndex,
@@ -1384,15 +1617,14 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           setIsFirstPrompt(false);
         }
 
-          await api.executeGemini({
-            projectPath,
-            prompt: processedPrompt,
-            model: geminiModel || 'auto-gemini-3',
-            approvalMode: geminiApprovalMode || 'auto_edit',
-            sessionId: sessionId,  // 🔑 Pass session ID for resumption
-            debug: false,
-            tabId: tabIdRef.current
-          });
+        await api.executeGemini({
+          projectPath,
+          prompt: processedPrompt,
+          model: geminiModel || 'gemini-3-flash',
+          approvalMode: geminiApprovalMode || 'auto_edit',
+          sessionId: sessionId,  // 🔑 Pass session ID for resumption
+          debug: false
+        });
 
         // 🆕 Store pending prompt info for completion recording
         // 已有会话: recordedPromptIndex 已在前面设置
@@ -1400,7 +1632,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         const pendingIndex = recordedPromptIndex >= 0 ? recordedPromptIndex : geminiPendingInfo?.promptIndex;
         const pendingSessionId = effectiveSession?.id || geminiPendingInfo?.sessionId || null;
         if (pendingIndex !== undefined && pendingSessionId) {
-          geminiPendingPromptRecord = {
+          window.__geminiPendingPrompt = {
             sessionId: pendingSessionId,
             projectPath,
             promptIndex: pendingIndex,
@@ -1419,16 +1651,16 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         if (effectiveSession && !isFirstPrompt) {
           // Resume existing session
           try {
-            await api.resumeClaudeCode(projectPath, effectiveSession.id, processedPrompt, model, currentPlanMode, maxThinkingTokens, tabId, claudeFastMode);
+            await api.resumeClaudeCode(projectPath, effectiveSession.id, processedPrompt, model, currentPlanMode, maxThinkingTokens, tabId);
           } catch (resumeError) {
             console.warn('[usePromptExecution] Resume failed, falling back to continue mode:', resumeError);
             // Fallback to continue mode if resume fails
-            await api.continueClaudeCode(projectPath, processedPrompt, model, currentPlanMode, maxThinkingTokens, tabId, claudeFastMode);
+            await api.continueClaudeCode(projectPath, processedPrompt, model, currentPlanMode, maxThinkingTokens, tabId);
           }
         } else {
           // Start new session
           setIsFirstPrompt(false);
-          await api.executeClaudeCode(projectPath, processedPrompt, model, currentPlanMode, maxThinkingTokens, tabId, claudeFastMode);
+          await api.executeClaudeCode(projectPath, processedPrompt, model, currentPlanMode, maxThinkingTokens, tabId);
         }
       }
 
@@ -1437,15 +1669,11 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
       // 7️⃣ Error Handling
       // ========================================================================
       console.error("Failed to send prompt:", err);
-      const errorMessage = stringifyPromptExecutionError(err) || '未知错误';
-      setError(errorMessage);
-      appendExecutionSystemMessage(
-        'execution-error',
-        executionEngine,
-        `⚠️ ${engineNames[executionEngine]} 上游返回错误，本次运行已停止监听。错误详情只展示在前端并保存为 UI 事件，不会带入下一次对话上下文。`,
-        errorMessage
-      );
-      resetRuntimeState();
+      setError("发送提示失败");
+      setIsLoading(false);
+      hasActiveSessionRef.current = false;
+      // Reset session state on error
+      setClaudeSessionId(null);
     }
   }, [
     projectPath,
@@ -1456,16 +1684,11 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
     isFirstPrompt,
     extractedSessionInfo,
     executionEngine,  // 🆕 Codex/Gemini integration
-    claudeFastMode,   // 🆕 Claude integration
     codexMode,        // 🆕 Codex integration
     codexModel,       // 🆕 Codex integration
-    codexFastMode,    // 🆕 Codex integration
-    codexReasoningLevel, // 🆕 Codex integration
     geminiModel,      // 🆕 Gemini integration
     geminiApprovalMode, // 🆕 Gemini integration
     hasActiveSessionRef,
-    activeSessionIdRef,
-    bindCancelSessionId,
     unlistenRefs,
     isMountedRef,
     isListeningRef,
@@ -1481,9 +1704,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
     setIsFirstPrompt,
     processMessageWithTranslation,
     refreshCodexRateLimitsFromHistory,
-    updateCodexRateLimits,
-    resetRuntimeState,
-    getRunElapsedSeconds
+    updateCodexRateLimits
   ]);
 
   // ============================================================================
