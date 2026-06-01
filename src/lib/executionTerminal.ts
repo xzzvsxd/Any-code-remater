@@ -6,8 +6,6 @@ const TERMINAL_EXECUTION_SUBTYPES = new Set([
   'execution-error',
 ]);
 
-const TERMINAL_CLOCK_SKEW_MS = 5_000;
-
 export function isExecutionTerminalMessage(message: Partial<ClaudeStreamMessage> | null | undefined): boolean {
   if (!message || message.type !== 'system') {
     return false;
@@ -41,8 +39,9 @@ export function hasExecutionTerminalAfter(
     }
 
     const terminalTimestamp = getExecutionMessageTimestampMs(message);
-    return terminalTimestamp !== null
-      && terminalTimestamp + TERMINAL_CLOCK_SKEW_MS >= executionStartedAt;
+    if (terminalTimestamp !== null && terminalTimestamp >= executionStartedAt) {
+      return true;
+    }
   }
 
   return false;

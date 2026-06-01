@@ -41,6 +41,18 @@ describe('execution terminal state helpers', () => {
     ], startedAt)).toBe(false);
   });
 
+  it('does not suppress a new run started seconds after the previous completion', () => {
+    expect(hasExecutionTerminalAfter([
+      {
+        type: 'system',
+        subtype: 'execution-complete',
+        uiOnly: true,
+        timestamp: '2026-06-01T11:59:59.000Z',
+      },
+      { type: 'user', message: { content: [{ type: 'text', text: 'new prompt' }] } },
+    ], startedAt)).toBe(false);
+  });
+
   it('suppresses the processing indicator when completion has already been rendered', () => {
     expect(shouldSuppressProcessingIndicator({
       isLoading: true,
