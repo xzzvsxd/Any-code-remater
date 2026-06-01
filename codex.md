@@ -35,13 +35,13 @@
 当前版本：
 
 ```text
-5.28.8
+5.29.1
 ```
 
 当前 tag：
 
 ```text
-v5.28.8
+v5.29.1
 ```
 
 主发布 workflow：
@@ -257,8 +257,8 @@ git push origin main
 仅在用户要求发布时更新 tag：
 
 ```powershell
-git tag -f -a v5.28.8 -m "Release v5.28.8" HEAD
-git push --force origin v5.28.8
+git tag -f -a v5.29.1 -m "Release v5.29.1" HEAD
+git push --force origin v5.29.1
 ```
 
 这会触发：
