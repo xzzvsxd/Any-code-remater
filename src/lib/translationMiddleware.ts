@@ -411,9 +411,9 @@ export class TranslationMiddleware {
     } catch (error) {
       console.warn('[TranslationMiddleware] ⚠️ Failed to load saved config, using default:', error);
       this.config = {
-        enabled: true,  // 🔧 修复：默认启用翻译功能
+        enabled: false,
         api_base_url: "https://api.siliconflow.cn/v1",
-        api_key: "sk-ednywbvnfwerfcxnqjkmnhxvgcqoyuhmjvfywrshpxsgjbzm",
+        api_key: "",
         model: "tencent/Hunyuan-MT-7B",
         timeout_seconds: 30,
         cache_ttl_seconds: 3600,

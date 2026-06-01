@@ -301,11 +301,7 @@ impl ProcessRegistry {
     /// Used when a resumed Claude process is registered immediately with the
     /// known resume id so early cancellation can work, then Claude emits the
     /// authoritative session id in `system:init`.
-    pub fn update_claude_session_id(
-        &self,
-        run_id: i64,
-        session_id: String,
-    ) -> Result<(), String> {
+    pub fn update_claude_session_id(&self, run_id: i64, session_id: String) -> Result<(), String> {
         let mut processes = self.processes.lock().map_err(|e| e.to_string())?;
         let handle = processes
             .get_mut(&run_id)
@@ -663,55 +659,6 @@ impl ProcessRegistry {
         }
 
         Ok(finished_runs)
-    }
-
-    /// Kill all registered processes (for application shutdown)
-    /// This is a critical cleanup function to prevent orphaned processes
-    pub async fn kill_all_processes(&self) -> Result<usize, String> {
-        use log::{info, warn};
-
-        info!("Starting cleanup of all registered processes for application shutdown");
-
-        // Get all run IDs with their PIDs
-        let process_info: Vec<(i64, u32)> = {
-            let processes = self.processes.lock().map_err(|e| e.to_string())?;
-            processes
-                .iter()
-                .map(|(id, handle)| (*id, handle.info.pid))
-                .collect()
-        };
-
-        let total_processes = process_info.len();
-        info!("Found {} processes to cleanup", total_processes);
-
-        let mut killed_count = 0;
-
-        // Kill registered processes only.  On Unix this targets the isolated
-        // process group; on Windows the process/job tree is terminated.
-        for (run_id, _pid) in process_info {
-            match self.kill_process(run_id).await {
-                Ok(true) => {
-                    info!("Successfully killed process {}", run_id);
-                    killed_count += 1;
-                }
-                Ok(false) => {
-                    warn!("Process {} was not found or already exited", run_id);
-                }
-                Err(e) => {
-                    warn!("Failed to kill process {}: {}", run_id, e);
-                }
-            }
-        }
-
-        // Never perform process-name based cleanup here.  It can terminate
-        // unrelated user applications (for example another `claude` binary on
-        // Linux).  Only registered PIDs/PGIDs/JobObjects are in scope.
-
-        info!(
-            "Cleanup complete: killed {}/{} processes",
-            killed_count, total_processes
-        );
-        Ok(killed_count)
     }
 }
 

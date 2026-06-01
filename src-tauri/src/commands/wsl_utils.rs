@@ -26,6 +26,7 @@ pub use super::wsl_runtime::*;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Clone)]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub struct WslCommandSpec {
     pub program: String,
     pub args: Vec<String>,
@@ -39,6 +40,7 @@ impl WslCommandSpec {
     /// they can be terminated safely.  Name/argument based kills are too broad
     /// for concurrent Codex/Gemini/Claude sessions that often share the same
     /// command line.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     pub fn is_marked(&self) -> bool {
         self.marker
             .as_deref()
@@ -1269,23 +1271,6 @@ pub fn get_wsl_codex_sessions_dir() -> Option<PathBuf> {
 // WSL 命令构建
 // ============================================================================
 
-/// 构建通过 WSL 执行的异步命令 (tokio)
-///
-/// # Arguments
-/// * `program` - 要执行的程序（如 "codex"）
-/// * `args` - 程序参数
-/// * `working_dir` - Windows 格式的工作目录（会自动转换为 WSL 路径）
-/// * `distro` - 可选的 WSL 发行版名称
-#[cfg(target_os = "windows")]
-pub fn build_wsl_command_async(
-    program: &str,
-    args: &[String],
-    working_dir: Option<&str>,
-    distro: Option<&str>,
-) -> tokio::process::Command {
-    build_wsl_command_spec(program, args, working_dir, distro).into_command()
-}
-
 #[cfg(target_os = "windows")]
 pub fn build_wsl_command_spec(
     program: &str,
@@ -1402,14 +1387,29 @@ pub fn build_wsl_termination_command(
     pid: u32,
     reason: &str,
 ) -> Result<std::process::Command, String> {
-    let Some(marker) = spec.marker.as_deref().filter(|marker| !marker.trim().is_empty()) else {
+    if !spec.is_marked() {
+        return Err(format!(
+            "refusing WSL termination without unique marker for host PID {} ({})",
+            pid, reason
+        ));
+    }
+
+    let Some(marker) = spec
+        .marker
+        .as_deref()
+        .filter(|marker| !marker.trim().is_empty())
+    else {
         return Err(format!(
             "refusing WSL termination without unique marker for host PID {} ({})",
             pid, reason
         ));
     };
 
-    let Some(distro) = spec.distro.as_deref().filter(|distro| !distro.trim().is_empty()) else {
+    let Some(distro) = spec
+        .distro
+        .as_deref()
+        .filter(|distro| !distro.trim().is_empty())
+    else {
         return Err(format!(
             "refusing WSL termination without resolved distro for host PID {} ({})",
             pid, reason
@@ -1448,21 +1448,7 @@ fn shell_quote(value: &str) -> String {
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn build_wsl_command_async(
-    program: &str,
-    args: &[String],
-    _working_dir: Option<&str>,
-    _distro: Option<&str>,
-) -> tokio::process::Command {
-    // 非 Windows 平台直接执行命令
-    let mut cmd = tokio::process::Command::new(program);
-    for arg in args {
-        cmd.arg(arg);
-    }
-    cmd
-}
-
-#[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
 pub fn build_wsl_command_spec(
     program: &str,
     args: &[String],
@@ -1480,6 +1466,7 @@ pub fn build_wsl_command_spec(
 
 #[cfg(not(target_os = "windows"))]
 impl WslCommandSpec {
+    #[allow(dead_code)]
     pub fn into_command(&self) -> tokio::process::Command {
         let mut cmd = tokio::process::Command::new(&self.program);
         for arg in &self.args {
@@ -1540,7 +1527,8 @@ mod tests {
     #[test]
     fn test_wsl_command_spec_preserves_launch_identity() {
         let args = vec!["exec".to_string(), "--json".to_string(), "-".to_string()];
-        let spec = build_wsl_command_spec("codex", &args, Some("C:\\Projects\\demo"), Some("Ubuntu"));
+        let spec =
+            build_wsl_command_spec("codex", &args, Some("C:\\Projects\\demo"), Some("Ubuntu"));
 
         assert_eq!(spec.program, "codex");
         assert_eq!(spec.args, args);
@@ -1561,8 +1549,13 @@ mod tests {
     fn test_marked_wsl_command_spec_uses_unique_marker_for_termination() {
         let args = vec!["exec".to_string(), "--json".to_string(), "-".to_string()];
         let marker = "any-code-codex-test-marker";
-        let spec =
-            build_marked_wsl_command_spec(marker, "codex", &args, Some("C:\\Projects\\demo"), Some("Ubuntu"));
+        let spec = build_marked_wsl_command_spec(
+            marker,
+            "codex",
+            &args,
+            Some("C:\\Projects\\demo"),
+            Some("Ubuntu"),
+        );
 
         assert_eq!(spec.marker.as_deref(), Some(marker));
 
@@ -1597,7 +1590,8 @@ mod tests {
     #[test]
     fn test_unmarked_wsl_termination_is_refused() {
         let args = vec!["exec".to_string(), "--json".to_string(), "-".to_string()];
-        let spec = build_wsl_command_spec("codex", &args, Some("C:\\Projects\\demo"), Some("Ubuntu"));
+        let spec =
+            build_wsl_command_spec("codex", &args, Some("C:\\Projects\\demo"), Some("Ubuntu"));
 
         let err = build_wsl_termination_command(&spec, 12345, "test")
             .expect_err("unmarked WSL specs must not be terminable by command pattern");

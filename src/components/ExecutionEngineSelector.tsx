@@ -82,6 +82,7 @@ interface ClaudeWslModeConfig {
   availableDistros: string[];
   wslEnabled: boolean;
   wslClaudePath: string | null;
+  wslClaudeDir?: string | null;
   wslClaudeVersion: string | null;
   nativeAvailable: boolean;
   actualMode: 'native' | 'wsl';

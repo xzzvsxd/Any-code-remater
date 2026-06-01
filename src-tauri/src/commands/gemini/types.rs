@@ -10,15 +10,6 @@ use serde_json::Value;
 // Stream Event Types (from --output-format stream-json)
 // ============================================================================
 
-/// Raw Gemini event from JSONL stream
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct RawGeminiEvent {
-    #[serde(rename = "type")]
-    pub event_type: String,
-    #[serde(flatten)]
-    pub data: serde_json::Value,
-}
-
 /// Gemini CLI stream event - represents a single line of JSONL output
 #[derive(Debug, Clone, Serialize)]
 pub enum GeminiStreamEvent {
@@ -314,32 +305,6 @@ impl Default for GeminiExecutionOptions {
 // ============================================================================
 // Session Types
 // ============================================================================
-
-/// Gemini session metadata
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GeminiSession {
-    /// Session ID
-    pub id: String,
-
-    /// Project path
-    pub project_path: String,
-
-    /// Model used
-    pub model: String,
-
-    /// Creation timestamp
-    pub created_at: u64,
-
-    /// Last updated timestamp
-    pub updated_at: u64,
-
-    /// Session status
-    pub status: String,
-
-    /// First user message
-    pub first_message: Option<String>,
-}
 
 // ============================================================================
 // Process State

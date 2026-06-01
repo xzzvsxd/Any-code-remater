@@ -72,6 +72,7 @@ pub fn kill_process_group(pgid: u32) -> Result<(), String> {
 }
 
 #[cfg(not(unix))]
+#[allow(dead_code)]
 pub fn kill_process_group(_pgid: u32) -> Result<(), String> {
     Ok(())
 }

@@ -814,8 +814,12 @@ pub async fn mcp_upsert_server(
 ) -> Result<String, String> {
     info!("Upserting MCP server: {} for apps: {:?}", id, apps);
 
-    // 验证服务器规范
-    crate::mcp::validate_server_spec(&server_spec)?;
+    if apps.is_empty() {
+        return Err("请至少选择一个要配置的应用".to_string());
+    }
+
+    // 提取并验证服务器规范（兼容包含 UI 辅助字段的导入对象）
+    let server_spec = crate::mcp::extract_server_spec(&server_spec)?;
 
     // 创建服务器结构
     let server = McpServer {
@@ -839,6 +843,10 @@ pub async fn mcp_upsert_server(
 #[tauri::command]
 pub async fn mcp_delete_server(id: String, apps: McpApps) -> Result<String, String> {
     info!("Deleting MCP server: {} from apps: {:?}", id, apps);
+
+    if apps.is_empty() {
+        return Err("请至少选择一个要删除配置的应用".to_string());
+    }
 
     // 创建服务器结构用于删除
     let server = McpServer {
@@ -875,6 +883,7 @@ pub async fn mcp_toggle_app(
 
     if enabled {
         // 启用：同步到应用
+        let server_spec = crate::mcp::extract_server_spec(&server_spec)?;
         crate::mcp::sync_server_to_app(&id, &server_spec, &app_type)?;
     } else {
         // 禁用：从应用移除
@@ -884,7 +893,7 @@ pub async fn mcp_toggle_app(
     Ok(format!(
         "MCP 服务器 '{}' 在 {} 中已{}",
         id,
-        app,
+        app_type.as_str(),
         if enabled { "启用" } else { "禁用" }
     ))
 }
@@ -967,8 +976,8 @@ pub async fn mcp_upsert_engine_server(
 ) -> Result<String, String> {
     info!("在 {} 引擎中添加/更新 MCP 服务器: {}", engine, id);
 
-    // 验证服务器规范
-    crate::mcp::validate_server_spec(&server_spec)?;
+    // 提取并验证服务器规范
+    let server_spec = crate::mcp::extract_server_spec(&server_spec)?;
 
     // 保存到注册表（启用状态）
     crate::mcp::registry::upsert_server(&id, &id, &server_spec, true)?;
@@ -1024,13 +1033,18 @@ pub async fn mcp_toggle_engine_server(
 
     let app_type = crate::mcp::AppType::from_str(&engine)?;
 
-    // 始终将服务器保存到注册表（确保禁用后不会丢失）
-    crate::mcp::registry::upsert_server(&id, &id, &server_spec, enabled)?;
+    // 始终将服务器保存到注册表（确保禁用后不会丢失）。
+    // 禁用时不强制验证，避免历史/导入的异常配置导致用户无法关闭它。
+    let cleaned_server_spec = if enabled {
+        crate::mcp::extract_server_spec(&server_spec)?
+    } else {
+        crate::mcp::extract_server_spec(&server_spec).unwrap_or(server_spec)
+    };
+    crate::mcp::registry::upsert_server(&id, &id, &cleaned_server_spec, enabled)?;
 
     if enabled {
         // 启用：添加到配置文件
-        crate::mcp::validate_server_spec(&server_spec)?;
-        crate::mcp::sync_server_to_app(&id, &server_spec, &app_type)?;
+        crate::mcp::sync_server_to_app(&id, &cleaned_server_spec, &app_type)?;
         Ok(format!("已在 {} 引擎中启用 MCP 服务器 '{}'", engine, id))
     } else {
         // 禁用：从配置文件中移除（但保留在注册表中）

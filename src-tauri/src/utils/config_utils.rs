@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 /// save_json_config(&config, &path)?;
 /// ```
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// 通用配置加载函数
 ///
@@ -105,66 +105,6 @@ where
     Ok(())
 }
 
-/// 配置路径构建助手
-///
-/// 用于构建标准配置文件路径，支持链式调用
-///
-/// # 使用示例
-///
-/// ```rust
-/// // 从HOME/.claude目录构建
-/// let builder = ConfigPathBuilder::from_home_subdir(".claude")?;
-/// let config_path = builder.build("settings.json");
-///
-/// // 自定义基础目录
-/// let builder = ConfigPathBuilder::new(my_dir);
-/// let config_path = builder.build("config.json");
-/// ```
-pub struct ConfigPathBuilder {
-    base_dir: PathBuf,
-}
-
-impl ConfigPathBuilder {
-    /// 创建新的路径构建器
-    ///
-    /// # 参数
-    /// - `base_dir`: 基础目录路径
-    pub fn new(base_dir: PathBuf) -> Self {
-        Self { base_dir }
-    }
-
-    /// 构建配置文件路径
-    ///
-    /// # 参数
-    /// - `filename`: 配置文件名
-    ///
-    /// # 返回值
-    /// 完整的配置文件路径
-    pub fn build(&self, filename: &str) -> PathBuf {
-        self.base_dir.join(filename)
-    }
-
-    /// 从用户主目录的子目录构建
-    ///
-    /// # 参数
-    /// - `subdir`: 主目录下的子目录名（如 ".claude", ".codex"）
-    ///
-    /// # 返回值
-    /// - `Ok(ConfigPathBuilder)`: 成功创建的构建器
-    /// - `Err(String)`: 如果无法获取主目录
-    ///
-    /// # 示例
-    /// ```rust
-    /// let builder = ConfigPathBuilder::from_home_subdir(".claude")?;
-    /// let path = builder.build("settings.json");
-    /// // 结果: ~/.claude/settings.json
-    /// ```
-    pub fn from_home_subdir(subdir: &str) -> Result<Self, String> {
-        let home = dirs::home_dir().ok_or_else(|| "Failed to get home directory".to_string())?;
-        Ok(Self::new(home.join(subdir)))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,17 +145,5 @@ mod tests {
 
         // 清理
         fs::remove_file(config_path).ok();
-    }
-
-    #[test]
-    fn test_config_path_builder() {
-        let builder = ConfigPathBuilder::new(PathBuf::from("/test/dir"));
-        let path = builder.build("config.json");
-
-        #[cfg(windows)]
-        assert_eq!(path, PathBuf::from("\\test\\dir\\config.json"));
-
-        #[cfg(not(windows))]
-        assert_eq!(path, PathBuf::from("/test/dir/config.json"));
     }
 }

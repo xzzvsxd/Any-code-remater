@@ -27,18 +27,10 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 // 重新导出公共 API
-pub use claude::{
-    import_from_claude, remove_server_from_claude, sync_servers_to_claude,
-    sync_single_server_to_claude,
-};
-pub use codex::{
-    import_from_codex, remove_server_from_codex, sync_servers_to_codex, sync_single_server_to_codex,
-};
-pub use gemini::{
-    import_from_gemini, remove_server_from_gemini, sync_servers_to_gemini,
-    sync_single_server_to_gemini,
-};
-pub use validation::validate_server_spec;
+pub use claude::{import_from_claude, remove_server_from_claude, sync_single_server_to_claude};
+pub use codex::{import_from_codex, remove_server_from_codex, sync_single_server_to_codex};
+pub use gemini::{import_from_gemini, remove_server_from_gemini, sync_single_server_to_gemini};
+pub use validation::extract_server_spec;
 
 /// 应用类型
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -80,24 +72,6 @@ pub struct McpApps {
 }
 
 impl McpApps {
-    /// 检查指定应用是否启用
-    pub fn is_enabled_for(&self, app: &AppType) -> bool {
-        match app {
-            AppType::Claude => self.claude,
-            AppType::Codex => self.codex,
-            AppType::Gemini => self.gemini,
-        }
-    }
-
-    /// 设置指定应用的启用状态
-    pub fn set_enabled_for(&mut self, app: &AppType, enabled: bool) {
-        match app {
-            AppType::Claude => self.claude = enabled,
-            AppType::Codex => self.codex = enabled,
-            AppType::Gemini => self.gemini = enabled,
-        }
-    }
-
     /// 获取所有启用的应用列表
     pub fn enabled_apps(&self) -> Vec<AppType> {
         let mut apps = Vec::new();
@@ -176,15 +150,6 @@ pub fn import_from_app(app: &AppType) -> Result<HashMap<String, Value>, String> 
         AppType::Claude => import_from_claude(),
         AppType::Codex => import_from_codex(),
         AppType::Gemini => import_from_gemini(),
-    }
-}
-
-/// 将多个服务器同步到指定应用
-pub fn sync_servers_to_app(servers: &HashMap<String, Value>, app: &AppType) -> Result<(), String> {
-    match app {
-        AppType::Claude => sync_servers_to_claude(servers),
-        AppType::Codex => sync_servers_to_codex(servers),
-        AppType::Gemini => sync_servers_to_gemini(servers),
     }
 }
 

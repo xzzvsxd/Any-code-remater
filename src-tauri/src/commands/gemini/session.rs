@@ -13,8 +13,8 @@ use tokio::time::{sleep, Duration};
 
 use super::config::{build_gemini_env, load_gemini_config, read_session_detail};
 use super::parser::{
-    convert_raw_to_unified_message, convert_to_unified_message, parse_gemini_line,
-    parse_gemini_line_flexible,
+    convert_raw_to_unified_message, convert_to_unified_message, extract_session_id,
+    parse_gemini_line, parse_gemini_line_flexible,
 };
 use super::types::{
     GeminiExecutionOptions, GeminiInstallStatus, GeminiProcessHandle, GeminiProcessState,
@@ -592,8 +592,9 @@ pub async fn cancel_gemini(
 /// 这样既支持斜杠命令，又避免操作系统命令行长度限制（Windows ~8KB, Linux/macOS ~128KB-2MB）
 async fn execute_gemini_process(
     mut cmd: Command,
-    #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
-    wsl_spec: Option<wsl_utils::WslCommandSpec>,
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables))] wsl_spec: Option<
+        wsl_utils::WslCommandSpec,
+    >,
     project_path: String,
     model: String,
     prompt: Option<String>,
@@ -787,11 +788,7 @@ async fn execute_gemini_process(
             let mut unified_message = if let Ok(mut event) = parse_gemini_line(&line) {
                 // 🔧 FIX: Check if this is an init event with real Gemini CLI session ID
                 if !real_cli_session_id_emitted {
-                    if let super::types::GeminiStreamEvent::Init {
-                        session_id: Some(ref cli_session_id),
-                        ..
-                    } = event
-                    {
+                    if let Some(cli_session_id) = extract_session_id(&event) {
                         real_cli_session_id = Some(cli_session_id.clone());
                         // Emit the real Gemini CLI session ID to frontend
                         log::info!("[Gemini] Detected real CLI session ID: {}", cli_session_id);

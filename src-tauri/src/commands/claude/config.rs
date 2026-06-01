@@ -1085,6 +1085,8 @@ pub struct ClaudeWslModeInfo {
     pub wsl_enabled: bool,
     /// Claude path in WSL (if detected)
     pub wsl_claude_path: Option<String>,
+    /// Claude config directory exposed to Windows via WSL UNC path
+    pub wsl_claude_dir: Option<String>,
     /// Claude version in WSL (if detected)
     pub wsl_claude_version: Option<String>,
     /// Is native Claude available
@@ -1149,6 +1151,9 @@ fn do_get_claude_wsl_mode_config() -> ClaudeWslModeInfo {
         available_distros,
         wsl_enabled: runtime.enabled,
         wsl_claude_path: runtime.claude_path_in_wsl.clone(),
+        wsl_claude_dir: wsl_utils::get_wsl_claude_dir()
+            .as_ref()
+            .map(|path| path.to_string_lossy().to_string()),
         wsl_claude_version,
         native_available,
         actual_mode: actual_mode.to_string(),
