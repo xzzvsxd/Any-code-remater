@@ -3,6 +3,8 @@
 //! 提供 Windows 主机与 WSL 环境之间的路径转换和命令执行支持
 //! 支持 Windows + WSL Codex/Gemini 场景
 
+#![cfg_attr(not(target_os = "windows"), allow(dead_code))]
+
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::OnceLock;

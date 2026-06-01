@@ -1428,6 +1428,7 @@ fn resolve_cmd_wrapper(cmd_path: &str) -> Option<(String, String)> {
 }
 
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
 fn resolve_cmd_wrapper(_cmd_path: &str) -> Option<(String, String)> {
     None
 }

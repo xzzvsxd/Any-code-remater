@@ -1,5 +1,7 @@
 //! Unix/macOS-specific platform implementations
 
+#![allow(dead_code)]
+
 use std::process::Command;
 
 /// Resolve a .cmd wrapper file to its actual Node.js script path

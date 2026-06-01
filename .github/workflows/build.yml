@@ -128,7 +128,7 @@ jobs:
         run: |
           $version = "$env:RELEASE_TAG".TrimStart('v')
           $exePath = "src-tauri/target/release/any-code.exe"
-          $portableName = "Any_Code_${version}_x64-portable.exe"
+          $portableName = "any-code_${version}_x64-portable.exe"
           $portablePath = "src-tauri/target/release/bundle/$portableName"
           New-Item -ItemType Directory -Force -Path "src-tauri/target/release/bundle"
           Copy-Item $exePath $portablePath
@@ -153,6 +153,90 @@ jobs:
             src-tauri/target/*/release/build/*/output
             src-tauri/target/release/build/*/output
           retention-days: 3
+
+  publish-windows:
+    name: Publish Windows assets early
+    needs: [resolve-release, build-windows]
+    runs-on: ubuntu-latest
+    if: needs.resolve-release.outputs.is_release == 'true'
+    env:
+      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-Windows
+          path: artifacts
+
+      - name: Normalize Windows assets
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          mkdir -p windows-assets
+
+          WIN_PORTABLE=$(find artifacts -name "*-portable.exe" -type f | head -n 1)
+          WIN_NSIS=$(find artifacts -name "*-setup.exe" ! -name "*.sig" -type f | head -n 1)
+          WIN_NSIS_SIG=$(find artifacts -name "*-setup.exe.sig" -type f | head -n 1)
+          WIN_MSI=$(find artifacts -name "*.msi" ! -name "*.sig" -type f | head -n 1)
+          WIN_MSI_SIG=$(find artifacts -name "*.msi.sig" -type f | head -n 1)
+
+          for required in "$WIN_PORTABLE" "$WIN_NSIS" "$WIN_NSIS_SIG" "$WIN_MSI" "$WIN_MSI_SIG"; do
+            if [ -z "$required" ] || [ ! -f "$required" ]; then
+              echo "::error::Missing expected Windows artifact."
+              find artifacts -maxdepth 6 -type f | sort
+              exit 1
+            fi
+          done
+
+          cp "$WIN_PORTABLE" "windows-assets/any-code_${VERSION}_x64-portable.exe"
+          cp "$WIN_NSIS" "windows-assets/any-code_${VERSION}_x64-setup.exe"
+          cp "$WIN_NSIS_SIG" "windows-assets/any-code_${VERSION}_x64-setup.exe.sig"
+          cp "$WIN_MSI" "windows-assets/any-code_${VERSION}_x64.msi"
+          cp "$WIN_MSI_SIG" "windows-assets/any-code_${VERSION}_x64.msi.sig"
+
+          python3 .github/scripts/merge_latest_json.py \
+            --version "$VERSION" \
+            --tag "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --output windows-assets/latest.json \
+            --platform "windows-x86_64|windows-assets/any-code_${VERSION}_x64-setup.exe.sig|any-code_${VERSION}_x64-setup.exe"
+
+      - name: Prepare Windows-first release notes
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          python3 .github/scripts/generate_release_notes.py \
+            --version "$VERSION" \
+            --tag "$RELEASE_TAG" \
+            --output release-notes.md
+
+          {
+            echo "## Windows 版本已优先上传"
+            echo
+            echo "Linux/macOS 构建完成后会继续补充对应安装包，并刷新完整的 latest.json。"
+            echo
+            cat release-notes.md
+          } > release-notes-windows.md
+
+      - name: Create or update release and upload Windows assets
+        run: |
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --title "Any Code $RELEASE_TAG" \
+              --notes-file release-notes-windows.md
+          else
+            gh release create "$RELEASE_TAG" \
+              --title "Any Code $RELEASE_TAG" \
+              --notes-file release-notes-windows.md
+          fi
+
+          gh release upload "$RELEASE_TAG" windows-assets/* --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-linux:
     name: Build (Linux)
@@ -405,11 +489,43 @@ jobs:
           WIN_NSIS_SIG=$(find artifacts -name "*-setup.exe.sig" -type f | head -n 1)
           if [ -n "$WIN_NSIS" ]; then
             WIN_DIR=$(dirname "$WIN_NSIS")
-            mv "$WIN_NSIS" "$WIN_DIR/any-code_${VERSION}_x64-setup.exe"
+            TARGET="$WIN_DIR/any-code_${VERSION}_x64-setup.exe"
+            if [ "$WIN_NSIS" != "$TARGET" ]; then
+              mv "$WIN_NSIS" "$TARGET"
+            fi
           fi
           if [ -n "$WIN_NSIS_SIG" ]; then
             WIN_DIR=$(dirname "$WIN_NSIS_SIG")
-            mv "$WIN_NSIS_SIG" "$WIN_DIR/any-code_${VERSION}_x64-setup.exe.sig"
+            TARGET="$WIN_DIR/any-code_${VERSION}_x64-setup.exe.sig"
+            if [ "$WIN_NSIS_SIG" != "$TARGET" ]; then
+              mv "$WIN_NSIS_SIG" "$TARGET"
+            fi
+          fi
+
+          WIN_PORTABLE=$(find artifacts -name "*-portable.exe" -type f | head -n 1)
+          if [ -n "$WIN_PORTABLE" ]; then
+            WIN_DIR=$(dirname "$WIN_PORTABLE")
+            TARGET="$WIN_DIR/any-code_${VERSION}_x64-portable.exe"
+            if [ "$WIN_PORTABLE" != "$TARGET" ]; then
+              mv "$WIN_PORTABLE" "$TARGET"
+            fi
+          fi
+
+          WIN_MSI=$(find artifacts -name "*.msi" ! -name "*.sig" -type f | head -n 1)
+          WIN_MSI_SIG=$(find artifacts -name "*.msi.sig" -type f | head -n 1)
+          if [ -n "$WIN_MSI" ]; then
+            WIN_DIR=$(dirname "$WIN_MSI")
+            TARGET="$WIN_DIR/any-code_${VERSION}_x64.msi"
+            if [ "$WIN_MSI" != "$TARGET" ]; then
+              mv "$WIN_MSI" "$TARGET"
+            fi
+          fi
+          if [ -n "$WIN_MSI_SIG" ]; then
+            WIN_DIR=$(dirname "$WIN_MSI_SIG")
+            TARGET="$WIN_DIR/any-code_${VERSION}_x64.msi.sig"
+            if [ "$WIN_MSI_SIG" != "$TARGET" ]; then
+              mv "$WIN_MSI_SIG" "$TARGET"
+            fi
           fi
 
           LINUX_APPIMAGE=$(find artifacts -name "*.AppImage" ! -name "*.sig" -type f | head -n 1)
