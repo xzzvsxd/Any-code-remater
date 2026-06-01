@@ -23,6 +23,7 @@ import { CodexEventConverter, extractCodexRateLimitsFromEvent } from '@/lib/code
 import { sanitizeCodexModelId } from '@/lib/codexModelSupport';
 import type { CodexExecutionMode, CodexRateLimits } from '@/types/codex';
 import { cacheCodexModelFromStream, cacheModelFromInitMessage } from '@/lib/modelNameParser';
+import { resolveInitialCancelSessionId } from '@/lib/cancelChannel';
 
 // ============================================================================
 // Global Type Declarations
@@ -144,6 +145,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
     geminiModel,                 // 🆕 Gemini 模型
     geminiApprovalMode,          // 🆕 Gemini 审批模式
     hasActiveSessionRef,
+    activeSessionIdRef,
     unlistenRefs,
     isMountedRef,
     isListeningRef,
@@ -158,6 +160,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
     setExtractedSessionInfo,
     setIsFirstPrompt,
     setCodexRateLimits,
+    setCancelSessionId,
     processMessageWithTranslation
   } = config;
 
@@ -177,6 +180,14 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
   const tabIdRef = useRef<string>(crypto.randomUUID());
 
   const codexThreadIdRef = useRef<string | null>(null);
+
+  const bindCancelSessionId = useCallback((sessionId: string | null) => {
+    const safeSessionId = sessionId?.trim() || null;
+    if (activeSessionIdRef) {
+      activeSessionIdRef.current = safeSessionId;
+    }
+    setCancelSessionId?.(safeSessionId);
+  }, [activeSessionIdRef, setCancelSessionId]);
 
   useEffect(() => {
     if (executionEngine !== 'codex') {
@@ -278,6 +289,12 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
       setIsLoading(true);
       setError(null);
       hasActiveSessionRef.current = true;
+      bindCancelSessionId(resolveInitialCancelSessionId({
+        engine: executionEngine,
+        effectiveSession,
+        claudeSessionId,
+        extractedSessionInfo,
+      }));
 
       // Record prompt sent (save Git state before sending)
       // Only record real user input, exclude auto Warmup and Skills messages
@@ -478,6 +495,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           const processCodexComplete = async () => {
             setIsLoading(false);
             hasActiveSessionRef.current = false;
+            bindCancelSessionId(null);
             isListeningRef.current = false;
 
             // 🆕 Clean up listeners to prevent memory leak
@@ -541,6 +559,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             setError(parsed.message);
             setIsLoading(false);
             hasActiveSessionRef.current = false;
+            bindCancelSessionId(null);
             isListeningRef.current = false;
 
             // 清理监听器，避免后续事件污染
@@ -592,6 +611,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
               // 🔧 FIX: Set claudeSessionId to the backend channel ID for reconnection and cancellation
               // This is different from the Codex thread_id which is used for resuming sessions
               setClaudeSessionId(currentCodexSessionId);
+              bindCancelSessionId(currentCodexSessionId);
               // Switch to session-specific listeners
               await attachCodexSessionListeners(currentCodexSessionId);
             }
@@ -629,6 +649,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             if (!currentCodexSessionId && parsed.sessionId) {
               currentCodexSessionId = parsed.sessionId;
               setClaudeSessionId(currentCodexSessionId);
+              bindCancelSessionId(currentCodexSessionId);
             }
 
             await processCodexError(evt.payload);
@@ -898,6 +919,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           const processGeminiComplete = async () => {
             setIsLoading(false);
             hasActiveSessionRef.current = false;
+            bindCancelSessionId(null);
             isListeningRef.current = false;
 
             // Clean up listeners
@@ -965,6 +987,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             if (data.session_id && !currentGeminiSessionId) {
               const backendSessionId = data.session_id as string; // e.g., gemini-{uuid}
               currentGeminiSessionId = backendSessionId;
+              bindCancelSessionId(backendSessionId);
               // Note: Don't set claudeSessionId yet, wait for real Gemini CLI session ID from gemini-cli-session-id event
 
               // Switch to session-specific listeners
@@ -1240,6 +1263,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
           setIsLoading(false);
           hasActiveSessionRef.current = false;
+          bindCancelSessionId(null);
           isListeningRef.current = false;
 
           // 🆕 Clean up listeners to prevent memory leak
@@ -1338,6 +1362,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
               if (!currentSessionId || currentSessionId !== msg.session_id) {
                 currentSessionId = msg.session_id;
+                bindCancelSessionId(msg.session_id);
                 setClaudeSessionId(msg.session_id);
 
                 // Claude 在 plan/continue/resume 场景下可能切换到新的 session_id。
@@ -1672,6 +1697,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
       setError("发送提示失败");
       setIsLoading(false);
       hasActiveSessionRef.current = false;
+      bindCancelSessionId(null);
       // Reset session state on error
       setClaudeSessionId(null);
     }
@@ -1702,6 +1728,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
     setRawJsonlOutput,
     setExtractedSessionInfo,
     setIsFirstPrompt,
+    bindCancelSessionId,
     processMessageWithTranslation,
     refreshCodexRateLimitsFromHistory,
     updateCodexRateLimits
