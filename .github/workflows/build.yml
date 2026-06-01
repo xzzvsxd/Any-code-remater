@@ -11,11 +11,17 @@ on:
     tags:
       - "v*"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   RUSTFLAGS: "-D warnings"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  CI_CACHE_VERSION: v2
+  BUN_VERSION: "1.2.23"
 
 permissions:
   contents: write
@@ -54,28 +60,34 @@ jobs:
     runs-on: windows-2025-vs2026
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+      CACHE_SCOPE: windows-2025-vs2026
+      RUST_TARGET: x86_64-pc-windows-msvc
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
+
+      - name: Prepare dependency cache keys
+        id: cache-keys
+        run: node .github/scripts/write_ci_cache_keys.mjs
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          targets: ${{ env.RUST_TARGET }}
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
-          key: windows-latest-x86_64-pc-windows-msvc-rust-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ env.CI_CACHE_VERSION }}-${{ env.CACHE_SCOPE }}-${{ env.RUST_TARGET }}-rust-${{ steps.cache-keys.outputs.rust_deps_key }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Cache Bun dependencies
         uses: actions/cache@v4
@@ -83,9 +95,20 @@ jobs:
           path: |
             ~/.bun
             node_modules
-          key: windows-latest-bun-${{ hashFiles('bun.lock', 'package-lock.json', 'package.json') }}
+          key: ${{ env.CI_CACHE_VERSION }}-${{ env.CACHE_SCOPE }}-bun-${{ steps.cache-keys.outputs.node_deps_key }}
           restore-keys: |
-            windows-latest-bun-
+            ${{ env.CI_CACHE_VERSION }}-${{ env.CACHE_SCOPE }}-bun-
+
+      - name: Cache Tauri packaging tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/tauri
+            ~/Library/Caches/tauri
+            ~\AppData\Local\tauri
+          key: ${{ env.CI_CACHE_VERSION }}-${{ env.CACHE_SCOPE }}-tauri-${{ steps.cache-keys.outputs.node_deps_key }}-${{ steps.cache-keys.outputs.rust_deps_key }}
+          restore-keys: |
+            ${{ env.CI_CACHE_VERSION }}-${{ env.CACHE_SCOPE }}-tauri-
 
       - name: Install frontend dependencies
         run: bun install
@@ -137,12 +160,18 @@ jobs:
     runs-on: ubuntu-22.04
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+      CACHE_SCOPE: ubuntu-22.04
+      RUST_TARGET: x86_64-unknown-linux-gnu
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
+
+      - name: Prepare dependency cache keys
+        id: cache-keys
+        run: node .github/scripts/write_ci_cache_keys.mjs
 
       - name: Install Linux dependencies
         run: |
@@ -158,18 +187,18 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-unknown-linux-gnu
+          targets: ${{ env.RUST_TARGET }}
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
-          key: ubuntu-22.04-x86_64-unknown-linux-gnu-rust-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ env.CI_CACHE_VERSION }}-${{ env.CACHE_SCOPE }}-${{ env.RUST_TARGET }}-rust-${{ steps.cache-keys.outputs.rust_deps_key }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Cache Bun dependencies
         uses: actions/cache@v4
@@ -177,9 +206,20 @@ jobs:
           path: |
             ~/.bun
             node_modules
-          key: ubuntu-22.04-bun-${{ hashFiles('bun.lock', 'package-lock.json', 'package.json') }}
+          key: ${{ env.CI_CACHE_VERSION }}-${{ env.CACHE_SCOPE }}-bun-${{ steps.cache-keys.outputs.node_deps_key }}
           restore-keys: |
-            ubuntu-22.04-bun-
+            ${{ env.CI_CACHE_VERSION }}-${{ env.CACHE_SCOPE }}-bun-
+
+      - name: Cache Tauri packaging tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/tauri
+            ~/Library/Caches/tauri
+            ~\AppData\Local\tauri
+          key: ${{ env.CI_CACHE_VERSION }}-${{ env.CACHE_SCOPE }}-tauri-${{ steps.cache-keys.outputs.node_deps_key }}-${{ steps.cache-keys.outputs.rust_deps_key }}
+          restore-keys: |
+            ${{ env.CI_CACHE_VERSION }}-${{ env.CACHE_SCOPE }}-tauri-
 
       - name: Install frontend dependencies
         run: bun install
@@ -232,28 +272,34 @@ jobs:
     runs-on: ${{ matrix.platform.os }}
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+      CACHE_SCOPE: ${{ matrix.platform.os }}
+      RUST_TARGET: ${{ matrix.platform.rust-target }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
+
+      - name: Prepare dependency cache keys
+        id: cache-keys
+        run: node .github/scripts/write_ci_cache_keys.mjs
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform.rust-target }}
+          targets: ${{ env.RUST_TARGET }}
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
-          key: ${{ matrix.platform.os }}-${{ matrix.platform.rust-target }}-rust-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ env.CI_CACHE_VERSION }}-${{ env.CACHE_SCOPE }}-${{ env.RUST_TARGET }}-rust-${{ steps.cache-keys.outputs.rust_deps_key }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Cache Bun dependencies
         uses: actions/cache@v4
@@ -261,9 +307,20 @@ jobs:
           path: |
             ~/.bun
             node_modules
-          key: ${{ matrix.platform.os }}-bun-${{ hashFiles('bun.lock', 'package-lock.json', 'package.json') }}
+          key: ${{ env.CI_CACHE_VERSION }}-${{ env.CACHE_SCOPE }}-bun-${{ steps.cache-keys.outputs.node_deps_key }}
           restore-keys: |
-            ${{ matrix.platform.os }}-bun-
+            ${{ env.CI_CACHE_VERSION }}-${{ env.CACHE_SCOPE }}-bun-
+
+      - name: Cache Tauri packaging tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/tauri
+            ~/Library/Caches/tauri
+            ~\AppData\Local\tauri
+          key: ${{ env.CI_CACHE_VERSION }}-${{ env.CACHE_SCOPE }}-tauri-${{ steps.cache-keys.outputs.node_deps_key }}-${{ steps.cache-keys.outputs.rust_deps_key }}
+          restore-keys: |
+            ${{ env.CI_CACHE_VERSION }}-${{ env.CACHE_SCOPE }}-tauri-
 
       - name: Install frontend dependencies
         run: bun install

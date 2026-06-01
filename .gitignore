@@ -49,6 +49,7 @@ src-tauri/target/
 src-tauri/Cargo.lock
 
 # Temporary files
+.ci-cache/
 nul
 *.bak
 *.tmp
