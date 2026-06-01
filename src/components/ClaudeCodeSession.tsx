@@ -38,6 +38,7 @@ import { codexConverter } from '@/lib/codexConverter';
 import { convertGeminiSessionDetailToClaudeMessages } from '@/lib/geminiConverter';
 import { formatClaudeModelLabel, resolveClaudeContinuationModel } from '@/lib/claudeModelSelection';
 import { buildPromptIndexByMessage, getPromptIndexForDisplayableMessage } from '@/lib/promptIndex';
+import { shouldSuppressProcessingIndicator } from '@/lib/executionTerminal';
 import { loadUiOnlySessionMessages, mergeUiOnlySessionMessages } from '@/lib/uiOnlySessionEvents';
 import { prepareRecentProjects } from '@/lib/recentProjects';
 import { SessionHeader } from "./session/SessionHeader";
@@ -294,18 +295,26 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     hideWarmupMessages: filterConfig.hideWarmupMessages
   });
 
+  const hasTerminalMessageForCurrentRun = useMemo(() => shouldSuppressProcessingIndicator({
+    isLoading,
+    messages,
+    executionStartedAt,
+  }), [isLoading, messages, executionStartedAt]);
+
+  const isLoadingForUi = isLoading && !hasTerminalMessageForCurrentRun;
+
   useEffect(() => {
-    if (isLoading) {
+    if (isLoadingForUi) {
       setLastOutputAt(Date.now());
     }
-  }, [messages.length, isLoading]);
+  }, [messages.length, isLoadingForUi]);
 
   const executionStatus = useMemo<ExecutionStatusInfo>(() => {
     const now = Date.now();
     const startedAt = executionStartedAt ?? now;
     const outputAt = lastOutputAt ?? startedAt;
-    const elapsedSeconds = isLoading ? Math.max(0, Math.floor((now - startedAt) / 1000)) : 0;
-    const idleSeconds = isLoading ? Math.max(0, Math.floor((now - outputAt) / 1000)) : 0;
+    const elapsedSeconds = isLoadingForUi ? Math.max(0, Math.floor((now - startedAt) / 1000)) : 0;
+    const idleSeconds = isLoadingForUi ? Math.max(0, Math.floor((now - outputAt) / 1000)) : 0;
     const engine = executionEngineConfig.engine;
     const engineName = engineDisplayNames[engine];
     const projectLabel = getProjectLabel(projectPath);
@@ -325,7 +334,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     return {
       engine,
       engineName,
-      isRunning: isLoading,
+      isRunning: isLoadingForUi,
       canCancel,
       isCancelling: isCancellingExecution,
       startedAt,
@@ -341,7 +350,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     executionStartedAt,
     executionClockTick,
     isCancellingExecution,
-    isLoading,
+    isLoadingForUi,
     lastOutputAt,
     projectPath,
     cancelSessionId,
@@ -374,7 +383,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   const { parentRef, userScrolled, setUserScrolled, setShouldAutoScroll } =
     useSmartAutoScroll({
       displayableMessages,
-      isLoading
+      isLoading: isLoadingForUi
     });
 
   // ????????????????????????????????
@@ -445,6 +454,22 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   const queuedPromptsRef = useRef<Array<{ id: string; prompt: string; model: ModelType }>>([]);
   const isMountedRef = useRef(true);
   const isListeningRef = useRef(false);
+
+  useEffect(() => {
+    if (!hasTerminalMessageForCurrentRun) {
+      return;
+    }
+
+    console.warn('[ClaudeCodeSession] Terminal execution message rendered while runtime was still loading; forcing UI idle state.');
+    unlistenRefs.current.forEach(unlisten => unlisten && typeof unlisten === 'function' && unlisten());
+    unlistenRefs.current = [];
+    setIsLoading(false);
+    hasActiveSessionRef.current = false;
+    isListeningRef.current = false;
+    activeSessionIdRef.current = null;
+    setCancelSessionId(null);
+    setIsCancellingExecution(false);
+  }, [hasTerminalMessageForCurrentRun, setIsLoading]);
 
   // ✅ Refactored: Use custom Hook for message translation (AFTER refs are declared)
   const {
@@ -737,8 +762,8 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
 
   // Report streaming state changes
   useEffect(() => {
-    onStreamingChange?.(isLoading, cancelSessionId || claudeSessionId);
-  }, [isLoading, cancelSessionId, claudeSessionId, onStreamingChange]);
+    onStreamingChange?.(isLoadingForUi, cancelSessionId || claudeSessionId);
+  }, [isLoadingForUi, cancelSessionId, claudeSessionId, onStreamingChange]);
 
   // 🔧 FIX: When a tab becomes active (visible), re-verify session running state
   // Listeners persist across tab switches (DO NOT clean up on tab switch).
@@ -759,7 +784,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       // Re-report the current streaming state to ensure the tab indicator is in sync.
       // This handles the case where the state changed in the background but the
       // parent tab manager did not receive the update.
-      onStreamingChange?.(isLoading, claudeSessionId);
+      onStreamingChange?.(isLoadingForUi, claudeSessionId);
 
       // If we are not already listening to session events, re-check whether the
       // session is still actively running. This reconnects listeners if the session
@@ -802,7 +827,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   }, [messages]);
 
   const handleCancelExecution = async () => {
-    if (!isLoading || !hasActiveSessionRef.current) return;
+    if (!isLoadingForUi || !hasActiveSessionRef.current) return;
     const activeSessionId = cancelSessionId || activeSessionIdRef.current;
     if (!activeSessionId) {
       const message = '当前运行进程还在启动中，拿到会话 ID 后即可只取消当前会话。';
@@ -1102,7 +1127,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       <SessionMessages
         ref={sessionMessagesRef}
         messageGroups={messageGroups}
-        isLoading={isLoading}
+        isLoading={isLoadingForUi}
         error={error}
         parentRef={parentRef}
         executionStatus={executionStatus}
@@ -1114,7 +1139,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   // Determine if we're in "new session" mode (no session yet, showing project picker)
   // In this mode, the page content should be scrollable as a whole
   const isNewSessionMode = !effectiveSession && displayableMessages.length === 0;
-  const showProcessingStatus = isLoading && userScrolled && displayableMessages.length > 0;
+  const showProcessingStatus = isLoadingForUi && userScrolled && displayableMessages.length > 0;
 
   // Show project path input only when:
   // 1. No initial session prop AND
@@ -1128,7 +1153,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       }}
       handleSelectPath={handleSelectPath}
       recentProjects={recentProjects}
-      isLoading={isLoading}
+      isLoading={isLoadingForUi}
     />
   );
 
@@ -1207,7 +1232,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
               <PlanModeStatusBar isPlanMode={isPlanMode} />
               {messagesList}
 
-              {(isLoading || isHistoryLoading) && messages.length === 0 && (
+              {(isLoadingForUi || isHistoryLoading) && messages.length === 0 && (
                 <div className="flex items-center justify-center h-full">
                   <div className="flex items-center gap-3">
                     <div className="rotating-symbol text-primary" />
@@ -1360,7 +1385,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
             ref={floatingPromptRef}
             onSend={handleSendPromptWithScroll}
             onCancel={handleCancelExecution}
-            isLoading={isLoading}
+            isLoading={isLoadingForUi}
             showProcessingStatus={showProcessingStatus}
             onProcessingStatusClick={handleJumpToLatest}
             disabled={!projectPath}
