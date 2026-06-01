@@ -50,13 +50,13 @@
     }
   },
   "bundle": {
-      "active": true,
-      "createUpdaterArtifacts": true,
-      "targets": "all",
-      "icon": [
-        "icons/32x32.png",
-        "icons/128x128.png",
-        "icons/128x128@2x.png",
+    "active": true,
+    "createUpdaterArtifacts": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico",
       "icons/icon.png"
@@ -70,8 +70,16 @@
       "nsis": {
         "installerIcon": "icons/icon.ico",
         "installMode": "perMachine",
-        "languages": ["SimpChinese", "English"],
-        "displayLanguageSelector": true
+        "languages": [
+          "SimpChinese",
+          "English"
+        ],
+        "displayLanguageSelector": true,
+        "template": "nsis/installer.nsi",
+        "customLanguageFiles": {
+          "SimpChinese": "nsis/languages/SimpChinese.nsh",
+          "English": "nsis/languages/English.nsh"
+        }
       }
     }
   }
