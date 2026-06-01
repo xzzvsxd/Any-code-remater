@@ -69,7 +69,7 @@ function mapCodexToolName(codexName: string): string {
   return CODEX_TOOL_NAME_MAP[lowerName] || codexName;
 }
 
-function parseCodexRateLimitEntry(raw: any, fallbackWindowMinutes: number): CodexRateLimit | undefined {
+function parseCodexRateLimitEntry(raw: LegacyAny, fallbackWindowMinutes: number): CodexRateLimit | undefined {
   if (!raw || typeof raw !== 'object') {
     return undefined;
   }
@@ -106,7 +106,7 @@ function parseCodexRateLimitEntry(raw: any, fallbackWindowMinutes: number): Code
   };
 }
 
-export function parseCodexRateLimits(raw: any, updatedAt: string): CodexRateLimits | null {
+export function parseCodexRateLimits(raw: LegacyAny, updatedAt: string): CodexRateLimits | null {
   if (!raw || typeof raw !== 'object') {
     return null;
   }
@@ -143,7 +143,7 @@ export function parseCodexRateLimits(raw: any, updatedAt: string): CodexRateLimi
   return rateLimits;
 }
 
-export function extractCodexRateLimitsFromEvent(event: any): CodexRateLimits | null {
+export function extractCodexRateLimitsFromEvent(event: LegacyAny): CodexRateLimits | null {
   if (!event || typeof event !== 'object') {
     return null;
   }
@@ -260,8 +260,8 @@ export class CodexEventConverter {
             subtype: 'init',
             result: `Codex session started`,
             session_id: event.thread_id, // ← Important: frontend will extract this
-            timestamp: (event as any).timestamp || new Date().toISOString(),
-            receivedAt: (event as any).timestamp || new Date().toISOString(),
+            timestamp: (event as LegacyAny).timestamp || new Date().toISOString(),
+            receivedAt: (event as LegacyAny).timestamp || new Date().toISOString(),
           };
 
         case 'turn.started':
@@ -310,8 +310,8 @@ export class CodexEventConverter {
 
         case 'session_meta':
           // Return init message
-          if (typeof (event as any)?.payload?.model === 'string') {
-            this.activeModel = (event as any).payload.model;
+          if (typeof (event as LegacyAny)?.payload?.model === 'string') {
+            this.activeModel = (event as LegacyAny).payload.model;
           }
           return {
             type: 'system',
@@ -331,13 +331,13 @@ export class CodexEventConverter {
 
         case 'turn_context':
           // Turn context events are metadata, don't display
-          if (typeof (event as any)?.payload?.model === 'string') {
-            this.activeModel = (event as any).payload.model;
+          if (typeof (event as LegacyAny)?.payload?.model === 'string') {
+            this.activeModel = (event as LegacyAny).payload.model;
           }
           return null;
 
         default:
-          console.warn('[CodexConverter] Unknown event type:', (event as any).type, 'Full event:', event);
+          console.warn('[CodexConverter] Unknown event type:', (event as LegacyAny).type, 'Full event:', event);
           return null;
       }
   }
@@ -385,7 +385,7 @@ export class CodexEventConverter {
 
   private convertTokenCountEvent(event: import('@/types/codex').CodexEvent): ClaudeStreamMessage | null {
     const ts = event.timestamp || new Date().toISOString();
-    const payload: any = (event as any).payload;
+    const payload: LegacyAny = (event as LegacyAny).payload;
 
     const info = payload?.info;
     if (!info || typeof info !== 'object') {
@@ -463,7 +463,7 @@ export class CodexEventConverter {
         usage: totalUsage || deltaUsage,
         rateLimits,
         modelContextWindow,
-      } as any,
+      } as LegacyAny,
     };
   }
 
@@ -479,7 +479,7 @@ export class CodexEventConverter {
     }
 
     // Handle different response_item payload types
-    const payloadType = (payload as any).type;
+    const payloadType = (payload as LegacyAny).type;
 
     if (payloadType === 'function_call') {
       // Tool use (function call)
@@ -519,7 +519,7 @@ export class CodexEventConverter {
 
     // Filter out system environment context messages from user
     if (payload.role === 'user' && payload.content) {
-      const isEnvContext = payload.content.some((c: any) =>
+      const isEnvContext = payload.content.some((c: LegacyAny) =>
         c.type === 'input_text' && c.text && (
           c.text.includes('<environment_context>') ||
           c.text.includes('# AGENTS.md instructions')
@@ -534,7 +534,7 @@ export class CodexEventConverter {
     // Map payload to Claude message structure
     // Note: Codex uses 'input_text' for user messages and 'output_text' for assistant messages
     // Claude uses 'text' for both
-    const content = payload.content?.map((c: any) => ({
+    const content = payload.content?.map((c: LegacyAny) => ({
       ...c,
       type: c.type === 'input_text' || c.type === 'output_text' ? 'text' : c.type
     })) || [];
@@ -545,7 +545,7 @@ export class CodexEventConverter {
       return null;
     }
 
-    const hasNonEmptyContent = content.some((c: any) => {
+    const hasNonEmptyContent = content.some((c: LegacyAny) => {
       if (c.type === 'text') {
         return c.text && c.text.trim().length > 0;
       }
@@ -577,13 +577,13 @@ export class CodexEventConverter {
   /**
    * Converts function_call response_item to tool_use message
    */
-  private parseToolArgumentsSafe(rawArguments: unknown): Record<string, any> {
+  private parseToolArgumentsSafe(rawArguments: unknown): Record<string, LegacyAny> {
     if (!rawArguments) {
       return {};
     }
 
     if (typeof rawArguments === 'object') {
-      return rawArguments as Record<string, any>;
+      return rawArguments as Record<string, LegacyAny>;
     }
 
     if (typeof rawArguments !== 'string') {
@@ -601,7 +601,7 @@ export class CodexEventConverter {
     }
   }
 
-  private convertFunctionCall(event: any): ClaudeStreamMessage {
+  private convertFunctionCall(event: LegacyAny): ClaudeStreamMessage {
     const payload = event.payload;
     const rawToolName = payload.name || 'unknown_tool';
     // Map Codex tool names to Claude Code equivalents for consistent rendering
@@ -641,7 +641,7 @@ export class CodexEventConverter {
    * We return a message with tool_result so it gets added to toolResults Map,
    * but mark it with _toolResultOnly so UI can filter it out from display.
    */
-  private convertFunctionCallOutput(event: any): ClaudeStreamMessage {
+  private convertFunctionCallOutput(event: LegacyAny): ClaudeStreamMessage {
     const payload = event.payload;
     const callId = payload.call_id || `call_${Date.now()}`;
     const output = payload.output || '';
@@ -692,7 +692,7 @@ export class CodexEventConverter {
    *   "input": "*** Begin Patch\n*** Update File: path/to/file\n..."
    * }
    */
-  private convertCustomToolCall(event: any): ClaudeStreamMessage {
+  private convertCustomToolCall(event: LegacyAny): ClaudeStreamMessage {
     const payload = event.payload;
     const rawToolName = payload.name || 'unknown_tool';
     const toolName = mapCodexToolName(rawToolName);
@@ -700,7 +700,7 @@ export class CodexEventConverter {
     const input = payload.input || '';
 
     // Parse apply_patch input to extract file path and changes
-    let normalizedInput: Record<string, any> = { raw_input: input };
+    let normalizedInput: Record<string, LegacyAny> = { raw_input: input };
 
     if (rawToolName === 'apply_patch' && typeof input === 'string') {
       // Extract file path from patch format: "*** Update File: path/to/file"
@@ -769,7 +769,7 @@ export class CodexEventConverter {
    * so it gets added to toolResults Map, but mark it with _toolResultOnly
    * so UI can filter it out from display.
    */
-  private convertCustomToolCallOutput(event: any): ClaudeStreamMessage {
+  private convertCustomToolCallOutput(event: LegacyAny): ClaudeStreamMessage {
     const payload = event.payload;
     const callId = payload.call_id || `call_${Date.now()}`;
     const output = payload.output || '';
@@ -812,12 +812,12 @@ export class CodexEventConverter {
   /**
    * Converts reasoning response_item to thinking message
    */
-  private convertReasoningPayload(event: any): ClaudeStreamMessage {
+  private convertReasoningPayload(event: LegacyAny): ClaudeStreamMessage {
     const payload = event.payload;
 
     // Extract summary text if available
     const summaryText = payload.summary
-      ?.map((s: any) => s.text || s.summary_text)
+      ?.map((s: LegacyAny) => s.text || s.summary_text)
       .filter(Boolean)
       .join('\n') || '';
 
@@ -870,7 +870,7 @@ export class CodexEventConverter {
         return this.convertTodoList(item, phase, metadata, eventTimestamp);
 
       default:
-        console.warn('[CodexConverter] Unknown item type:', (item as any).type, 'Full item:', item);
+        console.warn('[CodexConverter] Unknown item type:', (item as LegacyAny).type, 'Full item:', item);
         return null;
     }
   }
@@ -998,14 +998,14 @@ export class CodexEventConverter {
     const toolName = item.change_type === 'create' ? 'write' : item.change_type === 'delete' ? 'bash' : 'edit';
 
     // Collect rich input so UI can show paths & diffs
-    const inputPayload: Record<string, any> = {
+    const inputPayload: Record<string, LegacyAny> = {
       file_path: item.file_path,
       change_type: item.change_type,
     };
     if (item.content) inputPayload.content = item.content;
-    if ((item as any).diff) inputPayload.diff = (item as any).diff;
-    if ((item as any).patch) inputPayload.patch = (item as any).patch;
-    if ((item as any).lines_changed) inputPayload.lines_changed = (item as any).lines_changed;
+    if ((item as LegacyAny).diff) inputPayload.diff = (item as LegacyAny).diff;
+    if ((item as LegacyAny).patch) inputPayload.patch = (item as LegacyAny).patch;
+    if ((item as LegacyAny).lines_changed) inputPayload.lines_changed = (item as LegacyAny).lines_changed;
 
     const toolUseBlock = {
       type: 'tool_use',
@@ -1055,7 +1055,7 @@ export class CodexEventConverter {
 
   private buildFileChangeSummary(item: CodexFileChangeItem): string {
     const header = `File ${item.change_type}: ${item.file_path}`;
-    const diff = (item as any).patch || (item as any).diff || '';
+    const diff = (item as LegacyAny).patch || (item as LegacyAny).diff || '';
     const content = item.content || '';
     const snippetSource = diff || content;
     if (!snippetSource) return header;
@@ -1069,7 +1069,7 @@ export class CodexEventConverter {
    * Only called when phase === 'completed'
    */
   private convertMcpToolCall(
-    item: any, // Use any to handle actual Codex format
+    item: LegacyAny, // Use any to handle actual Codex format
     _phase: string,
     metadata: CodexMessageMetadata,
     eventTimestamp?: string
@@ -1090,8 +1090,8 @@ export class CodexEventConverter {
       // MCP result format: { content: [{ text: "..." }], ... }
       if (output.content && Array.isArray(output.content)) {
         resultText = output.content
-          .filter((c: any) => c.type === 'text' || c.text)
-          .map((c: any) => c.text)
+          .filter((c: LegacyAny) => c.type === 'text' || c.text)
+          .map((c: LegacyAny) => c.text)
           .join('\n');
       } else {
         resultText = JSON.stringify(output, null, 2);
@@ -1251,7 +1251,7 @@ export class CodexEventConverter {
    * Reference: https://hexdocs.pm/codex_sdk/05-api-reference.html
    */
   private createCumulativeUsageMessage(
-    event: any,
+    event: LegacyAny,
     eventTimestamp?: string,
     rateLimits?: CodexRateLimits | null
   ): ClaudeStreamMessage {

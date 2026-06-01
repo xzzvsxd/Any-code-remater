@@ -16,7 +16,7 @@ export interface WebFetchWidgetProps {
   /** 分析提示（可选） */
   prompt?: string;
   /** 工具结果 */
-  result?: any;
+  result?: LegacyAny;
 }
 
 /**
@@ -38,7 +38,7 @@ export const WebFetchWidget: React.FC<WebFetchWidgetProps> = ({
 
   // 提取结果内容
   let fetchedContent = '';
-  let isLoading = !result;
+  const isLoading = !result;
   let hasError = false;
 
   if (result) {
@@ -49,7 +49,7 @@ export const WebFetchWidget: React.FC<WebFetchWidgetProps> = ({
         fetchedContent = result.content.text;
       } else if (Array.isArray(result.content)) {
         fetchedContent = result.content
-          .map((c: any) => (typeof c === 'string' ? c : c.text || JSON.stringify(c)))
+          .map((c: LegacyAny) => (typeof c === 'string' ? c : c.text || JSON.stringify(c)))
           .join('\n');
       } else {
         fetchedContent = JSON.stringify(result.content, null, 2);

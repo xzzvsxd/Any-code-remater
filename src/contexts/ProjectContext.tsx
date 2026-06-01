@@ -60,7 +60,7 @@ const sortSessionsByActivity = (sessionList: Session[]) => {
 };
 
 const codexSessionToProjectSession = (
-  session: any,
+  session: LegacyAny,
   projectId: string,
   fallbackProjectPath: string
 ): Session => ({
@@ -74,7 +74,7 @@ const codexSessionToProjectSession = (
   last_message_timestamp: session.lastMessageTimestamp,
 });
 
-const getCodexSessionActivitySeconds = (session: any): number => {
+const getCodexSessionActivitySeconds = (session: LegacyAny): number => {
   if (session.lastMessageTimestamp) {
     const parsed = new Date(session.lastMessageTimestamp).getTime();
     if (Number.isFinite(parsed)) return parsed / 1000;
@@ -108,7 +108,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [mutationLoading, setMutationLoading] = useState(false);
   const [sessionsLoadProgress, setSessionsLoadProgress] = useState<SessionsLoadProgress>(idleSessionsLoadProgress);
   const [error, setError] = useState<string | null>(null);
-  const codexSessionsCacheRef = useRef<{ value: any[]; expiresAt: number } | null>(null);
+  const codexSessionsCacheRef = useRef<{ value: LegacyAny[]; expiresAt: number } | null>(null);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshPromiseRef = useRef<Promise<void> | null>(null);
   const sessionLoadRequestRef = useRef(0);

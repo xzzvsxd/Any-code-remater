@@ -24,6 +24,7 @@ import { InputArea } from "./InputArea";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { ControlBar } from "./ControlBar";
 import { ExpandedModal } from "./ExpandedModal";
+import { useStableCallback } from "@/hooks/useStableCallback";
 
 // Re-export types for external use
 export type { FloatingPromptInputRef, FloatingPromptInputProps, ThinkingMode, ModelType, ExecutionStatusInfo } from "./types";
@@ -183,7 +184,7 @@ const FloatingPromptInputInner = (
     if (externalJson !== JSON.stringify(state.executionEngineConfig)) {
       dispatch({ type: "SET_EXECUTION_ENGINE_CONFIG", payload: externalEngineConfig });
     }
-  }, [externalEngineConfig]);
+  }, [externalEngineConfig, state.executionEngineConfig]);
 
   // Persist execution engine config
   useEffect(() => {
@@ -443,7 +444,10 @@ const FloatingPromptInputInner = (
   }));
 
   // Toggle thinking mode - cycle through: off → high → max → low → medium → off
-  const EFFORT_CYCLE: (ThinkingEffort | 'off')[] = ['off', 'high', 'xhigh', 'max', 'low', 'medium'];
+  const EFFORT_CYCLE = useMemo<(ThinkingEffort | 'off')[]>(
+    () => ['off', 'high', 'xhigh', 'max', 'low', 'medium'],
+    []
+  );
 
   const handleToggleThinkingMode = useCallback(async () => {
     const currentMode = state.selectedThinkingMode;
@@ -482,7 +486,7 @@ const FloatingPromptInputInner = (
         // Ignore localStorage errors
       }
     }
-  }, [state.selectedThinkingMode, state.selectedThinkingEffort]);
+  }, [state.selectedThinkingMode, state.selectedThinkingEffort, EFFORT_CYCLE]);
 
   // Focus management
   useEffect(() => {
@@ -494,7 +498,7 @@ const FloatingPromptInputInner = (
   }, [state.isExpanded]);
 
   // Auto-resize textarea
-  const adjustTextareaHeight = (textarea: HTMLTextAreaElement | null) => {
+  const adjustTextareaHeight = useStableCallback((textarea: HTMLTextAreaElement | null) => {
     if (!textarea) return;
     textarea.style.height = 'auto';
     const maxHeight = state.isExpanded ? 600 : 300;
@@ -503,12 +507,12 @@ const FloatingPromptInputInner = (
     if (textarea.scrollHeight > maxHeight) {
       textarea.scrollTop = textarea.scrollHeight;
     }
-  };
+  });
 
   useEffect(() => {
     const textarea = state.isExpanded ? expandedTextareaRef.current : textareaRef.current;
     adjustTextareaHeight(textarea);
-  }, [state.prompt, state.isExpanded]);
+  }, [state.prompt, state.isExpanded, adjustTextareaHeight]);
 
   // Tab key listener - 🆕 只在没有建议时切换 thinking mode
   useEffect(() => {
@@ -625,7 +629,7 @@ const FloatingPromptInputInner = (
       // 4. compositionend 后的冷却期（某些输入法需要较长时间）
       const timeSinceCompositionEnd = Date.now() - compositionEndTimeRef.current;
       const inCooldown = timeSinceCompositionEnd < 200; // 200ms 冷却期（增加以兼容更多输入法）
-      const isIMEProcessing = e.nativeEvent.keyCode === 229 || (e.nativeEvent as any).which === 229;
+      const isIMEProcessing = e.nativeEvent.keyCode === 229 || (e.nativeEvent as LegacyAny).which === 229;
 
       if (!isComposing && !e.nativeEvent.isComposing && !isIMEProcessing && !inCooldown) {
         e.preventDefault();

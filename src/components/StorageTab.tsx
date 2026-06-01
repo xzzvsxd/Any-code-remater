@@ -45,6 +45,7 @@ import {
 import { api } from "@/lib/api";
 import { useTranslation } from "@/hooks/useTranslation";
 import { Toast, ToastContainer } from "./ui/toast";
+import { useStableCallback } from "@/hooks/useStableCallback";
 
 interface TableInfo {
   name: string;
@@ -64,7 +65,7 @@ interface ColumnInfo {
 interface TableData {
   table_name: string;
   columns: ColumnInfo[];
-  rows: Record<string, any>[];
+  rows: Record<string, LegacyAny>[];
   total_rows: number;
   page: number;
   page_size: number;
@@ -73,7 +74,7 @@ interface TableData {
 
 interface QueryResult {
   columns: string[];
-  rows: any[][];
+  rows: LegacyAny[][];
   rows_affected?: number;
   last_insert_rowid?: number;
 }
@@ -93,9 +94,9 @@ export const StorageTab: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   // Dialog states
-  const [editingRow, setEditingRow] = useState<Record<string, any> | null>(null);
-  const [newRow, setNewRow] = useState<Record<string, any> | null>(null);
-  const [deletingRow, setDeletingRow] = useState<Record<string, any> | null>(null);
+  const [editingRow, setEditingRow] = useState<Record<string, LegacyAny> | null>(null);
+  const [newRow, setNewRow] = useState<Record<string, LegacyAny> | null>(null);
+  const [deletingRow, setDeletingRow] = useState<Record<string, LegacyAny> | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showSqlEditor, setShowSqlEditor] = useState(false);
   const [sqlQuery, setSqlQuery] = useState("");
@@ -106,23 +107,7 @@ export const StorageTab: React.FC = () => {
   /**
    * Load all tables on mount
    */
-  useEffect(() => {
-    loadTables();
-  }, []);
-
-  /**
-   * Load table data when selected table changes
-   */
-  useEffect(() => {
-    if (selectedTable) {
-      loadTableData(1);
-    }
-  }, [selectedTable]);
-
-  /**
-   * Load all tables from the database
-   */
-  const loadTables = async () => {
+  const loadTables = useStableCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -137,12 +122,15 @@ export const StorageTab: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  });
+useEffect(() => {
+    loadTables();
+  }, [loadTables]);
 
   /**
-   * Load data for the selected table
+   * Load table data when selected table changes
    */
-  const loadTableData = async (page: number, search?: string) => {
+  const loadTableData = useStableCallback(async (page: number, search?: string) => {
     if (!selectedTable) return;
 
     try {
@@ -162,7 +150,20 @@ export const StorageTab: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  });
+useEffect(() => {
+    if (selectedTable) {
+      loadTableData(1);
+    }
+  }, [loadTableData, selectedTable]);
+
+  /**
+   * Load all tables from the database
+   */
+
+  /**
+   * Load data for the selected table
+   */
 
   /**
    * Handle search
@@ -172,17 +173,17 @@ export const StorageTab: React.FC = () => {
       setSearchQuery(value);
       loadTableData(1, value);
     },
-    [selectedTable]
+    [loadTableData]
   );
 
   /**
    * Get primary key values for a row
    */
-  const getPrimaryKeyValues = (row: Record<string, any>): Record<string, any> => {
+  const getPrimaryKeyValues = (row: Record<string, LegacyAny>): Record<string, LegacyAny> => {
     if (!tableData) return {};
     
     const pkColumns = tableData.columns.filter(col => col.pk);
-    const pkValues: Record<string, any> = {};
+    const pkValues: Record<string, LegacyAny> = {};
     
     pkColumns.forEach(col => {
       pkValues[col.name] = row[col.name];
@@ -194,7 +195,7 @@ export const StorageTab: React.FC = () => {
   /**
    * Handle row update
    */
-  const handleUpdateRow = async (updates: Record<string, any>) => {
+  const handleUpdateRow = async (updates: Record<string, LegacyAny>) => {
     if (!editingRow || !selectedTable) return;
 
     try {
@@ -234,7 +235,7 @@ export const StorageTab: React.FC = () => {
   /**
    * Handle new row insertion
    */
-  const handleInsertRow = async (values: Record<string, any>) => {
+  const handleInsertRow = async (values: Record<string, LegacyAny>) => {
     if (!selectedTable) return;
 
     try {
@@ -305,7 +306,7 @@ export const StorageTab: React.FC = () => {
   /**
    * Format cell value for display
    */
-  const formatCellValue = (value: any, maxLength: number = 100): string => {
+  const formatCellValue = (value: LegacyAny, maxLength: number = 100): string => {
     if (value === null) return "NULL";
     if (value === undefined) return "";
     if (typeof value === "boolean") return value ? "true" : "false";

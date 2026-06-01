@@ -5,7 +5,7 @@ import { ImagePreview } from "../ImagePreview";
 
 interface AttachmentPreviewProps {
   imageAttachments: Array<{ id: string; previewUrl: string; filePath: string }>;
-  embeddedImages: Array<any>;
+  embeddedImages: Array<LegacyAny>;
   onRemoveAttachment: (id: string) => void;
   onRemoveEmbedded: (index: number) => void;
   className?: string;

@@ -20,6 +20,7 @@ import { cn } from '@/lib/utils';
 import { Toast, ToastContainer } from '@/components/ui/toast';
 import type { Project } from '@/lib/api';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useStableCallback } from "@/hooks/useStableCallback";
 
 interface ProjectSettingsProps {
   project: Project;
@@ -39,11 +40,7 @@ export const ProjectSettings: React.FC<ProjectSettingsProps> = ({
   // Other hooks settings
   const [gitIgnoreLocal, setGitIgnoreLocal] = useState(true);
 
-  useEffect(() => {
-    checkGitIgnore();
-  }, [project]);
-
-  const checkGitIgnore = async () => {
+  const checkGitIgnore = useStableCallback(async () => {
     try {
       // Check if .claude/settings.local.json is in .gitignore
       const gitignorePath = `${project.path}/.gitignore`;
@@ -53,7 +50,11 @@ export const ProjectSettings: React.FC<ProjectSettingsProps> = ({
       // .gitignore might not exist
       setGitIgnoreLocal(false);
     }
-  };
+  });
+useEffect(() => {
+    checkGitIgnore();
+  }, [checkGitIgnore, project]);
+
 
   const addToGitIgnore = async () => {
     try {

@@ -89,7 +89,7 @@ export function getRenderableAiContent(message: ClaudeStreamMessage): Renderable
   if (typeof content === 'string') {
     addText(content);
   } else if (Array.isArray(content)) {
-    content.forEach((item: any) => {
+    content.forEach((item: LegacyAny) => {
       if (!item || typeof item !== 'object') {
         return;
       }

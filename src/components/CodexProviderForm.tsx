@@ -171,7 +171,7 @@ export default function CodexProviderForm({
       setLoading(true);
 
       // 构建最终的 auth 和 config
-      let finalAuth: Record<string, any>;
+      let finalAuth: Record<string, LegacyAny>;
       let finalConfig: string;
 
       try {

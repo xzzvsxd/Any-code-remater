@@ -33,7 +33,7 @@ export interface ClaudeStreamMessage {
     id: string;
     type: string;
     role: string;
-    content: any[];
+    content: LegacyAny[];
     model: string;
     stop_reason: string | null;
     stop_sequence: string | null;
@@ -180,7 +180,7 @@ export class ClaudeSDKService {
     const maxTokens = options.maxTokens || this.config.maxTokens!;
 
     // 构建请求体
-    const requestBody: any = {
+    const requestBody: LegacyAny = {
       model,
       max_tokens: maxTokens,
       messages: messages.map(msg => ({
@@ -217,7 +217,7 @@ export class ClaudeSDKService {
       const data = await response.json();
 
       // 解析响应
-      const textContent = data.content?.find((c: any) => c.type === 'text');
+      const textContent = data.content?.find((c: LegacyAny) => c.type === 'text');
 
       return {
         id: data.id || 'direct-response',
@@ -250,7 +250,7 @@ export class ClaudeSDKService {
       systemPrompt?: string;
       onTokenUsage?: (usage: { input_tokens: number; output_tokens: number; cache_read_tokens?: number }) => void;
     } = {}
-  ): AsyncGenerator<{ type: 'content' | 'usage' | 'done'; content?: string; usage?: any; response?: ClaudeResponse }, void, unknown> {
+  ): AsyncGenerator<{ type: 'content' | 'usage' | 'done'; content?: string; usage?: LegacyAny; response?: ClaudeResponse }, void, unknown> {
     await this.ensureInitialized();
 
     if (!this.client) {
@@ -276,7 +276,7 @@ export class ClaudeSDKService {
 
       let fullContent = '';
       let messageId = '';
-      let usage: any = null;
+      let usage: LegacyAny = null;
 
       for await (const chunk of stream) {
         switch (chunk.type) {

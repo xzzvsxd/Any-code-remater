@@ -24,7 +24,7 @@ interface StreamMessageV2Props {
 }
 
 // Message renderer strategy map
-const MESSAGE_RENDERERS: Record<string, React.FC<any>> = {
+const MESSAGE_RENDERERS: Record<string, React.FC<LegacyAny>> = {
   user: UserMessage,
   assistant: AIMessage,
   system: SystemMessage,
@@ -97,7 +97,7 @@ const StreamMessageV2Component: React.FC<StreamMessageV2Props> = ({
       if (!messages || messages.length === 0) return null;
 
       const baseMessage = messages[0];
-      const aggregatedContent: any[] = [];
+      const aggregatedContent: LegacyAny[] = [];
 
       messages.forEach(msg => {
         // 提取 assistant 消息的内容
@@ -108,7 +108,7 @@ const StreamMessageV2Component: React.FC<StreamMessageV2Props> = ({
         else if (msg.type === 'thinking') {
           aggregatedContent.push({
             type: 'thinking',
-            thinking: (msg as any).content || ''
+            thinking: (msg as LegacyAny).content || ''
           });
         }
       });
@@ -144,14 +144,14 @@ const StreamMessageV2Component: React.FC<StreamMessageV2Props> = ({
   }
 
   // 对仅包含空 tool_result 的消息进行过滤，避免出现空白气泡
-  const contentItems = (message as any)?.message?.content;
-  if ((message as any)._toolResultOnly) {
+  const contentItems = (message as LegacyAny)?.message?.content;
+  if ((message as LegacyAny)._toolResultOnly) {
     const isToolResults =
       Array.isArray(contentItems) &&
-      contentItems.every((c: any) => c?.type === 'tool_result');
+      contentItems.every((c: LegacyAny) => c?.type === 'tool_result');
 
     if (isToolResults) {
-      const hasNonEmpty = contentItems.some((c: any) => {
+      const hasNonEmpty = contentItems.some((c: LegacyAny) => {
         const val = c?.content;
         if (val == null) return false;
         if (typeof val === 'string') return val.trim().length > 0;
@@ -168,7 +168,7 @@ const StreamMessageV2Component: React.FC<StreamMessageV2Props> = ({
     }
   }
 
-  const messageType = (message as ClaudeStreamMessage & { type?: string }).type ?? (message as any).type;
+  const messageType = (message as ClaudeStreamMessage & { type?: string }).type ?? (message as LegacyAny).type;
 
   // Handle special cases
   if (messageType === 'thinking') {
@@ -181,7 +181,7 @@ const StreamMessageV2Component: React.FC<StreamMessageV2Props> = ({
             content: [
               {
                 type: 'thinking',
-                thinking: (message as any).content || ''
+                thinking: (message as LegacyAny).content || ''
               }
             ]
           }
@@ -248,13 +248,13 @@ const isMessageEqual = (prev: ClaudeStreamMessage | undefined, next: ClaudeStrea
   if (prev.type !== next.type) return false;
 
   // 比较消息 ID（如果存在）
-  const prevId = (prev as any).id;
-  const nextId = (next as any).id;
+  const prevId = (prev as LegacyAny).id;
+  const nextId = (next as LegacyAny).id;
   if (prevId && nextId && prevId !== nextId) return false;
 
   // 比较时间戳（如果存在）
-  const prevTimestamp = (prev as any).timestamp;
-  const nextTimestamp = (next as any).timestamp;
+  const prevTimestamp = (prev as LegacyAny).timestamp;
+  const nextTimestamp = (next as LegacyAny).timestamp;
   if (prevTimestamp !== nextTimestamp) return false;
 
   // 比较内容数组长度

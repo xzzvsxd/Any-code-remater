@@ -35,7 +35,7 @@ export type HookEvent = keyof HooksConfiguration;
 
 export interface ClaudeSettingsWithHooks {
   hooks?: HooksConfiguration;
-  [key: string]: any;
+  [key: string]: LegacyAny;
 }
 
 export interface HookValidationError {
@@ -98,7 +98,7 @@ export const HOOK_TEMPLATES: HookTemplate[] = [
     description: 'Log all bash commands to a file for auditing',
     event: 'PreToolUse',
     matcher: 'Bash',
-    commands: ['jq -r \'"\(.tool_input.command) - \(.tool_input.description // "No description")"\' >> ~/.claude/bash-command-log.txt']
+    commands: [String.raw`jq -r '"\(.tool_input.command) - \(.tool_input.description // "No description")"' >> ~/.claude/bash-command-log.txt`]
   },
   {
     id: 'format-on-save',

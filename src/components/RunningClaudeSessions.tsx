@@ -40,7 +40,7 @@ export const RunningClaudeSessions: React.FC<RunningClaudeSessionsProps> = ({
         await loadRunningSessions();
 
         // 监听 claude-session-state 事件进行实时更新
-        unlistenFn = await listen<any>('claude-session-state', async () => {
+        unlistenFn = await listen<LegacyAny>('claude-session-state', async () => {
           // 会话状态变化时，重新加载列表
           await loadRunningSessions();
         });

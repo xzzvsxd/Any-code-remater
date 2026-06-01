@@ -48,7 +48,7 @@ export const MCPImportExport: React.FC<MCPImportExportProps> = ({
       let jsonData;
       try {
         jsonData = JSON.parse(textInput);
-      } catch (e) {
+      } catch {
         onError("无效的 JSON 格式。请检查输入格式。");
         return;
       }
@@ -82,7 +82,7 @@ export const MCPImportExport: React.FC<MCPImportExportProps> = ({
           const serverSpec = jsonData as MCPServerSpec;
           await api.mcpUpsertServer(name, name, serverSpec, importApps);
           onImportCompleted(1, 0);
-        } catch (e) {
+        } catch {
           onError("Failed to import server");
         }
       } else {
@@ -114,7 +114,7 @@ export const MCPImportExport: React.FC<MCPImportExportProps> = ({
       let jsonData;
       try {
         jsonData = JSON.parse(content);
-      } catch (e) {
+      } catch {
         onError("无效的 JSON 文件。请检查格式。");
         return;
       }
@@ -146,7 +146,7 @@ export const MCPImportExport: React.FC<MCPImportExportProps> = ({
           const serverSpec = jsonData as MCPServerSpec;
           await api.mcpUpsertServer(name, name, serverSpec, importApps);
           onImportCompleted(1, 0);
-        } catch (e) {
+        } catch {
           onError("Failed to import server");
         }
       } else {
@@ -186,7 +186,7 @@ export const MCPImportExport: React.FC<MCPImportExportProps> = ({
       URL.revokeObjectURL(url);
       
       onError("✅ MCP服务器配置导出成功！文件已保存到下载文件夹。");
-    } catch (error: any) {
+    } catch (error: LegacyAny) {
       console.error("Failed to export MCP configuration:", error);
       onError(`导出MCP配置失败: ${error.toString()}`);
     }

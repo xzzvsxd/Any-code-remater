@@ -53,7 +53,7 @@ export const SummaryWidget: React.FC<SummaryWidgetProps> = ({
   const displaySummary = translatedSummary || summary;
 
   // 格式化 Token 使用情况
-  const formatTokenUsage = (usage: any) => {
+  const formatTokenUsage = (usage: LegacyAny) => {
     if (!usage) return null;
 
     const { input_tokens = 0, output_tokens = 0, cache_creation_tokens = 0, cache_read_tokens = 0 } = usage;

@@ -53,7 +53,7 @@ export class HooksManager {
       }
       
       if (matchers.length > 0) {
-        (merged as any)[event] = matchers;
+        (merged as LegacyAny)[event] = matchers;
       }
     }
     

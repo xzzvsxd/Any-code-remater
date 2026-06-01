@@ -15,7 +15,7 @@ export interface WebSearchWidgetProps {
   /** 搜索查询 */
   query: string;
   /** 工具结果 */
-  result?: any;
+  result?: LegacyAny;
 }
 
 interface ParsedSection {
@@ -69,7 +69,7 @@ export const WebSearchWidget: React.FC<WebSearchWidgetProps> = ({
         if (remainingText) {
           sections.push({ type: 'text', content: remainingText });
         }
-      } catch (e) {
+      } catch {
         // 解析失败，作为文本处理
         sections.push({ type: 'text', content: 'Links: [' + part });
       }
@@ -89,7 +89,7 @@ export const WebSearchWidget: React.FC<WebSearchWidgetProps> = ({
   };
 
   // 提取并解析结果
-  let searchResults: {
+  const searchResults: {
     sections: ParsedSection[];
     noResults: boolean;
   } = { sections: [], noResults: false };
@@ -103,7 +103,7 @@ export const WebSearchWidget: React.FC<WebSearchWidgetProps> = ({
         resultContent = result.content.text;
       } else if (Array.isArray(result.content)) {
         resultContent = result.content
-          .map((c: any) => (typeof c === 'string' ? c : c.text || JSON.stringify(c)))
+          .map((c: LegacyAny) => (typeof c === 'string' ? c : c.text || JSON.stringify(c)))
           .join('\n');
       } else {
         resultContent = JSON.stringify(result.content, null, 2);

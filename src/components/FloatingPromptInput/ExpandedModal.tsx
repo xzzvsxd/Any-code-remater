@@ -20,7 +20,7 @@ interface ExpandedModalProps {
   prompt: string;
   disabled?: boolean;
   imageAttachments: Array<{ id: string; previewUrl: string; filePath: string }>;
-  embeddedImages: Array<any>;
+  embeddedImages: Array<LegacyAny>;
   executionEngineConfig: ExecutionEngineConfig;
   setExecutionEngineConfig: (config: ExecutionEngineConfig) => void;
   selectedModel: ModelType;
@@ -37,7 +37,7 @@ interface ExpandedModalProps {
   setEnableProjectContext: (enable: boolean) => void;
   enableDualAPI: boolean;
   setEnableDualAPI: (enable: boolean) => void;
-  getEnabledProviders: () => any[];
+  getEnabledProviders: () => LegacyAny[];
   handleEnhancePromptWithAPI: (id: string) => void;
   onClose: () => void;
   onRemoveAttachment: (id: string) => void;

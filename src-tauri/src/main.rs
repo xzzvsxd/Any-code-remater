@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod claude_binary;
+mod claude_binary_discovery;
 mod commands;
 mod process;
 mod utils; // 新增：通用工具模块

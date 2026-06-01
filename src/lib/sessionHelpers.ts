@@ -34,7 +34,7 @@ export interface PreviewState {
 export interface MessageContentPart {
   type: string;
   text?: string | { text: string };
-  [key: string]: any;
+  [key: string]: LegacyAny;
 }
 
 /**
@@ -142,7 +142,7 @@ export async function copyAsMarkdown(
               contentText = content.content.text;
             } else if (Array.isArray(content.content)) {
               contentText = content.content
-                .map((c: any) => (typeof c === 'string' ? c : c.text || JSON.stringify(c)))
+                .map((c: LegacyAny) => (typeof c === 'string' ? c : c.text || JSON.stringify(c)))
                 .join('\n');
             } else {
               contentText = JSON.stringify(content.content, null, 2);
@@ -257,7 +257,7 @@ export function getConversationContext(
   const meaningfulMessages = messages.filter(msg => {
     // UI-only terminal/error events are persisted for the frontend, but must
     // never be fed back into prompt enhancement or the next AI request.
-    if ((msg as any).excludeFromAiContext === true || (msg as any).uiOnly === true) return false;
+    if ((msg as LegacyAny).excludeFromAiContext === true || (msg as LegacyAny).uiOnly === true) return false;
     if (msg.type === "system" && (
       msg.subtype === "execution-error" ||
       msg.subtype === "execution-cancelled" ||

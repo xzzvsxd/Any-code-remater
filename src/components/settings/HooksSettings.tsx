@@ -6,7 +6,7 @@ import { useTranslation } from "@/hooks/useTranslation";
 interface HooksSettingsProps {
   activeTab: string;
   setUserHooksChanged: (changed: boolean) => void;
-  getUserHooks: React.MutableRefObject<(() => any) | null>;
+  getUserHooks: React.MutableRefObject<(() => LegacyAny) | null>;
 }
 
 export const HooksSettings: React.FC<HooksSettingsProps> = ({

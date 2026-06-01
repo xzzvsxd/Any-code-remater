@@ -170,7 +170,7 @@ class CodexConverterWrapper implements MessageConverter {
   }
 
   convert(msg: unknown): ClaudeStreamMessage | null {
-    return this.converter.convertEventObject(msg as any);
+    return this.converter.convertEventObject(msg as LegacyAny);
   }
 
   convertLine(line: string): ClaudeStreamMessage | null {

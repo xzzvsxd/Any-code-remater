@@ -74,7 +74,7 @@ import {
  * 工具适配器工厂
  * 将旧的 Widget 组件适配到新的 ToolRenderProps 接口
  */
-function createToolAdapter<T extends Record<string, any>>(
+function createToolAdapter<T extends Record<string, LegacyAny>>(
   WidgetComponent: React.FC<T>,
   propsMapper: (renderProps: ToolRenderProps) => T
 ): React.FC<ToolRenderProps> {
@@ -147,7 +147,7 @@ function parseDiffContent(diff: string): { oldContent: string; newContent: strin
  * @param result 原始结果对象
  * @returns 解析后的结果对象，如果无法解析则返回原结果
  */
-function parseGeminiResult(result: any): any {
+function parseGeminiResult(result: LegacyAny): LegacyAny {
   if (!result) return result;
 
   // 检查 result.content
@@ -253,7 +253,7 @@ export function initializeToolRegistry(): void {
       pattern: /^(?:todoread|read[-_]?todos?)$/i,
       render: createToolAdapter(TodoWidget, (props) => {
         // 确保 todos 始终是数组
-        let todos: any[] = [];
+        let todos: LegacyAny[] = [];
         if (Array.isArray(props.input?.todos)) {
           todos = props.input.todos;
         } else if (Array.isArray(props.result?.content)) {
@@ -383,7 +383,7 @@ export function initializeToolRegistry(): void {
         const caption =
           props.input?.caption ||
           props.input?.description ||
-          (typeof props.result?.content === 'object' && (props.result?.content as any)?.caption) ||
+          (typeof props.result?.content === 'object' && (props.result?.content as LegacyAny)?.caption) ||
           undefined;
         return <ViewImageWidget src={src} caption={caption} />;
       },
@@ -699,7 +699,7 @@ export function initializeToolRegistry(): void {
       render: createToolAdapter(SummaryWidget, (props) => ({
         summary: extractStringContent(props.input?.summary ?? props.result?.content ?? ''),
         leafUuid: props.input?.leafUuid ?? props.input?.leaf_uuid ?? props.result?.content?.leafUuid,
-        usage: props.input?.usage ?? (props.result as any)?.usage,
+        usage: props.input?.usage ?? (props.result as LegacyAny)?.usage,
       })),
       description: '会话摘要展示',
     },
@@ -724,7 +724,7 @@ export function initializeToolRegistry(): void {
       render: createToolAdapter(ThinkingWidget, (props) => ({
         thinking: extractStringContent(props.input?.thinking ?? props.result?.content ?? ''),
         signature: props.input?.signature ?? props.result?.content?.signature,
-        usage: props.input?.usage ?? (props.result as any)?.usage,
+        usage: props.input?.usage ?? (props.result as LegacyAny)?.usage,
       })),
       description: 'AI 思考过程展示',
     },

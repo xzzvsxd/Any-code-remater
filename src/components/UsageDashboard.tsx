@@ -29,7 +29,7 @@ interface UsageDashboardProps {
 }
 
 // Cache for storing fetched data
-const dataCache = new Map<string, { data: any; timestamp: number }>();
+const dataCache = new Map<string, { data: LegacyAny; timestamp: number }>();
 const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes cache - increased for better performance
 
 /**
@@ -111,7 +111,7 @@ export const UsageDashboard: React.FC<UsageDashboardProps> = ({ onBack }) => {
   }, []);
 
   // Function to set cached data
-  const setCachedData = useCallback((key: string, data: any) => {
+  const setCachedData = useCallback((key: string, data: LegacyAny) => {
     dataCache.set(key, { data, timestamp: Date.now() });
   }, []);
 
@@ -223,7 +223,7 @@ export const UsageDashboard: React.FC<UsageDashboardProps> = ({ onBack }) => {
         setCachedData(`${cacheKey}-codex`, codexData);
         setCachedData(`${cacheKey}-gemini`, geminiData);
       });
-    } catch (err: any) {
+    } catch (err: LegacyAny) {
       console.error("Failed to load usage stats:", err);
       setError("Failed to load usage statistics. Please try again.");
     } finally {
@@ -334,7 +334,7 @@ export const UsageDashboard: React.FC<UsageDashboardProps> = ({ onBack }) => {
         by_date: (() => {
           // Merge by_date from all engines, grouping by date
           const merged = new Map<string, { date: string; total_cost: number; total_tokens: number; models_used: string[] }>();
-          const addEntries = (entries: any[] | undefined) => {
+          const addEntries = (entries: LegacyAny[] | undefined) => {
             for (const d of (entries || [])) {
               const existing = merged.get(d.date);
               if (existing) {
@@ -480,13 +480,13 @@ export const UsageDashboard: React.FC<UsageDashboardProps> = ({ onBack }) => {
     const byDate = currentStats?.by_date;
     if (!byDate || byDate.length === 0) return null;
 
-    const maxCost = Math.max(...byDate.map((d: any) => d.total_cost), 0);
+    const maxCost = Math.max(...byDate.map((d: LegacyAny) => d.total_cost), 0);
     const halfMaxCost = maxCost / 2;
 
     return {
       maxCost,
       halfMaxCost,
-      bars: byDate.map((day: any) => ({
+      bars: byDate.map((day: LegacyAny) => ({
         ...day,
         heightPercent: maxCost > 0 ? (day.total_cost / maxCost) * 100 : 0,
         date: new Date(day.date.replace(/-/g, '/')),

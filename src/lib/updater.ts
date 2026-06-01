@@ -1,7 +1,7 @@
 import { getVersion } from "@tauri-apps/api/app";
 
 // 可选导入：在未注册插件或非 Tauri 环境下，调用时会抛错，外层需做兜底
-// eslint-disable-next-line @typescript-eslint/consistent-type-imports
+
 import type { Update } from "@tauri-apps/plugin-updater";
 
 
@@ -43,11 +43,11 @@ export type CheckResult =
 
 function mapUpdateHandle(raw: Update): UpdateHandle {
   return {
-    version: (raw as any).version ?? "",
-    notes: (raw as any).notes,
-    date: (raw as any).date,
+    version: (raw as LegacyAny).version ?? "",
+    notes: (raw as LegacyAny).notes,
+    date: (raw as LegacyAny).date,
     async downloadAndInstall(onProgress?: (e: UpdateProgressEvent) => void) {
-      await (raw as any).downloadAndInstall((evt: any) => {
+      await (raw as LegacyAny).downloadAndInstall((evt: LegacyAny) => {
         if (!onProgress) return;
         const mapped: UpdateProgressEvent = {
           event: evt?.event,
@@ -66,14 +66,14 @@ function mapUpdateHandle(raw: Update): UpdateHandle {
         onProgress(mapped);
       });
     },
-    download: (raw as any).download
+    download: (raw as LegacyAny).download
       ? async () => {
-          await (raw as any).download();
+          await (raw as LegacyAny).download();
         }
       : undefined,
-    install: (raw as any).install
+    install: (raw as LegacyAny).install
       ? async () => {
-          await (raw as any).install();
+          await (raw as LegacyAny).install();
         }
       : undefined,
   };
@@ -94,7 +94,7 @@ export async function checkForUpdate(
     // 动态引入，避免在未安装插件时导致打包期问题
     const { check } = await import("@tauri-apps/plugin-updater");
     const currentVersion = await getCurrentVersion();
-    const update = await check({ timeout: opts.timeout ?? 30000 } as any);
+    const update = await check({ timeout: opts.timeout ?? 30000 } as LegacyAny);
     if (!update) {
       return { status: "up-to-date", currentVersion };
     }

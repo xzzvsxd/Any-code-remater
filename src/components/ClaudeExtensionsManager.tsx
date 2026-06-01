@@ -40,6 +40,7 @@ import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { useTranslation } from "@/hooks/useTranslation";
+import { useStableCallback } from "@/hooks/useStableCallback";
 
 interface ClaudeExtensionsManagerProps {
   projectPath?: string;
@@ -222,7 +223,7 @@ export const ClaudeExtensionsManager: React.FC<ClaudeExtensionsManagerProps> = (
   };
 
   // 加载插件
-  const loadPlugins = async () => {
+  const loadPlugins = useStableCallback(async () => {
     try {
       setLoading(true);
       const result = await api.listPlugins(projectPath);
@@ -232,10 +233,10 @@ export const ClaudeExtensionsManager: React.FC<ClaudeExtensionsManagerProps> = (
     } finally {
       setLoading(false);
     }
-  };
+  });
 
   // 加载子代理
-  const loadAgents = async () => {
+  const loadAgents = useStableCallback(async () => {
     try {
       setLoading(true);
       const result = await api.listSubagents(projectPath);
@@ -245,10 +246,10 @@ export const ClaudeExtensionsManager: React.FC<ClaudeExtensionsManagerProps> = (
     } finally {
       setLoading(false);
     }
-  };
+  });
 
   // 加载 Agent Skills
-  const loadSkills = async () => {
+  const loadSkills = useStableCallback(async () => {
     try {
       setLoading(true);
       const result = await api.listAgentSkills(projectPath);
@@ -258,7 +259,7 @@ export const ClaudeExtensionsManager: React.FC<ClaudeExtensionsManagerProps> = (
     } finally {
       setLoading(false);
     }
-  };
+  });
 
   // 打开目录
   const handleOpenPluginsDir = async () => {
@@ -347,7 +348,7 @@ export const ClaudeExtensionsManager: React.FC<ClaudeExtensionsManagerProps> = (
     loadPlugins();
     loadAgents();
     loadSkills();
-  }, [projectPath]);
+  }, [loadAgents, loadPlugins, loadSkills, projectPath]);
 
   return (
     <div className={cn("space-y-4", className)}>

@@ -43,7 +43,7 @@ const stableHash = (value: string): string => {
 };
 
 const getMessageIdentity = (message: ClaudeStreamMessage): string => {
-  const explicitId = (message as any).uiEventId || (message as any).id;
+  const explicitId = (message as LegacyAny).uiEventId || (message as LegacyAny).id;
   if (typeof explicitId === 'string' && explicitId.trim()) {
     return `id:${explicitId}`;
   }

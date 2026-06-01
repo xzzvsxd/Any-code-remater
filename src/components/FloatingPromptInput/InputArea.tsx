@@ -29,7 +29,7 @@ interface InputAreaProps {
   onDragOver: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
   onExpand: () => void;
-  onFileSelect: (file: any) => void;
+  onFileSelect: (file: LegacyAny) => void;
   onFilePickerClose: () => void;
   // 🔧 Mac 输入法兼容：composition 事件
   onCompositionStart?: () => void;

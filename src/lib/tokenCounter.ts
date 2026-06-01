@@ -400,7 +400,7 @@ export interface ClaudeTool {
   description: string;
   input_schema: {
     type: 'object';
-    properties: Record<string, any>;
+    properties: Record<string, LegacyAny>;
     required?: string[];
   };
 }
@@ -593,7 +593,7 @@ export class TokenCounterService {
     }
 
     try {
-      const requestData: any = {
+      const requestData: LegacyAny = {
         model: normalizedModel,
         messages: messages.map(msg => ({
           role: msg.role,
@@ -613,8 +613,8 @@ export class TokenCounterService {
 
       return {
         input_tokens: response.input_tokens,
-        cache_creation_input_tokens: (response as any).cache_creation_input_tokens,
-        cache_read_input_tokens: (response as any).cache_read_input_tokens,
+        cache_creation_input_tokens: (response as LegacyAny).cache_creation_input_tokens,
+        cache_read_input_tokens: (response as LegacyAny).cache_read_input_tokens,
       };
     } catch (error) {
       console.warn('[TokenCounter] API璋冪敤澶辫触锛屼娇鐢ㄤ及绠楁柟娉?', error);
@@ -688,7 +688,7 @@ export class TokenCounterService {
         try {
           const result = await this.countTokens(req.messages, req.model, req.tools, req.systemPrompt);
           results.push(result);
-        } catch (err) {
+        } catch {
           results.push({ input_tokens: 0 });
         }
       }
@@ -986,7 +986,7 @@ export const calculateCost = (usage: TokenUsage, model?: string) =>
 /**
  * 鍚戝悗鍏煎鐨勫嚱鏁颁繚鐣? * Normalize usage data from different API response formats
  */
-export function normalizeTokenUsage(usage: any): TokenUsage {
+export function normalizeTokenUsage(usage: LegacyAny): TokenUsage {
   return tokenCounter.normalizeUsage(usage);
 }
 
@@ -1074,7 +1074,7 @@ export function aggregateTokenUsage(usages: TokenUsage[]): TokenUsage {
  * Calculate session-level statistics with trends
  */
 export function calculateSessionStats(
-  messages: Array<{ usage?: any; timestamp?: string; receivedAt?: string }>,
+  messages: Array<{ usage?: LegacyAny; timestamp?: string; receivedAt?: string }>,
   model?: string
 ): SessionTokenStats {
   // Extract valid usage data from messages

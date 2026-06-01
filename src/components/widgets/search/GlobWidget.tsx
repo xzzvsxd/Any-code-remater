@@ -21,7 +21,7 @@ export interface GlobWidgetProps {
   /** 匹配模式 */
   pattern: string;
   /** 工具结果 */
-  result?: any;
+  result?: LegacyAny;
   /** 默认折叠状态（可选，自动根据结果数量决定） */
   defaultCollapsed?: boolean;
 }
@@ -50,7 +50,7 @@ export const GlobWidget: React.FC<GlobWidgetProps> = ({ pattern, result, default
         resultContent = result.content.text;
       } else if (Array.isArray(result.content)) {
         resultContent = result.content
-          .map((c: any) => (typeof c === 'string' ? c : c.text || JSON.stringify(c)))
+          .map((c: LegacyAny) => (typeof c === 'string' ? c : c.text || JSON.stringify(c)))
           .join('\n');
       } else {
         resultContent = JSON.stringify(result.content, null, 2);

@@ -685,7 +685,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       }
 
       // 🆕 Auto-switch execution engine based on session type
-      const sessionEngine = (session as any).engine;
+      const sessionEngine = (session as LegacyAny).engine;
 
       if (sessionEngine === 'codex') {
         setExecutionEngineConfig(prev => ({
@@ -715,7 +715,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
 
       initializeSession();
     }
-  }, [session]); // Remove hasLoadedSession dependency to ensure it runs on mount
+  }, [checkForActiveSession, extractedSessionInfo, loadSessionHistory, session]); // Remove hasLoadedSession dependency to ensure it runs on mount
 
   // Load Claude settings once for all StreamMessage components
   useEffect(() => {
@@ -1034,22 +1034,22 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
         const history = await api.loadSessionHistory(
           effectiveSession.id,
           effectiveSession.project_id,
-          sessionEngine as any
+          sessionEngine as LegacyAny
         );
 
         if (sessionEngine === 'codex' && Array.isArray(history)) {
           // 将 Codex 事件转换为消息格式（与 useSessionStream 保持一致）
           codexConverter.reset();
-          const convertedMessages: any[] = [];
+          const convertedMessages: LegacyAny[] = [];
           for (const event of history) {
-            const msg = codexConverter.convertEventObject(event as any);
+            const msg = codexConverter.convertEventObject(event as LegacyAny);
             if (msg) convertedMessages.push(msg);
           }
           setMessages(withUiOnlyEvents(convertedMessages));
         } else if (Array.isArray(history)) {
           setMessages(withUiOnlyEvents(history));
         } else if (history && typeof history === 'object' && 'messages' in history) {
-          setMessages(withUiOnlyEvents((history as any).messages));
+          setMessages(withUiOnlyEvents((history as LegacyAny).messages));
         }
       }
 
@@ -1065,7 +1065,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       console.error('[Prompt Revert] Failed to revert:', error);
       setError('__REVERT_FAILED__:' + error);
     }
-  }, [effectiveSession, projectPath, claudeSettings?.hideWarmupMessages, executionEngineConfig.engine]);
+  }, [effectiveSession, executionEngineConfig.engine, projectPath, setMessages]);
 
   // Cleanup event listeners and track mount state
   // ⚠️ IMPORTANT: No dependencies! Only cleanup on real unmount

@@ -17,8 +17,8 @@
 export interface CodexBaseEvent {
   type: string;
   timestamp?: string;
-  payload?: any;
-  [key: string]: any;
+  payload?: LegacyAny;
+  [key: string]: LegacyAny;
 }
 
 /**
@@ -80,8 +80,8 @@ export interface CodexMcpToolCallItem {
   id: string;
   type: 'mcp_tool_call';
   tool_name: string;
-  tool_input: any;
-  tool_output?: any;
+  tool_input: LegacyAny;
+  tool_output?: LegacyAny;
   status: 'in_progress' | 'completed' | 'failed';
 }
 
@@ -92,7 +92,7 @@ export interface CodexWebSearchItem {
   id: string;
   type: 'web_search';
   query: string;
-  results?: any[];
+  results?: LegacyAny[];
   status: 'in_progress' | 'completed' | 'failed';
 }
 

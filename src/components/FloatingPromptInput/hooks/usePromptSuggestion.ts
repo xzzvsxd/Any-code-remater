@@ -115,7 +115,7 @@ const TEMPLATE_SUGGESTIONS: Record<string, string[]> = {
  * 从消息内容中提取丰富的上下文信息
  * 包括：文本内容、工具调用、工具结果等
  */
-function extractRichContext(content: any[] | undefined): string {
+function extractRichContext(content: LegacyAny[] | undefined): string {
   if (!content || !Array.isArray(content)) return '';
 
   const parts: string[] = [];

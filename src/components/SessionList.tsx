@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { ArrowLeft, Clock, Plus, Trash2, CheckSquare, Square, FilePenLine, Loader2, Zap, Bot, RefreshCw, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Pagination } from "@/components/ui/pagination";
@@ -17,6 +17,7 @@ import { formatUnixTimestamp, formatISOTimestamp, truncateText, getFirstLine } f
 import type { Session, ClaudeMdFile } from "@/lib/api";
 import { api } from "@/lib/api";
 import { useTranslation } from '@/hooks/useTranslation';
+import { useStableCallback } from "@/hooks/useStableCallback";
 
 interface SessionListProps {
   /**
@@ -112,19 +113,7 @@ export const SessionList: React.FC<SessionListProps> = ({
   const [sessionFilter, setSessionFilter] = useState<SessionFilter>('all');
 
   // Load CLAUDE.md files on mount
-  useEffect(() => {
-    if (onEditClaudeFile && projectPath) {
-      loadClaudeMdFiles();
-    }
-  }, [projectPath, onEditClaudeFile]);
-
-  // Reset selection when filter changes
-  useEffect(() => {
-    setSelectedSessions(new Set());
-    setIsSelectionMode(false);
-  }, [sessionFilter]);
-
-  const loadClaudeMdFiles = async () => {
+  const loadClaudeMdFiles = useStableCallback(async () => {
     try {
       setLoadingClaudeMd(true);
       const files = await api.findClaudeMdFiles(projectPath);
@@ -135,7 +124,19 @@ export const SessionList: React.FC<SessionListProps> = ({
     } finally {
       setLoadingClaudeMd(false);
     }
-  };
+  });
+useEffect(() => {
+    if (onEditClaudeFile && projectPath) {
+      loadClaudeMdFiles();
+    }
+  }, [projectPath, onEditClaudeFile, loadClaudeMdFiles]);
+
+  // Reset selection when filter changes
+  useEffect(() => {
+    setSelectedSessions(new Set());
+    setIsSelectionMode(false);
+  }, [sessionFilter]);
+
 
   const handleEditClaudeMd = () => {
     if (!onEditClaudeFile) return;
@@ -153,10 +154,33 @@ export const SessionList: React.FC<SessionListProps> = ({
 
   // 🔧 过滤掉空白无用的会话（没有 first_message 或 id 为空的）
   // 使用共享的会话验证函数，确保与项目计数逻辑一致
-  const validSessions = filterValidSessions(sessions);
+  const validSessions = useMemo(() => filterValidSessions(sessions), [sessions]);
+
+  const sessionCounts = useMemo(() => {
+    let claude = 0;
+    let codex = 0;
+    let gemini = 0;
+
+    validSessions.forEach(session => {
+      if (session.engine === 'codex') {
+        codex += 1;
+      } else if (session.engine === 'gemini') {
+        gemini += 1;
+      } else {
+        claude += 1;
+      }
+    });
+
+    return {
+      all: validSessions.length,
+      claude,
+      codex,
+      gemini,
+    };
+  }, [validSessions]);
 
   // 🆕 根据筛选器过滤会话类型
-  const filteredSessions = validSessions.filter(session => {
+  const filteredSessions = useMemo(() => validSessions.filter(session => {
     if (sessionFilter === 'all') return true;
 
     // Claude: explicitly 'claude' or undefined (legacy sessions)
@@ -175,10 +199,10 @@ export const SessionList: React.FC<SessionListProps> = ({
     }
 
     return true;
-  });
+  }), [sessionFilter, validSessions]);
 
   // 🔧 按活跃度排序：优先使用最后一条消息时间，其次第一条消息时间，最后使用创建时间
-  const sortedSessions = [...filteredSessions].sort((a, b) => {
+  const sortedSessions = useMemo(() => [...filteredSessions].sort((a, b) => {
     // 获取会话 A 的最后活跃时间
     const timeA = a.last_message_timestamp
       ? new Date(a.last_message_timestamp).getTime()
@@ -194,13 +218,16 @@ export const SessionList: React.FC<SessionListProps> = ({
       : b.created_at * 1000;
 
     return timeB - timeA; // 降序：最新的在前
-  });
+  }), [filteredSessions]);
 
   // Calculate pagination
   const totalPages = Math.ceil(sortedSessions.length / ITEMS_PER_PAGE);
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
   const endIndex = startIndex + ITEMS_PER_PAGE;
-  const currentSessions = sortedSessions.slice(startIndex, endIndex);
+  const currentSessions = useMemo(
+    () => sortedSessions.slice(startIndex, endIndex),
+    [endIndex, sortedSessions, startIndex]
+  );
 
   // Smart pagination adjustment: if current page becomes empty after deletion, go to previous page
   React.useEffect(() => {
@@ -374,34 +401,34 @@ export const SessionList: React.FC<SessionListProps> = ({
         <TabsList className="grid w-full grid-cols-4 max-w-2xl">
           <TabsTrigger value="all" className="flex items-center gap-2">
             {t('sessionList.all')}
-            {validSessions.length > 0 && (
-              <span className="text-xs opacity-70">({validSessions.length})</span>
+            {sessionCounts.all > 0 && (
+              <span className="text-xs opacity-70">({sessionCounts.all})</span>
             )}
           </TabsTrigger>
           <TabsTrigger value="claude" className="flex items-center gap-2">
             <Zap className="h-3.5 w-3.5" />
             Claude
-            {validSessions.filter(s => !s.engine || s.engine === 'claude').length > 0 && (
+            {sessionCounts.claude > 0 && (
               <span className="text-xs opacity-70">
-                ({validSessions.filter(s => !s.engine || s.engine === 'claude').length})
+                ({sessionCounts.claude})
               </span>
             )}
           </TabsTrigger>
           <TabsTrigger value="codex" className="flex items-center gap-2">
             <Bot className="h-3.5 w-3.5" />
             Codex
-            {validSessions.filter(s => s.engine === 'codex').length > 0 && (
+            {sessionCounts.codex > 0 && (
               <span className="text-xs opacity-70">
-                ({validSessions.filter(s => s.engine === 'codex').length})
+                ({sessionCounts.codex})
               </span>
             )}
           </TabsTrigger>
           <TabsTrigger value="gemini" className="flex items-center gap-2">
             <Sparkles className="h-3.5 w-3.5" />
             Gemini
-            {validSessions.filter(s => s.engine === 'gemini').length > 0 && (
+            {sessionCounts.gemini > 0 && (
               <span className="text-xs opacity-70">
-                ({validSessions.filter(s => s.engine === 'gemini').length})
+                ({sessionCounts.gemini})
               </span>
             )}
           </TabsTrigger>

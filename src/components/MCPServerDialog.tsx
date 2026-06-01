@@ -353,7 +353,7 @@ export const MCPServerDialog: React.FC<MCPServerDialogProps> = ({
               {/* Transport Type */}
               <div>
                 <Label htmlFor="transport-type">传输类型 *</Label>
-                <Select value={type} onValueChange={(v) => setType(v as any)}>
+                <Select value={type} onValueChange={(v) => setType(v as LegacyAny)}>
                   <SelectTrigger id="transport-type">
                     <SelectValue />
                   </SelectTrigger>

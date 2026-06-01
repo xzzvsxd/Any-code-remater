@@ -27,7 +27,7 @@ interface TauriWindow extends Window {
 }
 
 let tauriInvoke:
-  | ((command: string, args?: Record<string, any>) => Promise<any>)
+  | ((command: string, args?: Record<string, LegacyAny>) => Promise<LegacyAny>)
   | null
   | undefined = undefined;
 

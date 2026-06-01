@@ -32,7 +32,6 @@ export const useSessionSync = () => {
   // Layer 2 & 3: Initial sync on mount + periodic fallback
   // Queries the backend for actually running sessions and reconciles with tab states
   useEffect(() => {
-    let intervalId: ReturnType<typeof setInterval> | undefined;
     let cancelled = false;
 
     const syncRunningState = async () => {
@@ -46,7 +45,7 @@ export const useSessionSync = () => {
         const runningSessionIds = new Set<string>();
         for (const s of activeSessions) {
           if ('process_type' in s && s.process_type && 'ClaudeSession' in s.process_type) {
-            const sessionId = (s.process_type as any).ClaudeSession.session_id;
+            const sessionId = (s.process_type as LegacyAny).ClaudeSession.session_id;
             if (sessionId) {
               runningSessionIds.add(sessionId);
             }
@@ -79,12 +78,12 @@ export const useSessionSync = () => {
     const initialTimer = setTimeout(syncRunningState, 1000);
 
     // Periodic fallback every 30 seconds to catch any missed events
-    intervalId = setInterval(syncRunningState, 30000);
+    const intervalId = setInterval(syncRunningState, 30000);
 
     return () => {
       cancelled = true;
       clearTimeout(initialTimer);
-      if (intervalId) clearInterval(intervalId);
+      clearInterval(intervalId);
     };
   }, []); // Empty deps - only set up once
 

@@ -11,6 +11,7 @@
  */
 pub mod config;
 pub mod git_ops;
+pub mod provider_config;
 pub mod session;
 pub mod session_converter;
 pub mod usage;

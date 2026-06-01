@@ -31,6 +31,7 @@ import {
 } from '@/config/geminiProviderPresets';
 import { useTranslation } from "@/hooks/useTranslation";
 import { SortableList } from '@/components/ui/sortable-list';
+import { useStableCallback } from "@/hooks/useStableCallback";
 
 interface GeminiProviderManagerProps {
   onBack?: () => void;
@@ -54,11 +55,7 @@ export default function GeminiProviderManager({ onBack }: GeminiProviderManagerP
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [providerToDelete, setProviderToDelete] = useState<GeminiProviderConfig | null>(null);
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  const loadData = useStableCallback(async () => {
     try {
       setLoading(true);
 
@@ -101,7 +98,11 @@ export default function GeminiProviderManager({ onBack }: GeminiProviderManagerP
     } finally {
       setLoading(false);
     }
-  };
+  });
+useEffect(() => {
+    loadData();
+  }, [loadData]);
+
 
   const switchProvider = async (config: GeminiProviderConfig) => {
     try {
@@ -274,7 +275,7 @@ export default function GeminiProviderManager({ onBack }: GeminiProviderManagerP
       setToastMessage({ message: t('provider.reorderFailed'), type: 'error' });
       loadData();
     }
-  }, [t]);
+  }, [loadData, t]);
 
   if (loading) {
     return (

@@ -14,7 +14,7 @@ import { api, type ClaudeSettings } from "@/lib/api";
 
 interface GeneralSettingsProps {
   settings: ClaudeSettings | null;
-  updateSetting: (key: string, value: any) => void;
+  updateSetting: (key: string, value: LegacyAny) => void;
   disableRewindGitOps: boolean;
   handleRewindGitOpsToggle: (checked: boolean) => void;
   disablePromptAutoCommit: boolean;
@@ -162,7 +162,7 @@ export const GeneralSettings: React.FC<GeneralSettingsProps> = ({
       } else {
         setCodexPathError(null);
       }
-    } catch (error) {
+    } catch {
       setCodexPathValid(false);
       setCodexPathError(t('generalSettings.codexPathValidationError'));
     } finally {

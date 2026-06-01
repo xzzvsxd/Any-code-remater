@@ -57,17 +57,13 @@ const getResultContent = (value: unknown): string => {
 const COLLAPSE_HEIGHT = 300; // px
 
 export const ResultMessage: React.FC<ResultMessageProps> = ({ message, className }) => {
-  const isError = Boolean((message as any).is_error) || Boolean(message.subtype?.toLowerCase().includes("error"));
-  if (!isError) {
-    return null;
-  }
-
+  const isError = Boolean((message as LegacyAny).is_error) || Boolean(message.subtype?.toLowerCase().includes("error"));
   const { theme } = useTheme();
   const syntaxTheme = useMemo(() => getClaudeSyntaxTheme(theme === "dark"), [theme]);
 
-  const timestamp = formatTimestamp((message as any).receivedAt ?? (message as any).timestamp);
-  const resultContent = getResultContent((message as any).result);
-  const errorMessage = getResultContent((message as any).error);
+  const timestamp = formatTimestamp((message as LegacyAny).receivedAt ?? (message as LegacyAny).timestamp);
+  const resultContent = getResultContent((message as LegacyAny).result);
+  const errorMessage = getResultContent((message as LegacyAny).error);
   const contentRef = useRef<HTMLDivElement>(null);
   const [shouldCollapse, setShouldCollapse] = useState(false);
   const [collapsed, setCollapsed] = useState(true);
@@ -104,9 +100,13 @@ export const ResultMessage: React.FC<ResultMessageProps> = ({ message, className
       `)`;
   }, [message.usage]);
 
-  const cost = (message as any).cost_usd ?? (message as any).total_cost_usd;
-  const durationMs = (message as any).duration_ms;
-  const numTurns = (message as any).num_turns;
+  const cost = (message as LegacyAny).cost_usd ?? (message as LegacyAny).total_cost_usd;
+  const durationMs = (message as LegacyAny).duration_ms;
+  const numTurns = (message as LegacyAny).num_turns;
+
+  if (!isError) {
+    return null;
+  }
 
   return (
     <div className={cn("my-4 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3", className)}>
@@ -143,7 +143,7 @@ export const ResultMessage: React.FC<ResultMessageProps> = ({ message, className
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm]}
                       components={{
-                        code(props: any) {
+                        code(props: LegacyAny) {
                           const { inline, className: codeClassName, children, ...rest } = props;
                           const match = /language-(\w+)/.exec(codeClassName || "");
                           const codeStr = String(children).replace(/\n$/, "");
@@ -160,7 +160,7 @@ export const ResultMessage: React.FC<ResultMessageProps> = ({ message, className
                                 )}
                               >
                                 <SyntaxHighlighter
-                                  style={syntaxTheme as any}
+                                  style={syntaxTheme as LegacyAny}
                                   language={match[1]}
                                   PreTag="div"
                                 >

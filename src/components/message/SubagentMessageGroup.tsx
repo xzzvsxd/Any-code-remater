@@ -152,7 +152,7 @@ export const SubagentMessageGroup: React.FC<SubagentMessageGroupProps> = ({
                       // 如果是主代理发给子代理的提示词，添加特殊标识
                       const isPromptToSubagent = message.type === 'user' &&
                         Array.isArray(message.message?.content) &&
-                        message.message.content.some((item: any) => item?.type === 'text');
+                        message.message.content.some((item: LegacyAny) => item?.type === 'text');
 
                       return (
                         <div key={`msg-${index}-${message.timestamp || index}`} className="pl-2 pr-1">

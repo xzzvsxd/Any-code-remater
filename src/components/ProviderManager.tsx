@@ -17,7 +17,7 @@ import {
   Edit,
   Trash,
   DollarSign,
-  Infinity,
+  Infinity as InfinityIcon,
   Calendar
 } from 'lucide-react';
 import { api, type ProviderConfig, type CurrentProviderConfig, type ApiKeyUsage } from '@/lib/api';
@@ -25,6 +25,7 @@ import { Toast } from '@/components/ui/toast';
 import ProviderForm from './ProviderForm';
 import { useTranslation } from "@/hooks/useTranslation";
 import { SortableList } from '@/components/ui/sortable-list';
+import { useStableCallback } from "@/hooks/useStableCallback";
 
 interface ProviderManagerProps {
   onBack: () => void;
@@ -56,11 +57,7 @@ export default function ProviderManager({ onBack }: ProviderManagerProps) {
   // 用量缓存：key 是 provider id，value 是用量数据
   const [usageCache, setUsageCache] = useState<Record<string, ApiKeyUsage>>({});
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  const loadData = useStableCallback(async () => {
     try {
       setLoading(true);
       const [presetsData, configData] = await Promise.all([
@@ -75,7 +72,11 @@ export default function ProviderManager({ onBack }: ProviderManagerProps) {
     } finally {
       setLoading(false);
     }
-  };
+  });
+useEffect(() => {
+    loadData();
+  }, [loadData]);
+
 
   const switchProvider = async (config: ProviderConfig) => {
     try {
@@ -276,7 +277,7 @@ export default function ProviderManager({ onBack }: ProviderManagerProps) {
       // 重新加载数据以恢复原始顺序
       loadData();
     }
-  }, [t]);
+  }, [loadData, t]);
 
   if (loading) {
     return (
@@ -414,7 +415,7 @@ export default function ProviderManager({ onBack }: ProviderManagerProps) {
                       <div className="text-muted-foreground">
                         {usageCache[config.id].is_unlimited ? (
                           <span className="text-green-600 font-medium flex items-center justify-end gap-1">
-                            {t('provider.remaining')} <Infinity className="h-3 w-3" /> {t('provider.unlimited')}
+                            {t('provider.remaining')} <InfinityIcon className="h-3 w-3" /> {t('provider.unlimited')}
                           </span>
                         ) : (
                           <>
@@ -645,7 +646,7 @@ export default function ProviderManager({ onBack }: ProviderManagerProps) {
                   <span className={`font-semibold ${usageData.is_unlimited ? 'text-green-600' : ''}`}>
                     {usageData.is_unlimited ? (
                       <span className="flex items-center gap-1">
-                        <Infinity className="h-4 w-4" />
+                        <InfinityIcon className="h-4 w-4" />
                         {t('provider.unlimited')}
                       </span>
                     ) : (
@@ -672,7 +673,7 @@ export default function ProviderManager({ onBack }: ProviderManagerProps) {
                   }`}>
                     {usageData.is_unlimited ? (
                       <span className="flex items-center gap-1">
-                        <Infinity className="h-4 w-4" />
+                        <InfinityIcon className="h-4 w-4" />
                         {t('provider.noLimit')}
                       </span>
                     ) : (

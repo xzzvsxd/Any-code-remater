@@ -48,7 +48,7 @@ export interface GeminiProviderConfig {
  */
 export interface CurrentGeminiConfig {
   env: Record<string, string>;  // ~/.gemini/.env 内容
-  settings: Record<string, any>;  // ~/.gemini/settings.json 内容
+  settings: Record<string, LegacyAny>;  // ~/.gemini/settings.json 内容
   apiKey?: string;  // 从 env 中提取的 API Key
   baseUrl?: string;  // 从 env 中提取的 Base URL
   model?: string;  // 从 env 中提取的模型

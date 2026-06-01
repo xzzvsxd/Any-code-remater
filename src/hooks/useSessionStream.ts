@@ -163,7 +163,7 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
    * 获取引擎类型
    */
   const getEngine = useCallback((): EngineType => {
-    const engine = (session as any)?.engine;
+    const engine = (session as LegacyAny)?.engine;
     if (engine === 'codex') return 'codex';
     if (engine === 'gemini') return 'gemini';
     return 'claude';
@@ -267,8 +267,8 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
         if (msg.usage) {
           msg.usage = normalizeUsageData(msg.usage);
         }
-        if ((msg as any).codexMetadata?.usage) {
-          (msg as any).codexMetadata.usage = normalizeUsageData((msg as any).codexMetadata.usage);
+        if ((msg as LegacyAny).codexMetadata?.usage) {
+          (msg as LegacyAny).codexMetadata.usage = normalizeUsageData((msg as LegacyAny).codexMetadata.usage);
         }
 
         // 将斜杠命令相关消息重新分类为 system
@@ -280,8 +280,8 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
             textContent = content;
           } else if (Array.isArray(content)) {
             textContent = content
-              .filter((item: any) => item?.type === 'text')
-              .map((item: any) => item?.text || '')
+              .filter((item: LegacyAny) => item?.type === 'text')
+              .map((item: LegacyAny) => item?.text || '')
               .join('\n');
           }
 
@@ -479,21 +479,7 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
     setIsLoading(true);
     hasActiveSessionRef.current = true;
     setCancelSessionId?.(sessionId);
-  }, [
-    isMountedRef,
-    isListeningRef,
-    hasActiveSessionRef,
-    unlistenRefs,
-    getEngine,
-    setCancelSessionId,
-    setClaudeSessionId,
-    setError,
-    setIsLoading,
-    setIsHistoryLoading,
-    processMessage,
-    getRunElapsedSeconds,
-    session?.project_path,
-  ]);
+  }, [isMountedRef, isListeningRef, hasActiveSessionRef, unlistenRefs, getEngine, setCancelSessionId, setClaudeSessionId, setError, setIsLoading, processMessage, getRunElapsedSeconds, session?.project_path]);
 
   /**
    * 检查活跃会话
@@ -502,14 +488,7 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
     if (!session) return;
 
     // 🔧 FIX: Do not check for active sessions if this is a new session instance.
-    // Reconnecting would set up duplicate event listeners and show stale state.
-    if (isNewSessionInstance) {
-      console.debug('[useSessionStream] Skipping checkForActiveSession - new session instance');
-      return;
-    }
-
-    const engine = getEngine();
-    if (engine === 'codex' || engine === 'gemini') return;
+    // Re[isMountedRef, isListeningRef, hasActiveSessionRef, unlistenRefs, getEngine, setCancelSessionId, setClaudeSessionId, setError, setIsLoading, processMessage, getRunElapsedSeconds, session?.project_path]= 'gemini') return;
 
     const currentSessionId = session.id;
 
@@ -518,9 +497,9 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
 
       if (loadingSessionIdRef.current !== currentSessionId) return;
 
-      const activeSession = activeSessions.find((s: any) => {
+      const activeSession = activeSessions.find((s: LegacyAny) => {
         if ('process_type' in s && s.process_type && 'ClaudeSession' in s.process_type) {
-          return (s.process_type as any).ClaudeSession.session_id === session.id;
+          return (s.process_type as LegacyAny).ClaudeSession.session_id === session.id;
         }
         return false;
       });
@@ -534,15 +513,7 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
     } catch (err) {
       console.error('[useSessionStream] Failed to check active sessions:', err);
     }
-  }, [
-    session,
-    isNewSessionInstance,
-    getEngine,
-    setCancelSessionId,
-    setClaudeSessionId,
-    hasActiveSessionRef,
-    reconnectToSession,
-  ]);
+  }, [session, setCancelSessionId, setClaudeSessionId, hasActiveSessionRef, reconnectToSession]);
 
   // 清理（组件卸载时）
   useEffect(() => {

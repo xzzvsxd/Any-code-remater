@@ -10,11 +10,13 @@ import { useTranslation } from "react-i18next";
 import { Terminal, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+const ANSI_ESCAPE_PATTERN = new RegExp(String.raw`\x1b\[[0-9;]*[mGKHJfABCD]`, 'g');
+
 export interface BashOutputWidgetProps {
   /** Bash ID */
   bash_id: string;
   /** 工具结果 */
-  result?: any;
+  result?: LegacyAny;
 }
 
 /**
@@ -42,7 +44,7 @@ export const BashOutputWidget: React.FC<BashOutputWidgetProps> = ({
         resultContent = result.content.text;
       } else if (Array.isArray(result.content)) {
         resultContent = result.content
-          .map((c: any) => (typeof c === 'string' ? c : c.text || JSON.stringify(c)))
+          .map((c: LegacyAny) => (typeof c === 'string' ? c : c.text || JSON.stringify(c)))
           .join('\n');
       } else {
         resultContent = JSON.stringify(result.content, null, 2);
@@ -52,7 +54,7 @@ export const BashOutputWidget: React.FC<BashOutputWidgetProps> = ({
 
   // 清除 ANSI 转义序列
   const stripAnsiCodes = (text: string): string => {
-    return text.replace(/\x1b\[[0-9;]*[mGKHJfABCD]/g, '');
+    return text.replace(ANSI_ESCAPE_PATTERN, '');
   };
 
   const cleanContent = stripAnsiCodes(resultContent);

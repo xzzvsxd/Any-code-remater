@@ -70,8 +70,8 @@ export function extractMessageContent(message: ClaudeStreamMessage): ExtractedCo
   // Method 2: Array content (Claude API format)
   if (!textContent && Array.isArray(message.content)) {
     const arrayContent = message.content
-      .filter((item: any) => item && (item.type === 'text' || typeof item === 'string'))
-      .map((item: any) => {
+      .filter((item: LegacyAny) => item && (item.type === 'text' || typeof item === 'string'))
+      .map((item: LegacyAny) => {
         if (typeof item === 'string') return item;
         if (item.type === 'text') return item.text || '';
         return item.content || item.text || '';
@@ -91,14 +91,14 @@ export function extractMessageContent(message: ClaudeStreamMessage): ExtractedCo
 
   // Method 4: Nested in message.content (Claude Code SDK primary format)
   if (!textContent && message.message?.content) {
-    const messageContent: any = message.message.content;
+    const messageContent: LegacyAny = message.message.content;
     if (typeof messageContent === 'string' && messageContent.trim()) {
       textContent = messageContent;
       contentSources.push('message_content_string');
     } else if (Array.isArray(messageContent)) {
       const nestedContent = messageContent
-        .filter((item: any) => item && (item.type === 'text' || typeof item === 'string'))
-        .map((item: any) => {
+        .filter((item: LegacyAny) => item && (item.type === 'text' || typeof item === 'string'))
+        .map((item: LegacyAny) => {
           if (typeof item === 'string') return item;
           if (item.type === 'text') return item.text || '';
           return item.content || item.text || '';
@@ -112,26 +112,26 @@ export function extractMessageContent(message: ClaudeStreamMessage): ExtractedCo
   }
 
   // Method 5: Direct text property
-  if (!textContent && (message as any).text && typeof (message as any).text === 'string') {
-    textContent = (message as any).text;
+  if (!textContent && (message as LegacyAny).text && typeof (message as LegacyAny).text === 'string') {
+    textContent = (message as LegacyAny).text;
     contentSources.push('direct_text');
   }
 
   // Method 6: Result field (for result-type messages)
-  if (!textContent && (message as any).result && typeof (message as any).result === 'string') {
-    textContent = (message as any).result;
+  if (!textContent && (message as LegacyAny).result && typeof (message as LegacyAny).result === 'string') {
+    textContent = (message as LegacyAny).result;
     contentSources.push('result_field');
   }
 
   // Method 7: Error field (for error messages)
-  if (!textContent && (message as any).error && typeof (message as any).error === 'string') {
-    textContent = (message as any).error;
+  if (!textContent && (message as LegacyAny).error && typeof (message as LegacyAny).error === 'string') {
+    textContent = (message as LegacyAny).error;
     contentSources.push('error_field');
   }
 
   // Method 8: Summary field (for summary messages)
-  if (!textContent && (message as any).summary && typeof (message as any).summary === 'string') {
-    textContent = (message as any).summary;
+  if (!textContent && (message as LegacyAny).summary && typeof (message as LegacyAny).summary === 'string') {
+    textContent = (message as LegacyAny).summary;
     contentSources.push('summary_field');
   }
 
@@ -157,10 +157,10 @@ export function isClaudeResponse(message: ClaudeStreamMessage): boolean {
     !!(
       message.content ||
       message.message?.content ||
-      (message as any).text ||
-      (message as any).result ||
-      (message as any).summary ||
-      (message as any).error
+      (message as LegacyAny).text ||
+      (message as LegacyAny).result ||
+      (message as LegacyAny).summary ||
+      (message as LegacyAny).error
     )
   );
 }
@@ -177,8 +177,8 @@ export function extractThinkingContent(message: ClaudeStreamMessage): string {
   const content = message.message.content;
   if (!Array.isArray(content)) return '';
 
-  const thinkingBlocks = content.filter((item: any) => item.type === 'thinking');
-  return thinkingBlocks.map((item: any) => item.thinking || '').join('\n\n');
+  const thinkingBlocks = content.filter((item: LegacyAny) => item.type === 'thinking');
+  return thinkingBlocks.map((item: LegacyAny) => item.thinking || '').join('\n\n');
 }
 
 /**
@@ -191,5 +191,5 @@ export function hasThinkingBlock(message: ClaudeStreamMessage): boolean {
   if (!message.message?.content) return false;
   const content = message.message.content;
   if (!Array.isArray(content)) return false;
-  return content.some((item: any) => item.type === 'thinking');
+  return content.some((item: LegacyAny) => item.type === 'thinking');
 }

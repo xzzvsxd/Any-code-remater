@@ -27,10 +27,10 @@ export interface GeminiSubagentWidgetProps {
   /** 工具描述 */
   description?: string;
   /** 工具输入参数 */
-  input?: Record<string, any>;
+  input?: Record<string, LegacyAny>;
   /** 工具执行结果 */
   result?: {
-    content?: any;
+    content?: LegacyAny;
     is_error?: boolean;
   };
 }

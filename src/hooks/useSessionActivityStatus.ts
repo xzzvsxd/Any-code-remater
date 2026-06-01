@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '@/lib/api';
+import { useStableCallback } from "@/hooks/useStableCallback";
 
 interface SessionActivityInfo {
   sessionId: string;
@@ -85,13 +86,13 @@ export const useSessionActivityStatus = (options: UseSessionActivityStatusOption
   }, [sessionId]);
 
   // Fetch session activity status
-  const fetchActivityStatus = async () => {
+  const fetchActivityStatus = useStableCallback(async () => {
     if (!sessionId) return;
 
     try {
       // Get all active sessions to find our session
       const activeSessions = await api.getActiveSessions();
-      const sessionInfo = activeSessions.find((s: any) => s.session_id === sessionId);
+      const sessionInfo = activeSessions.find((s: LegacyAny) => s.session_id === sessionId);
 
       if (sessionInfo) {
         setActivityInfo({
@@ -127,7 +128,7 @@ export const useSessionActivityStatus = (options: UseSessionActivityStatusOption
         lastActivity: ''
       });
     }
-  };
+  });
 
   // Initial fetch and polling setup
   useEffect(() => {
@@ -148,7 +149,7 @@ export const useSessionActivityStatus = (options: UseSessionActivityStatusOption
         clearInterval(pollIntervalRef.current);
       }
     };
-  }, [sessionId, enableRealTimeTracking, pollInterval]);
+  }, [sessionId, enableRealTimeTracking, pollInterval, fetchActivityStatus]);
 
   // Determine activity state based on session status and recent activity
   const getActivityState = (): 'active' | 'inactive' | 'expired' | 'unknown' => {
@@ -176,7 +177,7 @@ export const useSessionActivityStatus = (options: UseSessionActivityStatusOption
   };
 
   // Method to manually update activity (called when new messages arrive)
-  const updateActivity = () => {
+  const updateActivity = useStableCallback(() => {
     lastActivityRef.current = new Date();
 
     // If we have session info and it's within the window, mark as active
@@ -186,20 +187,20 @@ export const useSessionActivityStatus = (options: UseSessionActivityStatusOption
         lastActivity: new Date().toISOString()
       } : null);
     }
-  };
+  });
 
   // Expose update method globally for use by message handlers
   useEffect(() => {
     if (isCurrentSession && sessionId) {
-      (window as any).__updateSessionActivity = updateActivity;
+      (window as LegacyAny).__updateSessionActivity = updateActivity;
     }
 
     return () => {
-      if ((window as any).__updateSessionActivity === updateActivity) {
-        delete (window as any).__updateSessionActivity;
+      if ((window as LegacyAny).__updateSessionActivity === updateActivity) {
+        delete (window as LegacyAny).__updateSessionActivity;
       }
     };
-  }, [isCurrentSession, sessionId]);
+  }, [isCurrentSession, sessionId, updateActivity]);
 
   const activityState = getActivityState();
 

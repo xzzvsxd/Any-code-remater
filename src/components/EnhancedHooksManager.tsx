@@ -29,6 +29,7 @@ import type {
   HookContext
 } from '@/types/enhanced-hooks';
 import { convertToEnhanced, convertFromEnhanced } from '@/lib/hooksConverter';
+import { useStableCallback } from "@/hooks/useStableCallback";
 
 interface EnhancedHooksManagerProps {
   onBack: () => void;
@@ -54,11 +55,7 @@ export function EnhancedHooksManager({ onBack, projectPath }: EnhancedHooksManag
   const [testResult, setTestResult] = useState<HookChainResult | null>(null);
   const [testing, setTesting] = useState(false);
 
-  useEffect(() => {
-    loadHooksConfig();
-  }, [projectPath]);
-
-  const loadHooksConfig = async () => {
+  const loadHooksConfig = useStableCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -76,7 +73,11 @@ export function EnhancedHooksManager({ onBack, projectPath }: EnhancedHooksManag
     } finally {
       setLoading(false);
     }
-  };
+  });
+useEffect(() => {
+    loadHooksConfig();
+  }, [loadHooksConfig, projectPath]);
+
 
   const saveHooksConfig = async () => {
     if (!modified) return;

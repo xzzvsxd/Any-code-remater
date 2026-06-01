@@ -32,7 +32,7 @@ export const useToolResults = (): UseToolResultsReturn => {
 
       const results: ToolResultEntry[] = [];
 
-      message.message!.content.forEach((item: any) => {
+      message.message!.content.forEach((item: LegacyAny) => {
         if (item?.type === "tool_use" && item.id) {
           const result = toolResults.get(item.id);
           if (result) {

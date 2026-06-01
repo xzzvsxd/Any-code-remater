@@ -31,6 +31,7 @@ import {
 } from '@/config/codexProviderPresets';
 import { useTranslation } from "@/hooks/useTranslation";
 import { SortableList } from '@/components/ui/sortable-list';
+import { useStableCallback } from "@/hooks/useStableCallback";
 
 interface CodexProviderManagerProps {
   onBack?: () => void;
@@ -54,11 +55,7 @@ export default function CodexProviderManager({ onBack }: CodexProviderManagerPro
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [providerToDelete, setProviderToDelete] = useState<CodexProviderConfig | null>(null);
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  const loadData = useStableCallback(async () => {
     try {
       setLoading(true);
 
@@ -102,7 +99,11 @@ export default function CodexProviderManager({ onBack }: CodexProviderManagerPro
     } finally {
       setLoading(false);
     }
-  };
+  });
+useEffect(() => {
+    loadData();
+  }, [loadData]);
+
 
   const switchProvider = async (config: CodexProviderConfig) => {
     try {
@@ -281,7 +282,7 @@ export default function CodexProviderManager({ onBack }: CodexProviderManagerPro
       setToastMessage({ message: t('provider.reorderFailed'), type: 'error' });
       loadData();
     }
-  }, [t]);
+  }, [loadData, t]);
 
   if (loading) {
     return (

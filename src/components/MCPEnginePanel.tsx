@@ -21,6 +21,7 @@ import { Switch } from "@/components/ui/switch";
 import { api, type MCPServerSpec, type McpServerWithStatus } from "@/lib/api";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { MCPServerDialog } from "./MCPServerDialog";
+import { useStableCallback } from "@/hooks/useStableCallback";
 
 interface MCPEnginePanelProps {
   /**
@@ -71,11 +72,7 @@ export const MCPEnginePanel: React.FC<MCPEnginePanelProps> = ({
   } | null>(null);
 
   // 加载该引擎的服务器列表
-  useEffect(() => {
-    loadServers();
-  }, [engine]);
-
-  const loadServers = async () => {
+  const loadServers = useStableCallback(async () => {
     try {
       setLoading(true);
       // 使用新的 API 获取包含禁用服务器的列表
@@ -86,7 +83,11 @@ export const MCPEnginePanel: React.FC<MCPEnginePanelProps> = ({
     } finally {
       setLoading(false);
     }
-  };
+  });
+useEffect(() => {
+    loadServers();
+  }, [engine, loadServers]);
+
 
   /**
    * 切换展开状态

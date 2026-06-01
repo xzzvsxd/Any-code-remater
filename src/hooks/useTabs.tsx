@@ -107,13 +107,13 @@ export const TabProvider: React.FC<TabProviderProps> = ({ children }) => {
       if (!Array.isArray(savedTabs)) return;
       
       // Validate and filter tabs
-      const validTabs = savedTabs.filter((tab: any) => {
+      const validTabs = savedTabs.filter((tab: LegacyAny) => {
         if (!tab.id || !tab.title) {
           console.warn('[useTabs] Skipping invalid tab:', tab);
           return false;
         }
         return true;
-      }).map((tab: any) => ({
+      }).map((tab: LegacyAny) => ({
         ...tab,
         type: tab.type || (tab.session ? 'session' : 'new'),
         state: tab.state || 'idle',

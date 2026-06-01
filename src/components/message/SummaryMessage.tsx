@@ -9,7 +9,7 @@ interface SummaryMessageProps {
 }
 
 export const SummaryMessage: React.FC<SummaryMessageProps> = ({ message, className }) => {
-  const summary = (message as any).summary as string | undefined;
+  const summary = (message as LegacyAny).summary as string | undefined;
   if (!summary || typeof summary !== "string" || summary.trim() === "") {
     return null;
   }
@@ -24,8 +24,8 @@ export const SummaryMessage: React.FC<SummaryMessageProps> = ({ message, classNa
           toolName="summary"
           input={{
             summary,
-            leafUuid: (message as any).leafUuid ?? (message as any).leaf_uuid ?? undefined,
-            usage: message.usage ?? (message as any).usage ?? undefined,
+            leafUuid: (message as LegacyAny).leafUuid ?? (message as LegacyAny).leaf_uuid ?? undefined,
+            usage: message.usage ?? (message as LegacyAny).usage ?? undefined,
           }}
         />
       </div>

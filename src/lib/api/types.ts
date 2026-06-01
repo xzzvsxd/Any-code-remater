@@ -50,7 +50,7 @@ export interface Session {
   /** The project path */
   project_path: string;
   /** Optional todo data associated with this session */
-  todo_data?: any;
+  todo_data?: LegacyAny;
   /** Unix timestamp when the session file was created */
   created_at: number;
   /** First user message content (if available) */
@@ -103,7 +103,7 @@ export interface ConversionResult {
  * Represents the settings from ~/.claude/settings.json
  */
 export interface ClaudeSettings {
-  [key: string]: any;
+  [key: string]: LegacyAny;
 }
 
 /**
@@ -147,6 +147,7 @@ export interface ClaudeExecutionConfig {
   verbose: boolean;
   permissions: ClaudePermissionConfig;
   disable_rewind_git_operations: boolean;
+  disable_prompt_auto_commit: boolean;
 }
 
 /**
@@ -245,6 +246,10 @@ export interface PromptRecord {
 }
 
 // Usage Dashboard types
+export type PromptRecordWithCapabilities = PromptRecord & {
+  capabilities: RewindCapabilities;
+};
+
 export interface UsageEntry {
   project: string;
   timestamp: string;
@@ -306,6 +311,11 @@ export interface UsageStats {
   by_date: DailyUsage[];
   by_project: ProjectUsage[];
   by_api_base_url?: ApiBaseUrlUsage[];
+}
+
+export interface UsageDashboardStats {
+  stats: UsageStats;
+  session_stats: ProjectUsage[];
 }
 
 export interface UsageOverview {
@@ -385,7 +395,7 @@ export interface CodexProviderConfig {
   description?: string;
   websiteUrl?: string;
   category?: 'official' | 'cn_official' | 'aggregator' | 'third_party' | 'custom';
-  auth: Record<string, any>;
+  auth: Record<string, LegacyAny>;
   config: string;
   isOfficial?: boolean;
   isPartner?: boolean;
@@ -396,7 +406,7 @@ export interface CodexProviderConfig {
  * Current Codex provider configuration from ~/.codex directory
  */
 export interface CurrentCodexConfig {
-  auth: Record<string, any>;
+  auth: Record<string, LegacyAny>;
   config: string;
   apiKey?: string;
   baseUrl?: string;
@@ -423,7 +433,7 @@ export interface GeminiProviderConfig {
  */
 export interface CurrentGeminiProviderConfig {
   env: Record<string, string>;
-  settings: Record<string, any>;
+  settings: Record<string, LegacyAny>;
   apiKey?: string;
   baseUrl?: string;
   model?: string;
@@ -612,6 +622,7 @@ export interface SessionContext {
 export type SessionStatus =
   | 'Active'
   | 'Idle'
+  | 'CompactionPending'
   | 'Compacting'
   | { CompactionFailed: string };
 

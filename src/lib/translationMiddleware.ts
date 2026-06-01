@@ -22,7 +22,7 @@ interface QueueItem {
   estimatedTokens: number;
   timestamp: number;
   resolve: (result: string) => void;
-  reject: (error: any) => void;
+  reject: (error: LegacyAny) => void;
 }
 
 /**
@@ -207,8 +207,6 @@ export class TranslationMiddleware {
 
     expired.forEach(key => this.translationCache.delete(key));
 
-    if (expired.length > 0) {
-    }
   }
 
   /**
@@ -476,7 +474,7 @@ export class TranslationMiddleware {
       // 移除明确的URL
       .replace(/https?:\/\/[^\s\u4e00-\u9fff]+/g, ' ')
       // 移除Windows路径（但保留包含中文的路径）
-      .replace(/[a-zA-Z]:[\\\//](?![\s\S]*[\u4e00-\u9fff])[^\s]+/g, ' ')
+      .replace(/[a-zA-Z]:[\\/](?![\s\S]*[\u4e00-\u9fff])[^\s]+/g, ' ')
       // 移除纯英文的错误前缀（但保留包含中文的错误信息）
       .replace(/^\s*(error|warning|info|debug):\s*(?![\s\S]*[\u4e00-\u9fff])/gmi, ' ')
       // 移除纯英文代码块
@@ -595,7 +593,7 @@ export class TranslationMiddleware {
       const isChineseByContent = this.detectChineseContent(userInput);
 
       // 优先信任内容检测，因为它更准确
-      const isAsciiOnly = /^[\u0000-\u007F]*$/.test(userInput);
+      const isAsciiOnly = new RegExp(String.raw`^[\u0000-\u007F]*$`).test(userInput);
       const shouldTranslate = isChineseByContent || (isChineseByCode && !isAsciiOnly);
 
       

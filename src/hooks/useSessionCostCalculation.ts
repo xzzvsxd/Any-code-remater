@@ -92,7 +92,7 @@ export function useSessionCostCalculation(messages: ClaudeStreamMessage[], engin
         cache.lastMessageCount = 0;
       }
 
-      const last = messages[messages.length - 1] as any;
+      const last = messages[messages.length - 1] as LegacyAny;
       const usage = extractUsageCandidate(last);
 
       // 末尾没有 usage -> 费用不可能变化，直接复用缓存
@@ -205,10 +205,10 @@ function findTimestampMsFromEnd(messages: ClaudeStreamMessage[], maxScan = 25): 
 
 function extractTimestampMs(message: ClaudeStreamMessage): number | undefined {
   const candidates = [
-    (message as any).timestamp,
-    (message as any).receivedAt,
-    (message as any).sentAt,
-    (message as any)?.message?.timestamp,
+    (message as LegacyAny).timestamp,
+    (message as LegacyAny).receivedAt,
+    (message as LegacyAny).sentAt,
+    (message as LegacyAny)?.message?.timestamp,
   ];
 
   for (const candidate of candidates) {
@@ -225,12 +225,12 @@ function extractTimestampMs(message: ClaudeStreamMessage): number | undefined {
   return undefined;
 }
 
-function extractUsageCandidate(message: any): any | null {
+function extractUsageCandidate(message: LegacyAny): LegacyAny | null {
   const usage = message?.usage || message?.message?.usage || message?.codexMetadata?.usage;
   return usage && typeof usage === 'object' ? usage : null;
 }
 
-function buildUsageFingerprint(message: any, usage: any, messageCount: number): string {
+function buildUsageFingerprint(message: LegacyAny, usage: LegacyAny, messageCount: number): string {
   const timestamp = typeof message?.timestamp === 'string'
     ? message.timestamp
     : typeof message?.receivedAt === 'string'

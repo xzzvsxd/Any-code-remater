@@ -13,7 +13,7 @@ import type { ExecutionStatusInfo } from "@/components/FloatingPromptInput/types
  * 使用 ResizeObserver 并在内容变化时自动通知虚拟列表重新测量。
  * 仅对正在流式输出的消息进行防抖，历史消息立即更新以防止滚动抖动。
  */
-const MeasurableItem = ({ virtualItem, measureElement, isStreaming, children, ...props }: any) => {
+const MeasurableItem = ({ virtualItem, measureElement, isStreaming, children, ...props }: LegacyAny) => {
   const elRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef(measureElement);
   
@@ -131,16 +131,16 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
         let height = 60;
         messageGroup.messages.forEach(msg => {
             // Add height for thinking blocks
-            if (msg.type === 'thinking' || (msg.message?.content && Array.isArray(msg.message.content) && msg.message.content.some((c:any) => c.type === 'thinking'))) {
+            if (msg.type === 'thinking' || (msg.message?.content && Array.isArray(msg.message.content) && msg.message.content.some((c:LegacyAny) => c.type === 'thinking'))) {
                 height += 100;
             }
             // Add height for tool calls
             if (msg.message?.content && Array.isArray(msg.message.content)) {
-                const toolCalls = msg.message.content.filter((c:any) => c.type === 'tool_use');
+                const toolCalls = msg.message.content.filter((c:LegacyAny) => c.type === 'tool_use');
                 height += toolCalls.length * 60;
                 
                 // Add height for tool results (if visible)
-                const toolResults = msg.message.content.filter((c:any) => c.type === 'tool_result');
+                const toolResults = msg.message.content.filter((c:LegacyAny) => c.type === 'tool_result');
                 height += toolResults.length * 40;
             }
         });

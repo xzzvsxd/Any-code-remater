@@ -15,6 +15,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import { X, Minus, Square, Copy, PanelLeftClose } from 'lucide-react';
+import { useStableCallback } from "@/hooks/useStableCallback";
 
 interface SessionWindowState {
   isLoading: boolean;
@@ -109,7 +110,24 @@ export const SessionWindow: React.FC = () => {
   }, [windowParams]);
 
   // Listen for window sync events
-  useEffect(() => {
+  const handleCloseWindow = useStableCallback(async () => {
+    try {
+      // Emit event to notify main window
+      if (state.tabId) {
+        await emitWindowSyncEvent({
+          type: 'tab_closed',
+          tabId: state.tabId,
+          sessionId: state.session?.id,
+        });
+      }
+
+      const window = getCurrentWindow();
+      await window.close();
+    } catch (error) {
+      console.error('[SessionWindow] Failed to close window:', error);
+    }
+  });
+useEffect(() => {
     let unlisten: (() => void) | null = null;
 
     const setupListener = async () => {
@@ -134,26 +152,9 @@ export const SessionWindow: React.FC = () => {
     return () => {
       if (unlisten) unlisten();
     };
-  }, [state.tabId]);
+  }, [handleCloseWindow, state.tabId]);
 
   // Window control handlers
-  const handleCloseWindow = async () => {
-    try {
-      // Emit event to notify main window
-      if (state.tabId) {
-        await emitWindowSyncEvent({
-          type: 'tab_closed',
-          tabId: state.tabId,
-          sessionId: state.session?.id,
-        });
-      }
-
-      const window = getCurrentWindow();
-      await window.close();
-    } catch (error) {
-      console.error('[SessionWindow] Failed to close window:', error);
-    }
-  };
 
   const handleMinimizeWindow = async () => {
     try {

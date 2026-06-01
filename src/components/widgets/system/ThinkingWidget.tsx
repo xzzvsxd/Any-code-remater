@@ -55,7 +55,7 @@ export const ThinkingWidget: React.FC<ThinkingWidgetProps> = ({
   }, [trimmedThinking, hasContent, translateContent]);
 
   // 格式化 Token 使用情况
-  const formatThinkingTokens = (usage: any) => {
+  const formatThinkingTokens = (usage: LegacyAny) => {
     if (!usage) return null;
 
     const { input_tokens = 0, output_tokens = 0, cache_creation_tokens = 0, cache_read_tokens = 0 } = usage;

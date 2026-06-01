@@ -13,7 +13,7 @@ import { checkSyntaxHighlightSupport } from "@/lib/syntaxHighlightCompat";
 interface CodeBlockRendererProps {
   language: string;
   code: string;
-  syntaxTheme: any;
+  syntaxTheme: LegacyAny;
 }
 
 /**
@@ -268,7 +268,7 @@ const MessageContentComponent: React.FC<MessageContentProps> = ({
           remarkPlugins={[remarkGfm]}
           components={{
             // 代码块渲染
-            code(props: any) {
+            code(props: LegacyAny) {
               const { inline, className, children, ...rest } = props;
               const match = /language-(\w+)/.exec(className || '');
               const language = match ? match[1] : '';

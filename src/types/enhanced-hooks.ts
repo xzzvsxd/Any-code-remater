@@ -29,7 +29,7 @@ export interface HookContext {
   event: string;
   session_id: string;
   project_path: string;
-  data: any; // 事件特定数据
+  data: LegacyAny; // 事件特定数据
 }
 
 /**

@@ -38,11 +38,11 @@ interface ControlBarProps {
   onTogglePlanMode?: () => void;
   hasMessages: boolean;
   sessionCost?: string;
-  sessionStats?: any;
+  sessionStats?: LegacyAny;
   showCostPopover: boolean;
   setShowCostPopover: (show: boolean) => void;
-  messages?: any[];
-  session?: any;
+  messages?: LegacyAny[];
+  session?: LegacyAny;
   codexRateLimits?: CodexRateLimits | null;
   isEnhancing: boolean;
   executionStatus?: ExecutionStatusInfo;
@@ -51,7 +51,7 @@ interface ControlBarProps {
   setEnableProjectContext: (enable: boolean) => void;
   enableDualAPI: boolean;
   setEnableDualAPI: (enable: boolean) => void;
-  getEnabledProviders: () => any[];
+  getEnabledProviders: () => LegacyAny[];
   handleEnhancePromptWithAPI: (id: string) => void;
   onCancel: () => void;
   onSend: () => void;
@@ -122,7 +122,7 @@ export const ControlBar: React.FC<ControlBarProps> = ({
     // Find the latest message with rate limits in codexMetadata
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
-      const rateLimits = (msg as any)?.codexMetadata?.rateLimits;
+      const rateLimits = (msg as LegacyAny)?.codexMetadata?.rateLimits;
       if (rateLimits && (rateLimits.primary || rateLimits.secondary)) {
         return rateLimits;
       }

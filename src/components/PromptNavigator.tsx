@@ -38,8 +38,8 @@ const extractUserText = (message: ClaudeStreamMessage): string => {
     text = content;
   } else if (Array.isArray(content)) {
     text = content
-      .filter((item: any) => item.type === 'text')
-      .map((item: any) => item.text || '')
+      .filter((item: LegacyAny) => item.type === 'text')
+      .map((item: LegacyAny) => item.text || '')
       .join('\n');
   }
 
@@ -135,7 +135,7 @@ export const PromptNavigator: React.FC<PromptNavigatorProps> = ({
         items.push({
           promptIndex,
           content: displayText,
-          timestamp: (message as any).sentAt || (message as any).timestamp
+          timestamp: (message as LegacyAny).sentAt || (message as LegacyAny).timestamp
         });
         promptIndex++;
       }
@@ -211,7 +211,7 @@ export const PromptNavigator: React.FC<PromptNavigatorProps> = ({
     if (prompts.length > 20 && !isCompact) {
       setIsCompact(true);
     }
-  }, [prompts.length]);
+  }, [isCompact, prompts.length]);
 
   return (
     <div

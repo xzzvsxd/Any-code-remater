@@ -8,6 +8,7 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useTheme } from "@/contexts/ThemeContext";
+import { useStableCallback } from "@/hooks/useStableCallback";
 
 interface MarkdownEditorProps {
   /**
@@ -42,11 +43,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   const hasChanges = content !== originalContent;
 
   // Load the system prompt on mount
-  useEffect(() => {
-    loadSystemPrompt();
-  }, []);
-
-  const loadSystemPrompt = async () => {
+  const loadSystemPrompt = useStableCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -59,7 +56,11 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     } finally {
       setLoading(false);
     }
-  };
+  });
+useEffect(() => {
+    loadSystemPrompt();
+  }, [loadSystemPrompt]);
+
 
   const handleSave = async () => {
     try {

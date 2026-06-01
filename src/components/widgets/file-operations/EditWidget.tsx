@@ -21,7 +21,7 @@ export interface EditWidgetProps {
   /** 新字符串 */
   new_string: string;
   /** 工具结果 */
-  result?: any;
+  result?: LegacyAny;
 }
 
 /**

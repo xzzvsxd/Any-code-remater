@@ -120,7 +120,7 @@ export const useAutoCompactStatus = (options: UseAutoCompactStatusOptions = {}):
                 sessionStatus === 'CompactionPending',
             }));
           }
-        } catch (e) {
+        } catch {
           // Session might not be registered yet
           console.debug('Session not found in auto-compact monitoring:', sessionId);
         }

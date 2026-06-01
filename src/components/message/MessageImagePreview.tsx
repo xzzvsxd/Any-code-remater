@@ -450,7 +450,7 @@ export const MessageImagePreview: React.FC<MessageImagePreviewProps> = ({
  * @param content 消息内容数组
  * @returns 图片数组
  */
-export const extractImagesFromContent = (content: any[]): MessageImage[] => {
+export const extractImagesFromContent = (content: LegacyAny[]): MessageImage[] => {
   if (!Array.isArray(content)) return [];
 
   const images: MessageImage[] = [];

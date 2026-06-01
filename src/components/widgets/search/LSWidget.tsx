@@ -14,13 +14,13 @@ export interface LSWidgetProps {
   /** 目录路径 */
   path: string;
   /** 工具结果 */
-  result?: any;
+  result?: LegacyAny;
 }
 
 /**
  * 从多种可能的结果格式中提取内容
  */
-function extractResultContent(result: any): string {
+function extractResultContent(result: LegacyAny): string {
   if (!result) return '';
 
   // Gemini 原始数组格式: [{functionResponse: {response: {output: "..."}}}]
@@ -49,7 +49,7 @@ function extractResultContent(result: any): string {
       return firstContent.functionResponse.response.output;
     }
     return result.content
-      .map((c: any) => (typeof c === 'string' ? c : c.text || JSON.stringify(c)))
+      .map((c: LegacyAny) => (typeof c === 'string' ? c : c.text || JSON.stringify(c)))
       .join('\n');
   }
 

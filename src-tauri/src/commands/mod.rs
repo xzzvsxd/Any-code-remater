@@ -19,4 +19,5 @@ pub mod translator;
 pub mod url_utils; // API URL 规范化工具
 pub mod usage;
 pub mod window; // 多窗口管理
+pub mod wsl_runtime; // WSL Gemini/Claude 运行时检测
 pub mod wsl_utils; // WSL 兼容性工具

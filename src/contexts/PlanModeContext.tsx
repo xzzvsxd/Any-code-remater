@@ -256,7 +256,7 @@ export function getPlanId(plan: string): string {
   return generatePlanId(plan);
 }
 
-export function extractExitPlanModeFromMessage(message: any): string | null {
+export function extractExitPlanModeFromMessage(message: LegacyAny): string | null {
   if (!message) return null;
 
   if (message.type === "tool_use" || message.type === "assistant") {
