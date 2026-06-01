@@ -1,4 +1,4 @@
-import React, { useImperativeHandle, forwardRef, useEffect, useRef } from "react";
+import React, { useImperativeHandle, forwardRef, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { StreamMessageV2 } from "@/components/message";
@@ -97,6 +97,12 @@ interface SessionMessagesProps {
   executionStatus?: ExecutionStatusInfo;
   /** 取消执行回调 - 用于CLI风格处理指示器 */
   onCancel?: () => void;
+  /** 是否还有更早的历史消息可按需加载 */
+  hasMoreHistoryBefore?: boolean;
+  /** 是否正在加载更早历史 */
+  isLoadingOlderHistory?: boolean;
+  /** 加载更早历史 */
+  onLoadOlderHistory?: () => Promise<void> | void;
 }
 
 export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesProps>(({
@@ -105,10 +111,55 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
   error,
   parentRef,
   executionStatus,
-  onCancel
+  onCancel,
+  hasMoreHistoryBefore = false,
+  isLoadingOlderHistory = false,
+  onLoadOlderHistory
 }, ref) => {
   // ✅ 从 SessionContext 获取配置和回调，避免 Props Drilling
   const { settings, sessionId, projectId, projectPath, onLinkDetected, onRevert, getPromptIndexForMessage } = useSession();
+  const loadOlderInFlightRef = useRef(false);
+
+  const handleLoadOlderHistory = useCallback(async () => {
+    if (!hasMoreHistoryBefore || isLoadingOlderHistory || !onLoadOlderHistory) return;
+    if (loadOlderInFlightRef.current) return;
+
+    const scrollElement = parentRef.current;
+    const previousScrollHeight = scrollElement?.scrollHeight ?? 0;
+    const previousScrollTop = scrollElement?.scrollTop ?? 0;
+
+    loadOlderInFlightRef.current = true;
+    try {
+      await onLoadOlderHistory();
+    } catch (error) {
+      console.error('[SessionMessages] Failed to load older history:', error);
+    } finally {
+      requestAnimationFrame(() => {
+        if (scrollElement) {
+          const nextScrollHeight = scrollElement.scrollHeight;
+          scrollElement.scrollTop = nextScrollHeight - previousScrollHeight + previousScrollTop;
+        }
+        loadOlderInFlightRef.current = false;
+      });
+    }
+  }, [hasMoreHistoryBefore, isLoadingOlderHistory, onLoadOlderHistory, parentRef]);
+
+  useEffect(() => {
+    const scrollElement = parentRef.current;
+    if (!scrollElement || !hasMoreHistoryBefore || !onLoadOlderHistory) return;
+
+    const handleScroll = () => {
+      if (scrollElement.scrollTop <= 96) {
+        void handleLoadOlderHistory();
+      }
+    };
+
+    scrollElement.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      scrollElement.removeEventListener('scroll', handleScroll);
+    };
+  }, [parentRef, hasMoreHistoryBefore, onLoadOlderHistory, handleLoadOlderHistory]);
+
   /**
    * ✅ OPTIMIZED: Virtual list configuration for improved performance
    */
@@ -305,6 +356,19 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
         paddingBottom: '24px', // 底部留一点间距即可
       }}
     >
+      {hasMoreHistoryBefore && (
+        <div className="sticky top-2 z-20 flex justify-center px-4 pb-2">
+          <button
+            type="button"
+            onClick={() => void handleLoadOlderHistory()}
+            disabled={isLoadingOlderHistory}
+            className="rounded-full border border-border/70 bg-background/95 px-4 py-2 text-xs font-medium text-muted-foreground shadow-sm backdrop-blur transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isLoadingOlderHistory ? '正在加载更早消息…' : '加载更早消息'}
+          </button>
+        </div>
+      )}
+
       <div
         className="relative w-full max-w-5xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-[85%] mx-auto px-4 pt-8 pb-4"
         style={{

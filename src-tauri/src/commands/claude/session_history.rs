@@ -1,13 +1,27 @@
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::time::SystemTime;
 
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 use serde_json::Value;
 
 use super::models::JsonlEntry;
 use super::paths::get_claude_dir;
+use crate::utils::jsonl_tail::read_jsonl_line_window_from_end;
+
+const MAX_HISTORY_PAGE_LIMIT: usize = 1000;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionHistoryPage {
+    pub messages: Vec<Value>,
+    pub next_offset: usize,
+    pub returned_messages: usize,
+    pub has_more_before: bool,
+}
 
 /// Extracts the timestamp of the last message (user or assistant) from a JSONL file
 #[allow(dead_code)]
@@ -208,6 +222,239 @@ pub fn load_session_history(session_id: &str, project_id: &str) -> Result<Vec<Va
     Ok(messages)
 }
 
+/// Loads one window of a Claude JSONL history from the end of the main session
+/// file. This is the fast path used by the conversation detail view: it avoids
+/// parsing and transferring thousands of historical entries before the first
+/// paint. `offset` counts physical non-empty JSONL lines already loaded from
+/// the end of the main session file.
+pub fn load_session_history_page(
+    session_id: &str,
+    project_id: &str,
+    offset: usize,
+    limit: usize,
+) -> Result<SessionHistoryPage, String> {
+    log::info!(
+        "Loading session history page for session: {} in project: {}, offset={}, limit={}",
+        session_id,
+        project_id,
+        offset,
+        limit
+    );
+
+    let claude_dir = get_claude_dir().map_err(|e| e.to_string())?;
+    let project_dir = claude_dir.join("projects").join(project_id);
+    let session_path = project_dir.join(format!("{}.jsonl", session_id));
+
+    if !session_path.exists() {
+        return Err(format!("Session file not found: {}", session_id));
+    }
+
+    let file_metadata =
+        fs::metadata(&session_path).map_err(|e| format!("Failed to read file metadata: {}", e))?;
+    let base_time = file_metadata
+        .modified()
+        .unwrap_or_else(|_| SystemTime::now());
+
+    let safe_limit = limit.min(MAX_HISTORY_PAGE_LIMIT);
+    if safe_limit == 0 {
+        return Ok(SessionHistoryPage {
+            messages: Vec::new(),
+            next_offset: offset,
+            returned_messages: 0,
+            has_more_before: false,
+        });
+    }
+
+    let line_window = read_jsonl_line_window_from_end(&session_path, offset, safe_limit)
+        .map_err(|e| format!("Failed to read session history page: {}", e))?;
+
+    let mut messages = parse_jsonl_values(&line_window.lines);
+
+    // Keep the initial system:init available on the first page so model/cwd
+    // metadata and the "system initializing" display are not lost when only the
+    // recent tail is loaded.
+    if offset == 0 {
+        if let Some(init_message) = extract_first_init_message(&session_path) {
+            if !messages.iter().any(|message| message == &init_message) {
+                messages.insert(0, init_message);
+            }
+        }
+    }
+
+    // Load only subagent details that can actually be grouped by Task calls in
+    // the current page. The old full loader scanned every agent file for every
+    // history open; doing that for the first paint is exactly what made large
+    // sessions feel frozen.
+    let task_tool_use_ids = extract_task_tool_use_ids(&messages);
+    if !task_tool_use_ids.is_empty() {
+        let agent_to_tool_use_id = extract_agent_mapping_from_messages(&messages);
+        append_matching_subagent_messages(
+            &mut messages,
+            &project_dir,
+            session_id,
+            &agent_to_tool_use_id,
+            &task_tool_use_ids,
+        );
+    }
+
+    apply_fallback_display_timestamps(&mut messages, base_time);
+
+    let returned_messages = messages.len();
+    let next_offset = offset.saturating_add(line_window.selected_line_count);
+
+    log::info!(
+        "Loaded session page: {} messages, next_offset={}, has_more_before={}",
+        returned_messages,
+        next_offset,
+        line_window.has_more_before
+    );
+
+    Ok(SessionHistoryPage {
+        messages,
+        next_offset,
+        returned_messages,
+        has_more_before: line_window.has_more_before,
+    })
+}
+
+fn parse_jsonl_values(lines: &[String]) -> Vec<Value> {
+    lines
+        .iter()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .collect()
+}
+
+fn extract_first_init_message(session_path: &Path) -> Option<Value> {
+    let file = fs::File::open(session_path).ok()?;
+    let reader = BufReader::new(file);
+
+    for line in reader.lines().map_while(Result::ok) {
+        let Ok(json) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        let is_init = json.get("type").and_then(|t| t.as_str()) == Some("system")
+            && json.get("subtype").and_then(|s| s.as_str()) == Some("init");
+
+        if is_init {
+            return Some(json);
+        }
+    }
+
+    None
+}
+
+fn extract_task_tool_use_ids(messages: &[Value]) -> HashSet<String> {
+    let mut task_tool_use_ids = HashSet::new();
+
+    for json in messages {
+        if let Some(content) = json
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_array())
+        {
+            for item in content {
+                let is_task_tool = item.get("type").and_then(|t| t.as_str()) == Some("tool_use")
+                    && item
+                        .get("name")
+                        .and_then(|name| name.as_str())
+                        .map(|name| name.eq_ignore_ascii_case("task"))
+                        .unwrap_or(false);
+
+                if is_task_tool {
+                    if let Some(id) = item.get("id").and_then(|id| id.as_str()) {
+                        task_tool_use_ids.insert(id.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    task_tool_use_ids
+}
+
+fn extract_agent_mapping_from_messages(messages: &[Value]) -> HashMap<String, String> {
+    let mut agent_to_tool_use_id = HashMap::new();
+
+    for json in messages {
+        if let Some(content) = json
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_array())
+        {
+            for item in content {
+                if item.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
+                    if let (Some(tool_use_id), Some(agent_id)) = (
+                        item.get("tool_use_id").and_then(|t| t.as_str()),
+                        json.get("toolUseResult")
+                            .and_then(|r| r.get("agentId"))
+                            .and_then(|a| a.as_str()),
+                    ) {
+                        agent_to_tool_use_id
+                            .insert(agent_id.to_string(), tool_use_id.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    agent_to_tool_use_id
+}
+
+fn append_matching_subagent_messages(
+    messages: &mut Vec<Value>,
+    project_dir: &Path,
+    session_id: &str,
+    agent_to_tool_use_id: &HashMap<String, String>,
+    page_task_tool_use_ids: &HashSet<String>,
+) {
+    if agent_to_tool_use_id.is_empty() {
+        return;
+    }
+
+    let Ok(entries) = fs::read_dir(project_dir) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+
+        if !file_name.starts_with("agent-") || !file_name.ends_with(".jsonl") {
+            continue;
+        }
+
+        let agent_id = file_name
+            .strip_prefix("agent-")
+            .and_then(|name| name.strip_suffix(".jsonl"))
+            .unwrap_or("");
+
+        let Some(tool_use_id) = agent_to_tool_use_id.get(agent_id) else {
+            continue;
+        };
+
+        if !page_task_tool_use_ids.contains(tool_use_id) {
+            continue;
+        }
+
+        let Ok(file) = fs::File::open(&path) else {
+            continue;
+        };
+        let reader = BufReader::new(file);
+
+        for line in reader.lines().map_while(Result::ok) {
+            if let Ok(mut json) = serde_json::from_str::<Value>(&line) {
+                let subagent_session_id = json.get("sessionId").and_then(|s| s.as_str());
+                if subagent_session_id == Some(session_id) {
+                    json["parent_tool_use_id"] = Value::String(tool_use_id.clone());
+                    messages.push(json);
+                }
+            }
+        }
+    }
+}
+
 fn apply_fallback_display_timestamps(messages: &mut [Value], base_time: SystemTime) {
     let messages_count = messages.len();
     for (i, message) in messages.iter_mut().enumerate() {
@@ -242,7 +489,10 @@ fn apply_fallback_display_timestamps(messages: &mut [Value], base_time: SystemTi
 
 #[cfg(test)]
 mod tests {
-    use super::apply_fallback_display_timestamps;
+    use super::{
+        apply_fallback_display_timestamps, extract_agent_mapping_from_messages,
+        extract_task_tool_use_ids,
+    };
     use serde_json::json;
     use std::time::{Duration, SystemTime};
 
@@ -276,5 +526,40 @@ mod tests {
         assert_eq!(labels, vec!["prompt 1", "answer 1", "prompt 2", "answer 2"]);
         assert!(messages[0].get("sentAt").and_then(|value| value.as_str()).is_some());
         assert!(messages[1].get("receivedAt").and_then(|value| value.as_str()).is_some());
+    }
+
+    #[test]
+    fn extracts_only_task_tool_use_ids_for_page_subagent_loading() {
+        let messages = vec![json!({
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "tool_use", "name": "Read", "id": "read-1"},
+                    {"type": "tool_use", "name": "Task", "id": "task-1"}
+                ]
+            }
+        })];
+
+        let ids = extract_task_tool_use_ids(&messages);
+
+        assert!(ids.contains("task-1"));
+        assert!(!ids.contains("read-1"));
+    }
+
+    #[test]
+    fn extracts_agent_mapping_from_tool_result_messages() {
+        let messages = vec![json!({
+            "type": "user",
+            "toolUseResult": {"agentId": "agent-a"},
+            "message": {
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "task-1"}
+                ]
+            }
+        })];
+
+        let mapping = extract_agent_mapping_from_messages(&messages);
+
+        assert_eq!(mapping.get("agent-a"), Some(&"task-1".to_string()));
     }
 }

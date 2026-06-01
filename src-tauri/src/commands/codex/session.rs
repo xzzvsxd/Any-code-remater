@@ -21,6 +21,7 @@ use tokio::sync::Mutex;
 use crate::claude_binary::detect_binary_for_tool;
 use crate::commands::claude::apply_no_window_async;
 use crate::process::JobObject;
+use crate::utils::jsonl_tail::read_jsonl_line_window_from_end;
 // Import WSL utilities for Windows + WSL Codex support
 use super::super::wsl_utils;
 // Import config module for sessions directory
@@ -33,6 +34,7 @@ lazy_static::lazy_static! {
 
 const CODEX_SESSION_FILE_CACHE_TTL: Duration = Duration::from_secs(300);
 const MAX_CODEX_SESSION_LIST_SCAN_LINES: usize = 200;
+const MAX_CODEX_HISTORY_PAGE_LIMIT: usize = 1000;
 
 // ============================================================================
 // Type Definitions
@@ -141,6 +143,15 @@ pub struct CodexSession {
 
     /// Last message timestamp (ISO string)
     pub last_message_timestamp: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexSessionHistoryPage {
+    pub messages: Vec<serde_json::Value>,
+    pub next_offset: usize,
+    pub returned_messages: usize,
+    pub has_more_before: bool,
 }
 
 /// Codex process handle with PID for proper cleanup
@@ -594,6 +605,113 @@ pub async fn load_codex_session_history(
     tokio::task::spawn_blocking(move || load_codex_session_history_blocking(session_id))
         .await
         .map_err(|e| format!("load_codex_session_history task failed: {}", e))?
+}
+
+/// Loads one page of Codex JSONL history from the end of the session file.
+/// `offset` counts physical non-empty JSONL lines already loaded from EOF.
+#[tauri::command]
+pub async fn load_codex_session_history_page(
+    session_id: String,
+    offset: usize,
+    limit: usize,
+) -> Result<CodexSessionHistoryPage, String> {
+    log::info!(
+        "load_codex_session_history_page called for: {}, offset={}, limit={}",
+        session_id,
+        offset,
+        limit
+    );
+
+    tokio::task::spawn_blocking(move || {
+        load_codex_session_history_page_blocking(
+            session_id,
+            offset,
+            limit,
+        )
+    })
+    .await
+    .map_err(|e| format!("load_codex_session_history_page task failed: {}", e))?
+}
+
+fn load_codex_session_history_page_blocking(
+    session_id: String,
+    offset: usize,
+    limit: usize,
+) -> Result<CodexSessionHistoryPage, String> {
+    let sessions_dir = get_codex_sessions_dir()?;
+
+    let session_file = find_session_file(&sessions_dir, &session_id)
+        .ok_or_else(|| format!("Session file not found for ID: {}", session_id))?;
+
+    let safe_limit = limit.min(MAX_CODEX_HISTORY_PAGE_LIMIT);
+    if safe_limit == 0 {
+        return Ok(CodexSessionHistoryPage {
+            messages: Vec::new(),
+            next_offset: offset,
+            returned_messages: 0,
+            has_more_before: false,
+        });
+    }
+
+    let line_window = read_jsonl_line_window_from_end(&session_file, offset, safe_limit)
+        .map_err(|e| format!("Failed to read Codex session history page: {}", e))?;
+
+    let mut events: Vec<serde_json::Value> = line_window
+        .lines
+        .iter()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .collect();
+
+    if offset == 0 {
+        if let Some(meta) = read_first_codex_session_meta(&session_file) {
+            if !events.iter().any(|event| event == &meta) {
+                events.insert(0, meta);
+            }
+        }
+    }
+
+    let returned_messages = events.len();
+    let next_offset = offset.saturating_add(line_window.selected_line_count);
+
+    log::info!(
+        "Loaded {} events from Codex session page {}, next_offset={}, has_more_before={}",
+        returned_messages,
+        session_id,
+        next_offset,
+        line_window.has_more_before
+    );
+
+    Ok(CodexSessionHistoryPage {
+        messages: events,
+        next_offset,
+        returned_messages,
+        has_more_before: line_window.has_more_before,
+    })
+}
+
+fn read_first_codex_session_meta(path: &std::path::Path) -> Option<serde_json::Value> {
+    use std::io::{BufRead, BufReader};
+
+    let file = std::fs::File::open(path).ok()?;
+    let reader = BufReader::new(file);
+
+    for line in reader.lines().map_while(Result::ok) {
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+
+        if event["type"].as_str() == Some("session_meta") {
+            return Some(event);
+        }
+
+        break;
+    }
+
+    None
 }
 
 fn load_codex_session_history_blocking(

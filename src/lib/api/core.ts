@@ -13,7 +13,8 @@ import type {
   FileEntry,
   ProjectUsage,
   UsageStats,
-  SessionCacheTokens
+  SessionCacheTokens,
+  SessionHistoryPage
 } from '@/lib/api/types';
 
 export const coreApi = {
@@ -476,6 +477,27 @@ export const coreApi = {
     }
     // For Claude sessions, use existing backend
     return invoke("load_session_history", { sessionId, projectId });
+  },
+
+  /**
+   * Loads one page of session history from the end of the backing JSONL file.
+   * This is the preferred API for the conversation view because it avoids
+   * parsing/transferring every historical event before the first paint.
+   */
+  async loadSessionHistoryPage(
+    sessionId: string,
+    projectId: string,
+    engine?: 'claude' | 'codex',
+    options?: { offset?: number; limit?: number }
+  ): Promise<SessionHistoryPage<LegacyAny>> {
+    const offset = options?.offset ?? 0;
+    const limit = options?.limit ?? 300;
+
+    if (engine === 'codex') {
+      return invoke("load_codex_session_history_page", { sessionId, offset, limit });
+    }
+
+    return invoke("load_session_history_page", { sessionId, projectId, offset, limit });
   },
 
   /**

@@ -17,6 +17,12 @@ interface PromptNavigatorProps {
   onClose: () => void;
   /** 点击提示词回调 */
   onPromptClick: (promptIndex: number) => void;
+  /** 当前已加载历史之前已有多少条真实提示词 */
+  promptIndexOffset?: number;
+  /** 分页历史下，提示词总数/偏移是否已准备好 */
+  isPromptIndexReady?: boolean;
+  /** 当前会话是否只加载了部分历史 */
+  hasMoreHistoryBefore?: boolean;
 }
 
 interface PromptItem {
@@ -104,7 +110,10 @@ export const PromptNavigator: React.FC<PromptNavigatorProps> = ({
   messages,
   isOpen,
   onClose,
-  onPromptClick
+  onPromptClick,
+  promptIndexOffset = 0,
+  isPromptIndexReady = true,
+  hasMoreHistoryBefore = false,
 }) => {
   // 搜索关键词
   const [searchQuery, setSearchQuery] = useState('');
@@ -123,7 +132,11 @@ export const PromptNavigator: React.FC<PromptNavigatorProps> = ({
   // 过滤逻辑与 getPromptIndexForMessage (ClaudeCodeSession.tsx) 保持一致
   // 排除 sidechain/子代理/warmup/skill/纯tool_result 等非真实用户输入
   const prompts = useMemo<PromptItem[]>(() => {
-    let promptIndex = 0;
+    if (hasMoreHistoryBefore && !isPromptIndexReady) {
+      return [];
+    }
+
+    let promptIndex = promptIndexOffset;
     const items: PromptItem[] = [];
 
     for (const message of messages) {
@@ -142,7 +155,7 @@ export const PromptNavigator: React.FC<PromptNavigatorProps> = ({
     }
 
     return items;
-  }, [messages]);
+  }, [hasMoreHistoryBefore, isPromptIndexReady, messages, promptIndexOffset]);
 
   // 过滤后的提示词
   const filteredPrompts = useMemo(() => {
@@ -155,15 +168,20 @@ export const PromptNavigator: React.FC<PromptNavigatorProps> = ({
     );
   }, [prompts, searchQuery]);
 
+  const minPromptNumber = prompts[0]?.promptIndex != null ? prompts[0].promptIndex + 1 : 1;
+  const maxPromptNumber = prompts[prompts.length - 1]?.promptIndex != null
+    ? prompts[prompts.length - 1].promptIndex + 1
+    : prompts.length;
+
   // 快速跳转处理
   const handleJump = useCallback(() => {
     const num = parseInt(jumpInput, 10);
-    if (!isNaN(num) && num >= 1 && num <= prompts.length) {
+    if (!isNaN(num) && num >= minPromptNumber && num <= maxPromptNumber) {
       onPromptClick(num - 1);
       setJumpInput('');
       setShowJumpInput(false);
     }
-  }, [jumpInput, prompts.length, onPromptClick]);
+  }, [jumpInput, maxPromptNumber, minPromptNumber, onPromptClick]);
 
   // 键盘快捷键
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -314,9 +332,9 @@ export const PromptNavigator: React.FC<PromptNavigatorProps> = ({
                 <Input
                   ref={jumpInputRef}
                   type="number"
-                  min={1}
-                  max={prompts.length}
-                  placeholder={`1-${prompts.length}`}
+                  min={minPromptNumber}
+                  max={maxPromptNumber}
+                  placeholder={`${minPromptNumber}-${maxPromptNumber}`}
                   value={jumpInput}
                   onChange={(e) => setJumpInput(e.target.value)}
                   onKeyDown={(e) => {
@@ -329,7 +347,7 @@ export const PromptNavigator: React.FC<PromptNavigatorProps> = ({
                 <Button
                   size="sm"
                   onClick={handleJump}
-                  disabled={!jumpInput || parseInt(jumpInput) < 1 || parseInt(jumpInput) > prompts.length}
+                  disabled={!jumpInput || parseInt(jumpInput) < minPromptNumber || parseInt(jumpInput) > maxPromptNumber}
                   className="h-7 px-2 text-xs"
                 >
                   跳转
@@ -343,7 +361,9 @@ export const PromptNavigator: React.FC<PromptNavigatorProps> = ({
             <div className={cn("p-2", isCompact ? "space-y-0.5" : "space-y-1")}>
               {filteredPrompts.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground text-sm">
-                  {searchQuery ? '未找到匹配的提示词' : '暂无提示词'}
+                  {hasMoreHistoryBefore && !isPromptIndexReady
+                    ? '正在加载提示词索引，避免跳转/撤回到错误位置…'
+                    : searchQuery ? '未找到匹配的提示词' : '暂无提示词'}
                 </div>
               ) : (
                 filteredPrompts.map((prompt) => (

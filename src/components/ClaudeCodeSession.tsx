@@ -34,10 +34,9 @@ import { PlanApprovalDialog } from '@/components/dialogs/PlanApprovalDialog';
 import { PlanModeStatusBar } from '@/components/widgets/system/PlanModeStatusBar';
 import { UserQuestionProvider, useUserQuestion } from '@/contexts/UserQuestionContext';
 import { AskUserQuestionDialog } from '@/components/dialogs/AskUserQuestionDialog';
-import { codexConverter } from '@/lib/codexConverter';
 import { convertGeminiSessionDetailToClaudeMessages } from '@/lib/geminiConverter';
 import { formatClaudeModelLabel, resolveClaudeContinuationModel } from '@/lib/claudeModelSelection';
-import { buildPromptIndexByMessage, getPromptIndexForDisplayableMessage } from '@/lib/promptIndex';
+import { buildPromptIndexByMessage, getPromptIndexForDisplayableMessage, isTrackedUserPrompt } from '@/lib/promptIndex';
 import { shouldSuppressProcessingIndicator } from '@/lib/executionTerminal';
 import { loadUiOnlySessionMessages, mergeUiOnlySessionMessages } from '@/lib/uiOnlySessionEvents';
 import { prepareRecentProjects } from '@/lib/recentProjects';
@@ -494,6 +493,9 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   // ✅ 新架构: 使用 useSessionStream（基于 AsyncQueue + ConverterRegistry）
   const {
     loadSessionHistory,
+    loadOlderSessionHistory,
+    hasMoreHistoryBefore,
+    isLoadingOlderHistory,
     checkForActiveSession,
     // reconnectToSession removed - listeners now persist across tab switches
     // messageQueue - 新增：消息队列，支持 for await...of 消费
@@ -564,6 +566,73 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     }
     return null;
   }, [session, extractedSessionInfo, projectPath, sessionNotFound]);
+
+  const loadedTrackedPromptCount = useMemo(
+    () => messages.filter(message => isTrackedUserPrompt(message)).length,
+    [messages],
+  );
+  const [totalPromptCountForIndexing, setTotalPromptCountForIndexing] = useState<number | null>(null);
+  const [isPromptIndexReady, setIsPromptIndexReady] = useState(true);
+
+  useEffect(() => {
+    if (!effectiveSession || !hasMoreHistoryBefore) {
+      setTotalPromptCountForIndexing(null);
+      setIsPromptIndexReady(true);
+      return;
+    }
+
+    let cancelled = false;
+    setIsPromptIndexReady(false);
+
+    const loadPromptCount = async () => {
+      try {
+        const engine = effectiveSession.engine || executionEngineConfig.engine || 'claude';
+        const prompts = engine === 'codex'
+          ? await api.getCodexPromptList(effectiveSession.id)
+          : engine === 'gemini'
+          ? await api.getGeminiPromptList(effectiveSession.id, projectPath)
+          : await api.getPromptList(effectiveSession.id, effectiveSession.project_id);
+
+        if (cancelled) return;
+
+        // 如果提示词索引扫描失败，API 会兜底返回 []。这种情况下不要显示
+        // 局部历史算出来的错误编号，避免“撤回到更早位置”的老问题复发。
+        if (prompts.length < loadedTrackedPromptCount) {
+          setTotalPromptCountForIndexing(null);
+          setIsPromptIndexReady(false);
+          return;
+        }
+
+        setTotalPromptCountForIndexing(prompts.length);
+        setIsPromptIndexReady(true);
+      } catch (error) {
+        console.error('[ClaudeCodeSession] Failed to load prompt count for paged history:', error);
+        if (!cancelled) {
+          setTotalPromptCountForIndexing(null);
+          setIsPromptIndexReady(false);
+        }
+      }
+    };
+
+    void loadPromptCount();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    effectiveSession,
+    executionEngineConfig.engine,
+    hasMoreHistoryBefore,
+    loadedTrackedPromptCount,
+    projectPath,
+  ]);
+
+  const promptIndexOffset = useMemo(() => {
+    if (!hasMoreHistoryBefore || totalPromptCountForIndexing == null) {
+      return 0;
+    }
+    return Math.max(0, totalPromptCountForIndexing - loadedTrackedPromptCount);
+  }, [hasMoreHistoryBefore, loadedTrackedPromptCount, totalPromptCountForIndexing]);
 
   useEffect(() => {
     if (executionEngineConfig.engine !== 'codex') {
@@ -990,13 +1059,27 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   // 只计算真实用户输入，排除系统消息和工具结果
   const promptIndexByMessage = useMemo(() => buildPromptIndexByMessage(messages), [messages]);
   const getPromptIndexForMessage = useCallback((displayableIndex: number): number => {
-    return getPromptIndexForDisplayableMessage(
+    const localPromptIndex = getPromptIndexForDisplayableMessage(
       messages,
       displayableMessages,
       displayableIndex,
       promptIndexByMessage,
     );
-  }, [messages, displayableMessages, promptIndexByMessage]);
+    if (localPromptIndex < 0) {
+      return -1;
+    }
+    if (hasMoreHistoryBefore && !isPromptIndexReady) {
+      return -1;
+    }
+    return localPromptIndex + promptIndexOffset;
+  }, [
+    messages,
+    displayableMessages,
+    promptIndexByMessage,
+    hasMoreHistoryBefore,
+    isPromptIndexReady,
+    promptIndexOffset,
+  ]);
 
 
   // 🆕 撤回处理函数 - 支持三种撤回模式
@@ -1057,27 +1140,8 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
         const convertedMessages = convertGeminiSessionDetailToClaudeMessages(geminiDetail) as ClaudeStreamMessage[];
         setMessages(withUiOnlyEvents(convertedMessages));
       } else {
-        // Claude/Codex 使用原有 API
-        const history = await api.loadSessionHistory(
-          effectiveSession.id,
-          effectiveSession.project_id,
-          sessionEngine as LegacyAny
-        );
-
-        if (sessionEngine === 'codex' && Array.isArray(history)) {
-          // 将 Codex 事件转换为消息格式（与 useSessionStream 保持一致）
-          codexConverter.reset();
-          const convertedMessages: LegacyAny[] = [];
-          for (const event of history) {
-            const msg = codexConverter.convertEventObject(event as LegacyAny);
-            if (msg) convertedMessages.push(msg);
-          }
-          setMessages(withUiOnlyEvents(convertedMessages));
-        } else if (Array.isArray(history)) {
-          setMessages(withUiOnlyEvents(history));
-        } else if (history && typeof history === 'object' && 'messages' in history) {
-          setMessages(withUiOnlyEvents((history as LegacyAny).messages));
-        }
+        // Claude/Codex 走 useSessionStream 的分页首屏加载，避免撤回后再次全量加载长 JSONL。
+        await loadSessionHistory();
       }
 
       // 恢复提示词到输入框（仅在对话撤回模式下）
@@ -1092,7 +1156,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       console.error('[Prompt Revert] Failed to revert:', error);
       setError('__REVERT_FAILED__:' + error);
     }
-  }, [effectiveSession, executionEngineConfig.engine, projectPath, setMessages]);
+  }, [effectiveSession, executionEngineConfig.engine, loadSessionHistory, projectPath, setMessages]);
 
   // Cleanup event listeners and track mount state
   // ⚠️ IMPORTANT: No dependencies! Only cleanup on real unmount
@@ -1134,6 +1198,9 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
         parentRef={parentRef}
         executionStatus={executionStatus}
         onCancel={handleCancelExecution}
+        hasMoreHistoryBefore={hasMoreHistoryBefore}
+        isLoadingOlderHistory={isLoadingOlderHistory}
+        onLoadOlderHistory={loadOlderSessionHistory}
       />
     </SessionProvider>
   );
@@ -1447,6 +1514,9 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
         isOpen={showPromptNavigator}
         onClose={() => setShowPromptNavigator(false)}
         onPromptClick={handlePromptNavigation}
+        promptIndexOffset={promptIndexOffset}
+        isPromptIndexReady={isPromptIndexReady}
+        hasMoreHistoryBefore={hasMoreHistoryBefore}
       />
 
     </div>

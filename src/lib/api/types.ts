@@ -66,6 +66,20 @@ export interface Session {
 }
 
 /**
+ * One incremental page of session JSONL history.
+ *
+ * `nextOffset` counts non-empty JSONL lines already consumed from the end of
+ * the backing history file. It is intentionally line-based so invalid/unknown
+ * entries do not cause duplicate pages.
+ */
+export interface SessionHistoryPage<T = LegacyAny> {
+  messages: T[];
+  nextOffset: number;
+  returnedMessages: number;
+  hasMoreBefore: boolean;
+}
+
+/**
  * Session conversion source information
  */
 export interface ConversionSource {

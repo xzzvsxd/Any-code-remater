@@ -184,3 +184,25 @@ pub async fn load_session_history(
     .await
     .map_err(|e| format!("load_session_history task failed: {}", e))?
 }
+
+/// Loads one page of JSONL history for a specific session, counting from the
+/// end of the main session file. Used by the UI for fast first paint and
+/// incremental "load older" history.
+#[tauri::command]
+pub async fn load_session_history_page(
+    session_id: String,
+    project_id: String,
+    offset: usize,
+    limit: usize,
+) -> Result<session_history::SessionHistoryPage, String> {
+    tokio::task::spawn_blocking(move || {
+        session_history::load_session_history_page(
+            &session_id,
+            &project_id,
+            offset,
+            limit,
+        )
+    })
+    .await
+    .map_err(|e| format!("load_session_history_page task failed: {}", e))?
+}

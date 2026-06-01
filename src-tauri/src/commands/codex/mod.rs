@@ -45,7 +45,7 @@ pub use session_converter::{ConversionResult, ConversionSource};
 
 pub use session::{
     cancel_codex, delete_codex_session, execute_codex, list_codex_sessions,
-    load_codex_session_history, resume_codex, resume_last_codex,
+    load_codex_session_history, load_codex_session_history_page, resume_codex, resume_last_codex,
 };
 
 // ============================================================================

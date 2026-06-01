@@ -3,6 +3,7 @@ export type {
   ProcessInfo,
   Project,
   Session,
+  SessionHistoryPage,
   ConversionSource,
   ConversionResult,
   ClaudeSettings,
