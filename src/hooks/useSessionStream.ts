@@ -488,7 +488,14 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
     if (!session) return;
 
     // 🔧 FIX: Do not check for active sessions if this is a new session instance.
-    // Re[isMountedRef, isListeningRef, hasActiveSessionRef, unlistenRefs, getEngine, setCancelSessionId, setClaudeSessionId, setError, setIsLoading, processMessage, getRunElapsedSeconds, session?.project_path]= 'gemini') return;
+    // Reconnecting would set up duplicate event listeners and show stale state.
+    if (isNewSessionInstance) {
+      console.debug('[useSessionStream] Skipping checkForActiveSession - new session instance');
+      return;
+    }
+
+    const engine = getEngine();
+    if (engine === 'codex' || engine === 'gemini') return;
 
     const currentSessionId = session.id;
 
@@ -513,7 +520,15 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
     } catch (err) {
       console.error('[useSessionStream] Failed to check active sessions:', err);
     }
-  }, [session, setCancelSessionId, setClaudeSessionId, hasActiveSessionRef, reconnectToSession]);
+  }, [
+    session,
+    isNewSessionInstance,
+    getEngine,
+    setCancelSessionId,
+    setClaudeSessionId,
+    hasActiveSessionRef,
+    reconnectToSession,
+  ]);
 
   // 清理（组件卸载时）
   useEffect(() => {

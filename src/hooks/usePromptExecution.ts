@@ -26,6 +26,7 @@ import { cacheCodexModelFromStream, cacheModelFromInitMessage } from '@/lib/mode
 import { notifyAiExecutionComplete } from '@/lib/aiCompletionNotification';
 import { resolveInitialCancelSessionId } from '@/lib/cancelChannel';
 import { persistUiOnlySessionMessage } from '@/lib/uiOnlySessionEvents';
+import { awaitPromptBookkeeping } from '@/hooks/usePromptExecution/bookkeeping';
 import { setupGeminiPromptListeners } from '@/hooks/usePromptExecution/geminiListeners';
 import type {
   ClaudeGlobalEventPayload,
@@ -806,6 +807,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
         // 🔧 FIX: Track pending prompt recording Promise to avoid race condition
         let pendingClaudePromptRecordingPromise: Promise<void> | null = null;
+        let hasProcessedClaudeComplete = false;
 
         // Helper function to generate message ID for deduplication
         const getClaudeMessageId = (payload: string): string => {
@@ -934,13 +936,33 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         // Helper: Process Completion
         // ====================================================================
         const processComplete = async () => {
-          const completedSessionId = currentSessionId || effectiveSession?.id || claudeSessionId || null;
+          if (hasProcessedClaudeComplete) {
+            return;
+          }
+          hasProcessedClaudeComplete = true;
 
+          const completedSessionId = currentSessionId || effectiveSession?.id || claudeSessionId || null;
+          const sessionIdForCompletionRecord = currentSessionId || effectiveSession?.id || claudeSessionId || undefined;
+
+          // 先解除 UI 阻塞，再做 prompt 记录/完成提醒等收尾 I/O。
+          // 旧逻辑先 await recordPromptSent，遇到慢磁盘/索引卡住时会表现为“消息已返回但界面一直执行中”。
+          setIsLoading(false);
+          hasActiveSessionRef.current = false;
+          bindCancelSessionId(null);
+          isListeningRef.current = false;
+
+          // 🆕 Clean up listeners to prevent memory leak
+          unlistenRefs.current.forEach(u => u && typeof u === 'function' && u());
+          unlistenRefs.current = [];
+
+          // Reset currentSessionId to allow detection of new session_id
+          currentSessionId = null;
 
           // 🔧 FIX: Wait for pending prompt recording to complete (race condition fix)
-          if (pendingClaudePromptRecordingPromise) {
-            await pendingClaudePromptRecordingPromise;
-            pendingClaudePromptRecordingPromise = null;
+          const promptRecordingPromise = pendingClaudePromptRecordingPromise;
+          pendingClaudePromptRecordingPromise = null;
+          if (promptRecordingPromise) {
+            await awaitPromptBookkeeping(promptRecordingPromise, 'Claude prompt recording');
           }
 
           // Mark prompt as completed (record Git state after completion)
@@ -949,7 +971,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             // 优先使用本轮运行里最新拿到的 session_id。
             // Claude 在 plan/continue/resume 场景下可能返回新的会话 ID，
             // 如果这里继续使用旧的 effectiveSession.id，会导致记录写到旧会话里。
-            const sessionId = currentSessionId || effectiveSession?.id;
+            const sessionId = sessionIdForCompletionRecord;
             const projectId = effectiveSession?.project_id || extractedSessionInfo?.projectId || projectPath.replace(/[^a-zA-Z0-9]/g, '-');
 
             if (sessionId && projectId) {
@@ -968,17 +990,6 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             }
           }
 
-          setIsLoading(false);
-          hasActiveSessionRef.current = false;
-          bindCancelSessionId(null);
-          isListeningRef.current = false;
-
-          // 🆕 Clean up listeners to prevent memory leak
-          unlistenRefs.current.forEach(u => u && typeof u === 'function' && u());
-          unlistenRefs.current = [];
-
-          // Reset currentSessionId to allow detection of new session_id
-          currentSessionId = null;
           await notifyCompletionIfIdle('claude', completedSessionId);
           // Process queued prompts after completion
           runNextQueuedPrompt();
