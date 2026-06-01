@@ -40,6 +40,7 @@ import { buildPromptIndexByMessage, getPromptIndexForDisplayableMessage, isTrack
 import { shouldSuppressProcessingIndicator } from '@/lib/executionTerminal';
 import { loadUiOnlySessionMessages, mergeUiOnlySessionMessages } from '@/lib/uiOnlySessionEvents';
 import { prepareRecentProjects } from '@/lib/recentProjects';
+import { shouldInitializeResumedSession } from '@/lib/sessionInitialization';
 import { SessionHeader } from "./session/SessionHeader";
 import { SessionMessages, type SessionMessagesRef } from "./session/SessionMessages";
 
@@ -192,6 +193,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   // becomes defined (due to TabSessionWrapper memo allowing re-render on isActive change
   // after the tab's session was upgraded via updateTabSession).
   const wasCreatedAsNewSessionRef = useRef(!session);
+  const initializedResumedSessionIdRef = useRef<string | null>(null);
 
   // Plan Mode state - 使用 Context（方案 B-1）
   const {
@@ -759,59 +761,53 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
 
   // Load session history if resuming
   useEffect(() => {
-    if (session) {
-      // 🔧 FIX: If this component was created as a new session (session prop was initially undefined),
-      // do NOT auto-load history when the session prop later becomes defined.
-      // This happens when TabSessionWrapper re-renders due to isActive change after the tab's
-      // session was upgraded via updateTabSession. The component already has the correct
-      // messages from streaming - re-loading history would overwrite them and cause the
-      // "reverting to restoring latest session" bug.
-      if (wasCreatedAsNewSessionRef.current) {
-        // Check if this session was extracted by this component instance
-        if (extractedSessionInfo && extractedSessionInfo.sessionId === session.id) {
-          console.debug('[ClaudeCodeSession] Skipping session load - session was created by this instance:', session.id);
-          return;
-        }
-        // If extractedSessionInfo doesn't match, this is a genuinely different session prop
-        // (shouldn't happen in current architecture, but handle defensively)
-        if (!extractedSessionInfo) {
-          console.debug('[ClaudeCodeSession] Skipping session load - new session instance, no extracted info yet');
-          return;
-        }
-      }
-
-      // 🆕 Auto-switch execution engine based on session type
-      const sessionEngine = (session as LegacyAny).engine;
-
-      if (sessionEngine === 'codex') {
-        setExecutionEngineConfig(prev => ({
-          ...prev,
-          engine: 'codex' as const,
-        }));
-      } else if (sessionEngine === 'gemini') {
-        setExecutionEngineConfig(prev => ({
-          ...prev,
-          engine: 'gemini' as const,
-        }));
-      } else {
-        setExecutionEngineConfig(prev => ({
-          ...prev,
-          engine: 'claude',
-        }));
-      }
-
-      // Load session history first, then check for active session
-      const initializeSession = async () => {
-        await loadSessionHistory();
-        // After loading history, check if the session is still active
-        if (isMountedRef.current) {
-          await checkForActiveSession();
-        }
-      };
-
-      initializeSession();
+    if (!shouldInitializeResumedSession({
+      isActive,
+      sessionId: session?.id,
+      loadedSessionId: initializedResumedSessionIdRef.current,
+      wasCreatedAsNewSession: wasCreatedAsNewSessionRef.current,
+      extractedSessionId: extractedSessionInfo?.sessionId,
+    })) {
+      return;
     }
-  }, [checkForActiveSession, extractedSessionInfo, loadSessionHistory, session]); // Remove hasLoadedSession dependency to ensure it runs on mount
+
+    if (!session) return;
+
+    initializedResumedSessionIdRef.current = session.id;
+
+    // 🆕 Auto-switch execution engine based on session type
+    const sessionEngine = (session as LegacyAny).engine;
+
+    if (sessionEngine === 'codex') {
+      setExecutionEngineConfig(prev => ({
+        ...prev,
+        engine: 'codex' as const,
+      }));
+    } else if (sessionEngine === 'gemini') {
+      setExecutionEngineConfig(prev => ({
+        ...prev,
+        engine: 'gemini' as const,
+      }));
+    } else {
+      setExecutionEngineConfig(prev => ({
+        ...prev,
+        engine: 'claude',
+      }));
+    }
+
+    // Load session history first, then check for active session.
+    // Hidden tabs remain mounted for state preservation, but they must not do
+    // this expensive work until the user actually switches to them.
+    const initializeSession = async () => {
+      await loadSessionHistory();
+      // After loading history, check if the session is still active
+      if (isMountedRef.current && initializedResumedSessionIdRef.current === session.id) {
+        await checkForActiveSession();
+      }
+    };
+
+    initializeSession();
+  }, [checkForActiveSession, extractedSessionInfo?.sessionId, isActive, loadSessionHistory, session]); // Remove hasLoadedSession dependency to ensure it runs on mount
 
   // Load Claude settings once for all StreamMessage components
   useEffect(() => {
