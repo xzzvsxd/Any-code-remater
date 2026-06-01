@@ -356,7 +356,6 @@ impl ProcessRegistry {
     }
 
     /// Kill a running process with proper cleanup
-    #[cfg_attr(unix, allow(unreachable_code))]
     pub async fn kill_process(&self, run_id: i64) -> Result<bool, String> {
         use log::{error, info, warn};
 
@@ -380,8 +379,19 @@ impl ProcessRegistry {
         #[cfg(unix)]
         {
             match self.kill_process_by_pid(run_id, pid) {
-                Ok(success) => return Ok(success),
-                Err(e) => return Err(e),
+                Ok(true) => return Ok(true),
+                Ok(false) => {
+                    warn!(
+                        "Safe process-group kill refused or failed for process {} (PID: {}); falling back to direct child kill only",
+                        run_id, pid
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "Safe process-group kill errored for process {} (PID: {}): {}; falling back to direct child kill only",
+                        run_id, pid, e
+                    );
+                }
             }
         }
 
