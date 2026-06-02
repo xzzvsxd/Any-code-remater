@@ -8,6 +8,7 @@ import {
   List
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { SortableList } from "@/components/ui/sortable-list";
 import { api, type Session, type Project } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { type UnlistenFn } from "@tauri-apps/api/event";
@@ -1305,43 +1306,54 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
               exit={{ opacity: 0, y: 20 }}
               className="flex-shrink-0 w-full max-w-3xl mx-auto px-4 pb-2"
             >
-              <div className="floating-element backdrop-enhanced rounded-lg p-3 space-y-2">
+              <div className="floating-element backdrop-enhanced rounded-lg px-2.5 py-1.5">
                 <div className="flex items-center justify-between">
-                  <div className="text-xs font-medium text-muted-foreground mb-1">
+                  <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                    <List className="h-3.5 w-3.5" />
                     {t('session.queuedPrompts', { count: queuedPrompts.length })}
                   </div>
-                  <Button variant="ghost" size="icon" onClick={() => setQueuedPromptsCollapsed(prev => !prev)}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    onClick={() => setQueuedPromptsCollapsed(prev => !prev)}
+                  >
                     {queuedPromptsCollapsed ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                   </Button>
                 </div>
-                {!queuedPromptsCollapsed && queuedPrompts.map((queuedPrompt, index) => (
-                  <motion.div
-                    key={queuedPrompt.id}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: 20 }}
-                    transition={{ delay: index * 0.05 }}
-                    className="flex items-start gap-2 bg-muted/50 rounded-md p-2"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-xs font-medium text-muted-foreground">#{index + 1}</span>
-                        <span className="text-xs px-1.5 py-0.5 bg-primary/10 text-primary rounded">
-                          {formatClaudeModelLabel(queuedPrompt.model)}
-                        </span>
-                      </div>
-                      <p className="text-sm line-clamp-2 break-words">{queuedPrompt.prompt}</p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 flex-shrink-0"
-                      onClick={() => setQueuedPrompts(prev => prev.filter(p => p.id !== queuedPrompt.id))}
-                    >
-                      <X className="h-3 w-3" />
-                    </Button>
-                  </motion.div>
-                ))}
+                {!queuedPromptsCollapsed && (
+                  <div className="mt-1">
+                    <SortableList
+                      items={queuedPrompts}
+                      onReorder={setQueuedPrompts}
+                      listClassName="space-y-1"
+                      renderItem={(queuedPrompt, index) => (
+                        <div className="group flex items-center gap-2 bg-muted/40 hover:bg-muted/60 rounded-md py-1 pr-1 pl-1.5 transition-colors">
+                          <span className="text-[11px] font-semibold text-muted-foreground tabular-nums w-4 text-center flex-shrink-0">
+                            {index + 1}
+                          </span>
+                          <span className="text-[10px] leading-none px-1.5 py-0.5 bg-primary/10 text-primary rounded flex-shrink-0">
+                            {formatClaudeModelLabel(queuedPrompt.model)}
+                          </span>
+                          <p
+                            className="flex-1 min-w-0 text-xs truncate"
+                            title={queuedPrompt.prompt}
+                          >
+                            {queuedPrompt.prompt}
+                          </p>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-5 w-5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                            onClick={() => setQueuedPrompts(prev => prev.filter(p => p.id !== queuedPrompt.id))}
+                          >
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      )}
+                    />
+                  </div>
+                )}
               </div>
             </motion.div>
           )}

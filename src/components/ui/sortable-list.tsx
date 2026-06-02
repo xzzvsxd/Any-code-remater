@@ -89,6 +89,8 @@ export interface SortableListProps<T extends { id: string }> {
   disabled?: boolean;
   /** 判断某个项目是否禁用拖拽 */
   isItemDisabled?: (item: T) => boolean;
+  /** 自定义列表容器间距类（默认 space-y-4），用于紧凑场景 */
+  listClassName?: string;
 }
 
 /**
@@ -100,6 +102,7 @@ export function SortableList<T extends { id: string }>({
   renderItem,
   disabled,
   isItemDisabled,
+  listClassName = 'space-y-4',
 }: SortableListProps<T>) {
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -125,7 +128,7 @@ export function SortableList<T extends { id: string }>({
 
   if (disabled) {
     return (
-      <div className="space-y-4">
+      <div className={listClassName}>
         {items.map((item, index) => (
           <div key={item.id}>{renderItem(item, index)}</div>
         ))}
@@ -143,7 +146,7 @@ export function SortableList<T extends { id: string }>({
         items={items.map((item) => item.id)}
         strategy={verticalListSortingStrategy}
       >
-        <div className="space-y-4">
+        <div className={listClassName}>
           {items.map((item, index) => (
             <SortableItem
               key={item.id}
