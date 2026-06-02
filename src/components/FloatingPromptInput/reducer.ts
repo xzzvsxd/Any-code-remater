@@ -14,6 +14,7 @@ export interface InputState {
 
 export type InputAction =
   | { type: "SET_PROMPT"; payload: string }
+  | { type: "APPEND_PROMPT"; payload: string }
   | { type: "SET_MODEL"; payload: ModelType }
   | { type: "SET_THINKING_MODE"; payload: { mode: ThinkingMode; effort?: ThinkingEffort } }
   | { type: "SET_EXPANDED"; payload: boolean }
@@ -44,6 +45,14 @@ export function inputReducer(state: InputState, action: InputAction): InputState
   switch (action.type) {
     case "SET_PROMPT":
       return { ...state, prompt: action.payload };
+    case "APPEND_PROMPT": {
+      const addition = action.payload;
+      if (!addition) return state;
+      // 当前非空则换行分隔后追加，避免内容粘连；为空时直接置入。
+      // 在 reducer 内拼接可避免 imperative handle 闭包读到 stale 的 state.prompt。
+      const next = state.prompt ? `${state.prompt}\n${addition}` : addition;
+      return { ...state, prompt: next };
+    }
     case "SET_MODEL":
       return { ...state, selectedModel: action.payload };
     case "SET_THINKING_MODE":

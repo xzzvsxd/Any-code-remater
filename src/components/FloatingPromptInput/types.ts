@@ -201,4 +201,6 @@ export interface FloatingPromptInputProps {
 export interface FloatingPromptInputRef {
   addImage: (imagePath: string) => void;
   setPrompt: (text: string) => void;
+  /** 追加文本到输入框（不覆盖现有内容），用于从队列取回提示词编辑 */
+  appendPrompt: (text: string) => void;
 }

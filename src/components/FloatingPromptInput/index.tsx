@@ -416,6 +416,7 @@ const FloatingPromptInputInner = (
   useImperativeHandle(ref, () => ({
     addImage,
     setPrompt: (text: string) => dispatch({ type: "SET_PROMPT", payload: text }),
+    appendPrompt: (text: string) => dispatch({ type: "APPEND_PROMPT", payload: text }),
   }));
 
   // Toggle thinking mode - cycle through: off → high → max → low → medium → off

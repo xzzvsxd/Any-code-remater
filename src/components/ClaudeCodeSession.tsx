@@ -6,7 +6,8 @@ import {
   ChevronUp,
   X,
   List,
-  GripVertical
+  GripVertical,
+  Pencil
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SortableList, SortableDragHandle } from "@/components/ui/sortable-list";
@@ -1346,6 +1347,19 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
                           >
                             {queuedPrompt.prompt}
                           </p>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-5 w-5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                            title={t('buttons.edit')}
+                            onClick={() => {
+                              // 取回到输入框编辑：append（不覆盖现有内容）后从队列移除，避免重复发送
+                              floatingPromptRef.current?.appendPrompt(queuedPrompt.prompt);
+                              setQueuedPrompts(prev => prev.filter(p => p.id !== queuedPrompt.id));
+                            }}
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </Button>
                           <Button
                             variant="ghost"
                             size="icon"
