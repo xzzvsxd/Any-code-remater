@@ -18,7 +18,14 @@ import { api } from './api';
 // ============================================================================
 
 export const CLAUDE_PRICING = {
-  // Claude 4.7 Series (Latest - May 2026)
+  // Claude 4.8 Series (Latest - 2026)
+  'claude-opus-4-8': {
+    input: 15.0,
+    output: 75.0,
+    cache_write: 18.75,
+    cache_read: 1.50,
+  },
+  // Claude 4.7 Series
   'claude-opus-4-7': {
     input: 15.0,
     output: 75.0,
@@ -104,6 +111,9 @@ export const CLAUDE_PRICING = {
 // ============================================================================
 
 export const CLAUDE_CONTEXT_WINDOWS = {
+  // Claude 4.8 Series
+  'claude-opus-4-8': 200000,
+  'claude-opus-4-8[1m]': 1000000,
   // Claude 4.7 / 4.6 Series
   'claude-opus-4-7': 200000,
   'claude-opus-4-7[1m]': 1000000,
@@ -294,11 +304,20 @@ export function getContextWindowSize(model?: string, engine?: string): number {
     return CLAUDE_CONTEXT_WINDOWS[normalizedModel as keyof typeof CLAUDE_CONTEXT_WINDOWS];
   }
 
+  // 通用 [1m] / 1m 后缀检测：任何显式声明 1M 上下文的 Claude 模型（如 claude-opus-4-8[1m]）
+  // 不依赖逐个版本硬编码，未来新型号只要带此后缀即可自动识别为 1M
+  const lowerModel = model.toLowerCase();
+  if (/\[1m\]|[-_]1m\b|\b1m\b/.test(lowerModel)) {
+    return 1000000;
+  }
+
   return CLAUDE_CONTEXT_WINDOWS['default'];
 }
 export const MODEL_ALIASES = {
-  'opus': 'claude-opus-4-7',
-  'opus1m': 'claude-opus-4-7[1m]',
+  'opus': 'claude-opus-4-8',
+  'opus1m': 'claude-opus-4-8[1m]',
+  'opus4.8': 'claude-opus-4-8',
+  'opus-4.8': 'claude-opus-4-8',
   'opus4.7': 'claude-opus-4-7',
   'opus-4.7': 'claude-opus-4-7',
   'opus4.6': 'claude-opus-4-6',
@@ -476,7 +495,12 @@ export class TokenCounterService {
 
     // Priority-based matching (order matters! MUST match backend logic)
 
-    // Claude 4.7 Series (Latest)
+    // Claude 4.8 Series (Latest)
+    if (normalized.includes('opus') && (normalized.includes('4.8') || normalized.includes('4-8'))) {
+      return 'claude-opus-4-8';
+    }
+
+    // Claude 4.7 Series
     if (normalized.includes('opus') && (normalized.includes('4.7') || normalized.includes('4-7'))) {
       return 'claude-opus-4-7';
     }
@@ -510,7 +534,7 @@ export class TokenCounterService {
       return 'claude-haiku-4-5'; // Default to latest
     }
     if (normalized.includes('opus')) {
-      return 'claude-opus-4-7'; // Default to latest
+      return 'claude-opus-4-8'; // Default to latest
     }
     if (normalized.includes('sonnet')) {
       return 'claude-sonnet-4-6'; // Default to latest

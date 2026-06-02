@@ -129,6 +129,7 @@ struct ModelPricing {
 /// Model family enumeration for categorization
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ModelFamily {
+    Opus48,   // Claude 4.8 Opus
     Opus47,   // Claude 4.7 Opus
     Opus46,   // Claude 4.6 Opus
     Sonnet46, // Claude 4.6 Sonnet
@@ -143,6 +144,13 @@ impl ModelPricing {
     /// Get pricing for a specific model family
     const fn for_family(family: ModelFamily) -> Self {
         match family {
+            // Claude 4.8 Series (Latest - 2026)
+            ModelFamily::Opus48 => ModelPricing {
+                input: 15.0,
+                output: 75.0,
+                cache_write: 18.75,
+                cache_read: 1.50,
+            },
             // Claude 4.7 Series (Latest - May 2026)
             ModelFamily::Opus47 => ModelPricing {
                 input: 5.0,
@@ -221,6 +229,11 @@ fn parse_model_family(model: &str) -> ModelFamily {
     // Priority-based matching (order matters!)
     // Check for specific model families in order from most to least specific
 
+    // Claude 4.8 Series (Latest)
+    if normalized.contains("opus") && (normalized.contains("4.8") || normalized.contains("4-8")) {
+        return ModelFamily::Opus48;
+    }
+
     // Claude 4.7 Series (Latest)
     if normalized.contains("opus") && (normalized.contains("4.7") || normalized.contains("4-7")) {
         return ModelFamily::Opus47;
@@ -255,7 +268,7 @@ fn parse_model_family(model: &str) -> ModelFamily {
         return ModelFamily::Haiku45; // Default to latest Haiku
     }
     if normalized.contains("opus") {
-        return ModelFamily::Opus47; // Default to latest Opus
+        return ModelFamily::Opus48; // Default to latest Opus
     }
     if normalized.contains("sonnet") {
         return ModelFamily::Sonnet46; // Default to latest Sonnet

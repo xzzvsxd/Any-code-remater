@@ -16,8 +16,25 @@ import { USAGE_LEVEL_COLORS } from '@/types/contextWindow';
 import { cn } from '@/lib/utils';
 import type { ClaudeStreamMessage } from '@/types/claude';
 
-// Claude 的 Auto-compact buffer 预留量 (45k tokens)
-const AUTO_COMPACT_BUFFER = 45000;
+// Claude 的 Auto-compact buffer 动态预留量
+// 不再写死 45k：按上下文窗口大小按比例预留，并钳制下限，
+// 使其同时适配 200K 与 1M（claude-opus-4-8[1m]）等不同窗口。
+// 比例 0.225 = 45000 / 200000，保证 200K 窗口仍预留 45k（向后兼容），1M 窗口则自动扩展到约 225k。
+const AUTO_COMPACT_BUFFER_RATIO = 0.225;
+const MIN_AUTO_COMPACT_BUFFER = 13000;
+
+/**
+ * 根据上下文窗口大小动态计算 Auto-compact buffer 预留量
+ * @param contextWindowSize 上下文窗口总大小（tokens）
+ * @returns 预留的 buffer tokens
+ */
+const getAutoCompactBuffer = (contextWindowSize: number): number => {
+  if (!contextWindowSize || contextWindowSize <= 0) return MIN_AUTO_COMPACT_BUFFER;
+  return Math.max(
+    MIN_AUTO_COMPACT_BUFFER,
+    Math.round(contextWindowSize * AUTO_COMPACT_BUFFER_RATIO)
+  );
+};
 
 export interface ContextWindowIndicatorProps {
   /** 会话消息列表 */
@@ -68,7 +85,8 @@ export const ContextWindowIndicator: React.FC<ContextWindowIndicatorProps> = ({
 
   // 计算 Auto-compact 相关数据（仅 Claude 引擎）
   const isClaudeEngine = engine === 'claude';
-  const autoCompactThreshold = usage.contextWindowSize - AUTO_COMPACT_BUFFER;
+  const autoCompactBuffer = getAutoCompactBuffer(usage.contextWindowSize);
+  const autoCompactThreshold = usage.contextWindowSize - autoCompactBuffer;
   const autoCompactThresholdPercentage = (autoCompactThreshold / usage.contextWindowSize) * 100;
   const tokensUntilCompact = Math.max(0, autoCompactThreshold - usage.currentTokens);
   const isNearCompact = isClaudeEngine && usage.currentTokens >= autoCompactThreshold * 0.9; // 90% of threshold
@@ -188,7 +206,7 @@ export const ContextWindowIndicator: React.FC<ContextWindowIndicatorProps> = ({
                 <div className="space-y-1 pl-5">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">预留空间:</span>
-                    <span className="font-mono">{formatK(AUTO_COMPACT_BUFFER)}</span>
+                    <span className="font-mono">{formatK(autoCompactBuffer)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">压缩阈值:</span>
