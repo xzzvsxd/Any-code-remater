@@ -801,7 +801,8 @@
     "subagent": "Subagent",
     "executionProcess": "Execution Process",
     "messageCount": "{{count}} messages",
-    "noSubagentMessages": "No subagent messages"
+    "noSubagentMessages": "No subagent messages",
+    "viewConversation": "View Conversation"
   },
   "provider": {
     "loadConfigFailed": "Failed to load provider config",

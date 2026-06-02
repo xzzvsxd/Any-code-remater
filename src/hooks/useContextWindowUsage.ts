@@ -21,6 +21,7 @@
 import { useMemo } from 'react';
 import { getContextWindowSize } from '@/lib/tokenCounter';
 import { getRuntimeModelFromMessages } from '@/lib/claudeModelSelection';
+import { isSubagentMessage } from '@/lib/subagentGrouping';
 import { normalizeUsageData } from '@/lib/utils';
 import { ContextWindowUsage, ContextUsageLevel, getUsageLevel } from '@/types/contextWindow';
 import type { ClaudeStreamMessage } from '@/types/claude';
@@ -192,13 +193,16 @@ export function useContextWindowUsage(
   engine?: string
 ): UseContextWindowUsageResult {
   return useMemo(() => {
+    // 上下文窗口只统计主对话：过滤掉子代理（Task）消息，避免子对话的 usage 把主对话统计带偏。
+    const mainMessages = messages.filter(m => !isSubagentMessage(m));
+
     // 获取上下文窗口大小（根据引擎和模型）
     let contextWindowSize = getContextWindowSize(model, engine);
 
     // Codex: prefer runtime-reported context window when available (token_count events)
     if (engine === 'codex') {
-      for (let i = messages.length - 1; i >= 0; i--) {
-        const maybeCtx = (messages[i] as any)?.codexMetadata?.modelContextWindow;
+      for (let i = mainMessages.length - 1; i >= 0; i--) {
+        const maybeCtx = (mainMessages[i] as any)?.codexMetadata?.modelContextWindow;
         // 仅在运行时值更大时采用，避免把“可用窗口/阈值”之类的较小值误当作模型总窗口
         if (typeof maybeCtx === 'number' && maybeCtx > contextWindowSize) {
           contextWindowSize = maybeCtx;
@@ -212,7 +216,7 @@ export function useContextWindowUsage(
     // （例如 UI 选普通 opus，但 CLI 实际跑 claude-opus-4-8[1m]）。
     // 仅当运行时模型算出的窗口更大时才采用，避免误把窗口缩小。
     if (engine === 'claude' || engine === 'gemini') {
-      const runtimeModel = getRuntimeModelFromMessages(messages);
+      const runtimeModel = getRuntimeModelFromMessages(mainMessages);
       if (runtimeModel) {
         const runtimeWindowSize = getContextWindowSize(runtimeModel, engine);
         if (runtimeWindowSize > contextWindowSize) {
@@ -223,10 +227,10 @@ export function useContextWindowUsage(
 
     // Claude/Gemini: prefer runtime-reported context window when available (statusline/hook payloads)
     if (engine === 'claude' || engine === 'gemini') {
-      for (let i = messages.length - 1; i >= 0; i--) {
+      for (let i = mainMessages.length - 1; i >= 0; i--) {
         const maybeCtx =
-          (messages[i] as any)?.context_window?.context_window_size ??
-          (messages[i] as any)?.context_window_size;
+          (mainMessages[i] as any)?.context_window?.context_window_size ??
+          (mainMessages[i] as any)?.context_window_size;
 
         if (typeof maybeCtx === 'number' && maybeCtx > contextWindowSize) {
           contextWindowSize = maybeCtx;
@@ -253,12 +257,12 @@ export function useContextWindowUsage(
     };
 
     // 如果没有消息，返回默认值
-    if (!messages || messages.length === 0) {
+    if (mainMessages.length === 0) {
       return defaultResult;
     }
 
     // 注意：这里的 usage 代表当前使用量快照（最后一条可用 usage），而不是增量累加。
-    const currentUsage = extractCurrentUsage(messages, engine, contextWindowSize);
+    const currentUsage = extractCurrentUsage(mainMessages, engine, contextWindowSize);
 
     if (!currentUsage) {
       return defaultResult;

@@ -798,7 +798,8 @@
     "subagent": "子代理",
     "executionProcess": "執行過程",
     "messageCount": "{{count}} 條訊息",
-    "noSubagentMessages": "暫無子代理訊息"
+    "noSubagentMessages": "暫無子代理訊息",
+    "viewConversation": "查看子對話"
   },
   "provider": {
     "loadConfigFailed": "載入代理商設定失敗",

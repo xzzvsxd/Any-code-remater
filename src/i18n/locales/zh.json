@@ -801,7 +801,8 @@
     "subagent": "子代理",
     "executionProcess": "执行过程",
     "messageCount": "{{count}} 条消息",
-    "noSubagentMessages": "暂无子代理消息"
+    "noSubagentMessages": "暂无子代理消息",
+    "viewConversation": "查看子对话"
   },
   "provider": {
     "loadConfigFailed": "加载代理商配置失败",
