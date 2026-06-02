@@ -27,7 +27,6 @@ interface SmartAutoScrollReturn {
 }
 
 const RESUME_AUTO_SCROLL_THRESHOLD = 80;
-const STOP_AUTO_SCROLL_THRESHOLD = 140;
 
 /**
  * 计算最后一条消息的内容哈希，用于检测内容变化
@@ -55,8 +54,6 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
   const [shouldAutoScroll, setShouldAutoScrollState] = useState(true);
 
   const parentRef = useRef<HTMLDivElement>(null);
-  const isAutoScrollingRef = useRef(false);
-  const autoScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoScrollEnabledRef = useRef(true);
 
   const lastMessageHash = useMemo(
@@ -82,9 +79,13 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
   };
 
   /**
-   * 执行自动滚动，并在滚动动画期间忽略由程序触发的 scroll 事件。
+   * 执行自动滚动到底部。用户已离开底部时直接跳过。
    */
   const performAutoScroll = (behavior: ScrollBehavior = 'smooth') => {
+    // 用户已主动离开底部时，任何在途的自动滚动立即作废，避免“吸底”。
+    // autoScrollEnabledRef 为同步状态，比 React state 更早生效，能即时止住正在执行的滚动循环。
+    if (!autoScrollEnabledRef.current) return;
+
     const scrollElement = parentRef.current;
     if (!scrollElement) return;
 
@@ -92,17 +93,6 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
     if (Math.abs(scrollElement.scrollTop - targetScrollTop) <= 1) {
       return;
     }
-
-    isAutoScrollingRef.current = true;
-    if (autoScrollTimerRef.current) {
-      clearTimeout(autoScrollTimerRef.current);
-    }
-
-    const flagTimeout = behavior === 'smooth' ? 320 : 100;
-    autoScrollTimerRef.current = setTimeout(() => {
-      isAutoScrollingRef.current = false;
-      autoScrollTimerRef.current = null;
-    }, flagTimeout);
 
     scrollElement.scrollTo({
       top: targetScrollTop,
@@ -114,35 +104,57 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
     const scrollElement = parentRef.current;
     if (!scrollElement) return;
 
+    /**
+     * 用户主动输入（滚轮 / 触摸 / 键盘）是“离开底部”的最可靠信号。
+     * 一旦检测到向上意图，立即解除粘底——不依赖容易误判的时间标志。
+     */
+    const releaseOnUserIntent = (movingUp: boolean) => {
+      if (!movingUp) return;
+      if (getDistanceFromBottom(scrollElement) <= RESUME_AUTO_SCROLL_THRESHOLD) return;
+      syncAutoScrollState(false);
+    };
+
+    const handleWheel = (event: WheelEvent) => {
+      releaseOnUserIntent(event.deltaY < 0);
+    };
+
+    let touchStartY = 0;
+    const handleTouchStart = (event: TouchEvent) => {
+      touchStartY = event.touches[0]?.clientY ?? 0;
+    };
+    const handleTouchMove = (event: TouchEvent) => {
+      const currentY = event.touches[0]?.clientY ?? 0;
+      // 手指下滑（clientY 增大）= 内容上移 = 查看历史
+      releaseOnUserIntent(currentY > touchStartY);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const upKeys = ['ArrowUp', 'PageUp', 'Home'];
+      releaseOnUserIntent(upKeys.includes(event.key));
+    };
+
+    /**
+     * scroll 事件只负责“回到底部时恢复粘底”，不再用 isAutoScrolling 标志屏蔽用户滚动，
+     * 避免高频自动滚动期间把用户真实滚动一并吞掉。
+     */
     const handleScroll = () => {
-      if (isAutoScrollingRef.current) {
-        return;
-      }
-
-      const distanceFromBottom = getDistanceFromBottom(scrollElement);
-
-      if (distanceFromBottom <= RESUME_AUTO_SCROLL_THRESHOLD) {
+      if (getDistanceFromBottom(scrollElement) <= RESUME_AUTO_SCROLL_THRESHOLD) {
         syncAutoScrollState(true);
-        return;
-      }
-
-      if (distanceFromBottom >= STOP_AUTO_SCROLL_THRESHOLD) {
-        syncAutoScrollState(false);
       }
     };
 
+    scrollElement.addEventListener('wheel', handleWheel, { passive: true });
+    scrollElement.addEventListener('touchstart', handleTouchStart, { passive: true });
+    scrollElement.addEventListener('touchmove', handleTouchMove, { passive: true });
+    scrollElement.addEventListener('keydown', handleKeyDown);
     scrollElement.addEventListener('scroll', handleScroll, { passive: true });
 
     return () => {
+      scrollElement.removeEventListener('wheel', handleWheel);
+      scrollElement.removeEventListener('touchstart', handleTouchStart);
+      scrollElement.removeEventListener('touchmove', handleTouchMove);
+      scrollElement.removeEventListener('keydown', handleKeyDown);
       scrollElement.removeEventListener('scroll', handleScroll);
-    };
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (autoScrollTimerRef.current) {
-        clearTimeout(autoScrollTimerRef.current);
-      }
     };
   }, []);
 
