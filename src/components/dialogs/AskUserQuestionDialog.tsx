@@ -8,7 +8,7 @@
  */
 
 import { useState, useMemo } from "react";
-import { HelpCircle, Send, XCircle, CheckCircle } from "lucide-react";
+import { HelpCircle, Send, XCircle, CheckCircle, Check } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -102,6 +102,14 @@ export function AskUserQuestionDialog({
     });
   }, [safeQuestions, selectedAnswers]);
 
+  // 已回答问题数（用于底部进度展示）
+  const answeredCount = useMemo(() => {
+    return safeQuestions.filter(q => {
+      const answer = selectedAnswers[getQuestionKey(q)];
+      return Array.isArray(answer) ? answer.length > 0 : !!answer;
+    }).length;
+  }, [safeQuestions, selectedAnswers]);
+
   // 提交答案
   const handleSubmit = () => {
     if (!allAnswered) return;
@@ -122,179 +130,191 @@ export function AskUserQuestionDialog({
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
-      <DialogContent className="sm:max-w-2xl max-h-[85vh] flex flex-col">
-        <DialogHeader>
-          <div className="flex items-center gap-2">
-            <div className="h-10 w-10 rounded-full bg-blue-500/10 flex items-center justify-center">
-              <HelpCircle className="h-5 w-5 text-blue-500" />
+      <DialogContent className="sm:max-w-2xl max-h-[88vh] flex flex-col gap-0 p-0 overflow-hidden">
+        {/* 头部 */}
+        <DialogHeader className="px-5 pt-5 pb-4 border-b border-border/60">
+          <div className="flex items-center gap-3">
+            <div className={cn(
+              "h-9 w-9 rounded-full flex items-center justify-center flex-shrink-0 transition-colors",
+              allAnswered ? "bg-green-500/15" : "bg-blue-500/10"
+            )}>
+              {allAnswered ? (
+                <CheckCircle className="h-[18px] w-[18px] text-green-600" />
+              ) : (
+                <HelpCircle className="h-[18px] w-[18px] text-blue-500" />
+              )}
             </div>
-            <div>
-              <DialogTitle className="text-lg">Claude 正在询问你</DialogTitle>
-              <DialogDescription>
-                请回答以下问题，Claude 将根据你的答案继续执行
+            <div className="min-w-0">
+              <DialogTitle className="text-base leading-tight">Claude 正在询问你</DialogTitle>
+              <DialogDescription className="text-xs mt-0.5">
+                选择答案后提交，Claude 将据此继续
               </DialogDescription>
             </div>
           </div>
         </DialogHeader>
 
         {/* 问题列表 */}
-        <div className="flex-1 min-h-0 my-4">
-          <ScrollArea className="h-[400px]">
-            <div className="space-y-4 pr-4">
-              {safeQuestions.map((q, qIndex) => {
-                const questionKey = getQuestionKey(q);
-                const hasAnswer = !!selectedAnswers[questionKey];
+        <ScrollArea className="flex-1 min-h-0 max-h-[min(60vh,520px)]">
+          <div className="space-y-2.5 px-5 py-4">
+            {safeQuestions.map((q, qIndex) => {
+              const questionKey = getQuestionKey(q);
+              const hasAnswer = !!selectedAnswers[questionKey];
 
-                return (
-                  <div
-                    key={qIndex}
-                    className={cn(
-                      "p-4 rounded-lg border space-y-3 transition-all",
-                      hasAnswer
-                        ? "border-green-500/30 bg-green-500/5"
-                        : "border-border bg-muted/20"
-                    )}
-                  >
-                    {/* 问题头部 */}
-                    <div className="flex items-start gap-2">
-                      <div className="flex-shrink-0 mt-0.5">
-                        {hasAnswer ? (
-                          <div className="h-5 w-5 rounded-full bg-green-500 flex items-center justify-center">
-                            <CheckCircle className="h-3 w-3 text-white" />
-                          </div>
-                        ) : (
-                          <div className="h-5 w-5 rounded-full border-2 border-muted-foreground/30 bg-background" />
-                        )}
-                      </div>
-                      <div className="flex-1">
-                        {q.header && (
-                          <div className="text-sm font-semibold text-primary mb-1">
-                            {q.header}
-                          </div>
-                        )}
-                        <div className="text-sm text-foreground">{q.question}</div>
-                      </div>
+              return (
+                <div
+                  key={qIndex}
+                  className={cn(
+                    "p-3 rounded-lg border space-y-2.5 transition-colors",
+                    hasAnswer
+                      ? "border-green-500/30 bg-green-500/5"
+                      : "border-border bg-muted/20"
+                  )}
+                >
+                  {/* 问题头部 */}
+                  <div className="flex items-start gap-2">
+                    <div className="flex-shrink-0 mt-0.5">
+                      {hasAnswer ? (
+                        <div className="h-4 w-4 rounded-full bg-green-500 flex items-center justify-center">
+                          <Check className="h-2.5 w-2.5 text-white" strokeWidth={3} />
+                        </div>
+                      ) : (
+                        <div className="h-4 w-4 rounded-full border-2 border-muted-foreground/30 bg-background" />
+                      )}
                     </div>
+                    <div className="flex-1 min-w-0">
+                      {q.header && (
+                        <div className="text-xs font-semibold text-primary mb-0.5">
+                          {q.header}
+                        </div>
+                      )}
+                      <div className="text-sm text-foreground leading-snug">{q.question}</div>
+                    </div>
+                  </div>
 
-                    {/* 选项列表 */}
-                    {q.options && q.options.length > 0 && (
-                      <div className="space-y-2 pl-7">
-                        {q.options.map((option, optIndex) => {
-                          const isSelected = isOptionSelected(questionKey, option.label);
+                  {/* 选项列表 */}
+                  {q.options && q.options.length > 0 && (
+                    <div className="space-y-1.5 pl-6">
+                      {q.options.map((option, optIndex) => {
+                        const isSelected = isOptionSelected(questionKey, option.label);
 
-                          return (
-                            <div
-                              key={optIndex}
-                              className={cn(
-                                "p-3 rounded-md border cursor-pointer transition-all hover:shadow-sm",
-                                isSelected
-                                  ? "border-green-500/40 bg-green-500/10 shadow-sm"
-                                  : "border-border/50 bg-background hover:bg-muted/50"
-                              )}
-                              onClick={() => {
-                                if (q.multiSelect) {
-                                  handleMultiSelect(questionKey, option.label, !isSelected);
-                                } else {
-                                  handleSingleSelect(questionKey, option.label);
-                                }
-                              }}
-                            >
-                              <div className="flex items-start gap-2.5">
-                                {/* 选择图标 */}
-                                {q.multiSelect ? (
-                                  <Checkbox
-                                    checked={isSelected}
-                                    onCheckedChange={(checked) =>
-                                      handleMultiSelect(questionKey, option.label, checked as boolean)
-                                    }
-                                    className="mt-0.5"
-                                  />
-                                ) : (
-                                  <div
-                                    className={cn(
-                                      "flex-shrink-0 h-5 w-5 rounded-full border-2 flex items-center justify-center transition-all",
-                                      isSelected
-                                        ? "bg-green-500 border-green-500"
-                                        : "border-muted-foreground/30 bg-background"
-                                    )}
-                                  >
-                                    {isSelected && (
-                                      <div className="h-2 w-2 rounded-full bg-white" />
-                                    )}
-                                  </div>
-                                )}
-
-                                {/* 选项内容 */}
-                                <div className="flex-1 pt-0.5">
-                                  <div
-                                    className={cn(
-                                      "text-sm font-medium mb-0.5",
-                                      isSelected ? "text-green-700 dark:text-green-300" : "text-foreground"
-                                    )}
-                                  >
-                                    {option.label}
-                                  </div>
-                                  {option.description && (
-                                    <div
-                                      className={cn(
-                                        "text-xs",
-                                        isSelected
-                                          ? "text-green-600 dark:text-green-400"
-                                          : "text-muted-foreground"
-                                      )}
-                                    >
-                                      {option.description}
-                                    </div>
+                        return (
+                          <div
+                            key={optIndex}
+                            className={cn(
+                              "px-3 py-2 rounded-md border cursor-pointer transition-colors",
+                              isSelected
+                                ? "border-green-500/40 bg-green-500/10"
+                                : "border-border/50 bg-background hover:bg-muted/50"
+                            )}
+                            onClick={() => {
+                              if (q.multiSelect) {
+                                handleMultiSelect(questionKey, option.label, !isSelected);
+                              } else {
+                                handleSingleSelect(questionKey, option.label);
+                              }
+                            }}
+                          >
+                            <div className="flex items-start gap-2.5">
+                              {/* 选择图标 */}
+                              {q.multiSelect ? (
+                                <Checkbox
+                                  checked={isSelected}
+                                  onCheckedChange={(checked) =>
+                                    handleMultiSelect(questionKey, option.label, checked as boolean)
+                                  }
+                                  className="mt-0.5 h-4 w-4"
+                                />
+                              ) : (
+                                <div
+                                  className={cn(
+                                    "flex-shrink-0 mt-0.5 h-4 w-4 rounded-full border-2 flex items-center justify-center transition-colors",
+                                    isSelected
+                                      ? "bg-green-500 border-green-500"
+                                      : "border-muted-foreground/30 bg-background"
+                                  )}
+                                >
+                                  {isSelected && (
+                                    <div className="h-1.5 w-1.5 rounded-full bg-white" />
                                   )}
                                 </div>
+                              )}
+
+                              {/* 选项内容 */}
+                              <div className="flex-1 min-w-0">
+                                <div
+                                  className={cn(
+                                    "text-sm font-medium leading-snug",
+                                    isSelected ? "text-green-700 dark:text-green-300" : "text-foreground"
+                                  )}
+                                >
+                                  {option.label}
+                                </div>
+                                {option.description && (
+                                  <div
+                                    className={cn(
+                                      "text-xs mt-0.5 leading-snug",
+                                      isSelected
+                                        ? "text-green-600 dark:text-green-400"
+                                        : "text-muted-foreground"
+                                    )}
+                                  >
+                                    {option.description}
+                                  </div>
+                                )}
                               </div>
                             </div>
-                          );
-                        })}
-
-                        {/* 多选提示 */}
-                        {q.multiSelect && (
-                          <div className="text-xs text-muted-foreground flex items-center gap-1 mt-2">
-                            <span className="text-blue-500">ℹ️</span>
-                            <span>可以选择多个选项</span>
                           </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </ScrollArea>
-        </div>
+                        );
+                      })}
+
+                      {/* 多选提示 */}
+                      {q.multiSelect && (
+                        <div className="text-[11px] text-muted-foreground flex items-center gap-1 pl-1">
+                          <span className="text-blue-500">ℹ️</span>
+                          <span>可多选</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </ScrollArea>
 
         {/* 提示信息 */}
-        <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-3 mb-4">
-          <p className="font-medium mb-1">提示：</p>
-          <ul className="list-disc list-inside space-y-1">
-            <li>请为每个问题选择一个或多个选项</li>
-            <li>点击<strong>提交答案</strong>后，你的选择将发送给 Claude</li>
-            <li>Claude 将根据你的答案继续执行任务</li>
-          </ul>
-        </div>
-
-        <DialogFooter className="gap-2 sm:gap-2">
-          <Button
-            variant="outline"
-            onClick={handleClose}
-            className="gap-2"
-          >
-            <XCircle className="h-4 w-4" />
-            稍后回答
-          </Button>
-          <Button
-            onClick={handleSubmit}
-            disabled={!allAnswered}
-            className="gap-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Send className="h-4 w-4" />
-            提交答案 {allAnswered ? "" : `(${Object.keys(selectedAnswers).length}/${safeQuestions.length})`}
-          </Button>
+        {/* 底部操作栏：左侧进度计数 + 右侧操作按钮 */}
+        <DialogFooter className="px-5 py-3.5 border-t border-border/60 flex-row items-center sm:justify-between gap-2">
+          <div className="text-xs text-muted-foreground flex items-center gap-1.5 mr-auto">
+            {allAnswered ? (
+              <>
+                <CheckCircle className="h-3.5 w-3.5 text-green-600" />
+                <span className="text-green-600 font-medium">已全部回答</span>
+              </>
+            ) : (
+              <span>已回答 {answeredCount}/{safeQuestions.length}</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleClose}
+              className="gap-1.5 text-muted-foreground"
+            >
+              <XCircle className="h-4 w-4" />
+              稍后回答
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleSubmit}
+              disabled={!allAnswered}
+              className="gap-1.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Send className="h-4 w-4" />
+              提交答案
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

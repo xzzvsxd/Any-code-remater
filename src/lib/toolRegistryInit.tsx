@@ -761,6 +761,7 @@ export function initializeToolRegistry(): void {
         questions: normalizeQuestions(props.input?.questions),
         answers: normalizeAnswers(props.input?.answers || props.result?.content?.answers),
         result: props.result,
+        toolId: props.toolId,
       })),
       description: '用户问题询问工具',
     },

@@ -47,7 +47,7 @@ export interface Question {
 export interface PendingQuestion {
   /** 问题列表 */
   questions: Question[];
-  /** 问题 ID（用于追踪） */
+  /** 去重键（优先使用工具调用唯一 toolId，回退到内容哈希） */
   questionId: string;
   /** 时间戳 */
   timestamp: number;
@@ -64,8 +64,8 @@ interface UserQuestionContextValue {
   /** 是否显示问答对话框 */
   showQuestionDialog: boolean;
 
-  /** 触发问答对话框（当检测到 AskUserQuestion 工具调用时） */
-  triggerQuestionDialog: (questions: Question[]) => void;
+  /** 触发问答对话框（当检测到 AskUserQuestion 工具调用时）；toolId 为工具调用唯一 ID，优先用作去重键 */
+  triggerQuestionDialog: (questions: Question[], toolId?: string) => void;
   /** 提交答案 - 格式化并发送给 Claude */
   submitAnswers: (answers: UserAnswers) => boolean;
   /** 关闭问答对话框 */
@@ -84,16 +84,13 @@ const UserQuestionContext = createContext<UserQuestionContextValue | undefined>(
   undefined
 );
 
-function getAnsweredQuestionStorageKey(): string {
-  return 'answered_question_ids';
-}
-
 interface UserQuestionProviderProps {
   children: ReactNode;
 }
 
 /**
  * 生成问题的唯一 ID（基于问题内容的简单 hash）
+ * 仅作为无 toolId 时的回退方案。
  */
 function generateQuestionId(questions: Question[]): string {
   const content = getQuestionIdContent(questions);
@@ -107,29 +104,11 @@ function generateQuestionId(questions: Question[]): string {
 }
 
 /**
- * 从 sessionStorage 加载已回答问题 ID 集合
+ * 解析去重键：优先使用工具调用唯一 toolId（每次调用唯一，可避免「相同内容问题第二次问」被误吞），
+ * 无 toolId 时回退到内容哈希。
  */
-function loadAnsweredQuestionIds(key: string): Set<string> {
-  try {
-    const stored = sessionStorage.getItem(key);
-    if (stored) {
-      return new Set(JSON.parse(stored));
-    }
-  } catch (error) {
-    console.warn(`[UserQuestion] Failed to load ${key}:`, error);
-  }
-  return new Set();
-}
-
-/**
- * 保存已回答问题 ID 集合到 sessionStorage
- */
-function saveAnsweredQuestionIds(key: string, ids: Set<string>): void {
-  try {
-    sessionStorage.setItem(key, JSON.stringify(Array.from(ids)));
-  } catch (error) {
-    console.warn(`[UserQuestion] Failed to save ${key}:`, error);
-  }
+function resolveDedupeKey(questions: Question[], toolId?: string): string {
+  return toolId ? `tool_${toolId}` : generateQuestionId(questions);
 }
 
 /**
@@ -138,9 +117,8 @@ function saveAnsweredQuestionIds(key: string, ids: Set<string>): void {
 export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
   const [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(null);
   const [showQuestionDialog, setShowQuestionDialog] = useState(false);
-  const [answeredQuestionIds, setAnsweredQuestionIds] = useState<Set<string>>(() =>
-    loadAnsweredQuestionIds(getAnsweredQuestionStorageKey())
-  );
+  // 已回答集合仅存内存：刷新/重开会话应允许重新询问，避免「相同问题被永久吞掉」导致 CLI 卡死。
+  const [answeredQuestionIds, setAnsweredQuestionIds] = useState<Set<string>>(() => new Set());
 
   // 发送消息的回调引用
   const sendMessageCallbackRef = useRef<((message: string) => void) | null>(null);
@@ -151,9 +129,9 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
   }, [answeredQuestionIds]);
 
   // 触发问答对话框
-  const triggerQuestionDialog = useCallback((questions: Question[]) => {
+  const triggerQuestionDialog = useCallback((questions: Question[], toolId?: string) => {
     const safeQuestions = normalizeQuestions(questions);
-    const questionId = generateQuestionId(safeQuestions);
+    const questionId = resolveDedupeKey(safeQuestions, toolId);
 
     // 如果已回答，不再弹窗
     if (answeredQuestionIds.has(questionId)) {
@@ -204,11 +182,10 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
     const { questionId, questions } = pendingQuestion;
     const message = formatAnswersAsMessage(answers, questions);
 
-    // 标记为已回答
+    // 标记为已回答（去重键已在 trigger 时确定，优先 toolId）
     setAnsweredQuestionIds(prev => {
       const newSet = new Set(prev);
       newSet.add(questionId);
-      saveAnsweredQuestionIds(getAnsweredQuestionStorageKey(), newSet);
       return newSet;
     });
 

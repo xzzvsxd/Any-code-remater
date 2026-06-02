@@ -45,12 +45,15 @@ export interface AskUserQuestionWidgetProps {
     content?: any;
     is_error?: boolean;
   };
+  /** 工具调用唯一 ID（用作去重键，避免「相同内容问题第二次问」被误吞） */
+  toolId?: string;
 }
 
 export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
   questions = [],
   answers = {},
   result,
+  toolId,
 }) => {
   const { t } = useTranslation();
   const isError = result?.is_error;
@@ -71,10 +74,11 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
   const triggerQuestionDialog = userQuestionContext?.triggerQuestionDialog;
   const isQuestionAnswered = userQuestionContext?.isQuestionAnswered;
 
-  // 计算问题 ID
+  // 计算去重键：优先用工具调用唯一 toolId，回退到问题内容哈希
   const questionId = useMemo(() => {
+    if (toolId) return `tool_${toolId}`;
     return safeQuestions.length > 0 ? getQuestionId(safeQuestions) : null;
-  }, [safeQuestions]);
+  }, [safeQuestions, toolId]);
 
   // 检查是否已回答
   const answered = questionId && isQuestionAnswered ? isQuestionAnswered(questionId) : false;
@@ -92,18 +96,18 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
       hasTriggered.current = true;
       // 延迟触发，确保 UI 已渲染
       const timer = setTimeout(() => {
-        triggerQuestionDialog(safeQuestions);
+        triggerQuestionDialog(safeQuestions, toolId);
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [safeQuestions, canAnswerQuestion, triggerQuestionDialog]);
+  }, [safeQuestions, canAnswerQuestion, triggerQuestionDialog, toolId]);
 
   const handleAnswerNow = (event: React.MouseEvent) => {
     event.stopPropagation();
     if (!triggerQuestionDialog || !canAnswerQuestion) {
       return;
     }
-    triggerQuestionDialog(safeQuestions);
+    triggerQuestionDialog(safeQuestions, toolId);
   };
 
   // 解析answers - 可能在result.content中以字符串格式存储
