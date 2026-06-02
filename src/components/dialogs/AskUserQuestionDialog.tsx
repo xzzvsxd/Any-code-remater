@@ -7,7 +7,7 @@
  * 参考：PlanApprovalDialog 的实现模式
  */
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { HelpCircle, Send, XCircle, CheckCircle, Check } from "lucide-react";
 import {
   Dialog,
@@ -47,6 +47,14 @@ export function AskUserQuestionDialog({
   // 用户选择的答案
   const [selectedAnswers, setSelectedAnswers] = useState<UserAnswers>({});
   const safeQuestions = useMemo(() => normalizeQuestions(questions), [questions]);
+
+  // 每次重新打开对话框时清空旧选择，避免「稍后回答」后再次打开仍残留上次选择造成误判。
+  // 关闭瞬间不清空（保留至关闭动画结束），仅在 open 变为 true 时重置。
+  useEffect(() => {
+    if (open) {
+      setSelectedAnswers({});
+    }
+  }, [open]);
 
   // 处理单选
   const handleSingleSelect = (questionKey: string, optionLabel: string) => {

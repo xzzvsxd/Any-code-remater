@@ -124,7 +124,7 @@ export const ContextWindowIndicator: React.FC<ContextWindowIndicatorProps> = ({
               {isClaudeEngine && (
                 <div
                   className="absolute top-0 bottom-0 w-px bg-amber-500 dark:bg-amber-400"
-                  style={{ left: `${autoCompactThresholdPercentage}%` }}
+                  style={{ left: `${Math.min(autoCompactThresholdPercentage, 100)}%` }}
                 />
               )}
             </div>
@@ -167,7 +167,7 @@ export const ContextWindowIndicator: React.FC<ContextWindowIndicatorProps> = ({
                 {isClaudeEngine && (
                   <div
                     className="absolute top-0 bottom-0 w-0.5 bg-amber-500 dark:bg-amber-400 z-10"
-                    style={{ left: `${autoCompactThresholdPercentage}%` }}
+                    style={{ left: `${Math.min(autoCompactThresholdPercentage, 100)}%` }}
                     title={`Auto-compact 阈值: ${formatK(autoCompactThreshold)}`}
                   />
                 )}

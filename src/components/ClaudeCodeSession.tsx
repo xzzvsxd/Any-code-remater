@@ -1331,7 +1331,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
                       customHandle
                       renderItem={(queuedPrompt, index) => (
                         <div className="group flex items-center gap-1.5 bg-muted/40 hover:bg-muted/60 rounded-md py-1 pr-1 pl-0.5 transition-colors">
-                          <SortableDragHandle className="h-5 w-4 flex-shrink-0 opacity-30 group-hover:opacity-100">
+                          <SortableDragHandle className="h-5 w-4 flex-shrink-0 opacity-50 group-hover:opacity-100">
                             <GripVertical className="h-3.5 w-3.5" />
                           </SortableDragHandle>
                           <span className="text-[11px] font-semibold text-muted-foreground tabular-nums w-4 text-center flex-shrink-0">

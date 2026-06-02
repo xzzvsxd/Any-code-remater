@@ -90,7 +90,8 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
     if (!scrollElement) return;
 
     const targetScrollTop = scrollElement.scrollHeight - scrollElement.clientHeight;
-    if (Math.abs(scrollElement.scrollTop - targetScrollTop) <= 1) {
+    // 容差 2px：高 DPI 缩放下 scrollTop 可能有亚像素抖动，放宽阈值避免反复触发滚动。
+    if (Math.abs(scrollElement.scrollTop - targetScrollTop) <= 2) {
       return;
     }
 
