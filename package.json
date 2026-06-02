@@ -12,7 +12,10 @@
     "tauri:build": "pwsh -File build.ps1",
     "tauri:build-ci": "tauri build",
     "tauri:build-fast": "tauri build --profile dev-release",
-    "tauri:dev": "tauri dev"
+    "tauri:dev": "tauri dev",
+    "typecheck": "tsc --noEmit",
+    "validate": "npm run typecheck && npm run check:nsis-upgrade",
+    "check:nsis-upgrade": "node scripts/check-nsis-upgrade-mode.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.30",
