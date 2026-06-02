@@ -20,20 +20,65 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
+import type { DraggableAttributes } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
 import { GripVertical } from 'lucide-react';
 import { cn } from '@/lib/utils';
+
+/** 从 useSortable 返回值推导 listeners 类型，避免依赖脆弱的 dist 深层路径 */
+type SortableListeners = ReturnType<typeof useSortable>['listeners'];
+
+/** 把拖拽属性透传给自定义手柄，实现手柄内嵌到内容区域 */
+interface SortableHandleContextValue {
+  attributes: DraggableAttributes;
+  listeners: SortableListeners;
+  isDragging: boolean;
+}
+
+const SortableHandleContext = React.createContext<SortableHandleContextValue | null>(null);
+
+/**
+ * 自定义拖拽手柄。
+ * 在 customHandle 模式下由 renderItem 自行放置，实现整行一体的紧凑布局。
+ */
+export function SortableDragHandle({
+  className,
+  children,
+}: {
+  className?: string;
+  children?: React.ReactNode;
+}) {
+  const ctx = React.useContext(SortableHandleContext);
+  if (!ctx) return null;
+  return (
+    <div
+      {...ctx.attributes}
+      {...ctx.listeners}
+      className={cn(
+        'flex items-center justify-center cursor-grab active:cursor-grabbing',
+        'text-muted-foreground hover:text-foreground transition-colors',
+        'touch-none select-none',
+        className
+      )}
+      aria-label="拖拽排序"
+    >
+      {children ?? <GripVertical className="h-4 w-4" />}
+    </div>
+  );
+}
 
 export interface SortableItemProps {
   id: string;
   children: React.ReactNode;
   disabled?: boolean;
+  /** 启用自定义手柄模式：不渲染默认左侧手柄，由 children 通过 SortableDragHandle 放置 */
+  customHandle?: boolean;
 }
 
 /**
  * 可拖拽的单个项目
  */
-export function SortableItem({ id, children, disabled }: SortableItemProps) {
+export function SortableItem({ id, children, disabled, customHandle }: SortableItemProps) {
   const {
     attributes,
     listeners,
@@ -47,6 +92,21 @@ export function SortableItem({ id, children, disabled }: SortableItemProps) {
     transform: CSS.Transform.toString(transform),
     transition,
   };
+
+  // 自定义手柄模式：内容自带手柄，外层只负责定位与拖拽节点
+  if (customHandle) {
+    return (
+      <div
+        ref={setNodeRef}
+        style={style}
+        className={cn('relative', isDragging && 'z-50 opacity-90 shadow-lg')}
+      >
+        <SortableHandleContext.Provider value={{ attributes, listeners, isDragging }}>
+          {children}
+        </SortableHandleContext.Provider>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -91,6 +151,8 @@ export interface SortableListProps<T extends { id: string }> {
   isItemDisabled?: (item: T) => boolean;
   /** 自定义列表容器间距类（默认 space-y-4），用于紧凑场景 */
   listClassName?: string;
+  /** 启用自定义手柄模式，手柄由 renderItem 通过 SortableDragHandle 放置 */
+  customHandle?: boolean;
 }
 
 /**
@@ -103,6 +165,7 @@ export function SortableList<T extends { id: string }>({
   disabled,
   isItemDisabled,
   listClassName = 'space-y-4',
+  customHandle,
 }: SortableListProps<T>) {
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -152,6 +215,7 @@ export function SortableList<T extends { id: string }>({
               key={item.id}
               id={item.id}
               disabled={isItemDisabled?.(item)}
+              customHandle={customHandle}
             >
               {renderItem(item, index)}
             </SortableItem>
