@@ -46,6 +46,14 @@ const findRuntimeModelFromMessages = (messages: ClaudeStreamMessage[] = []): str
 };
 
 /**
+ * 从消息流中提取运行时真实模型 ID（最后一条带 model 的消息）。
+ * 用于上下文窗口大小等需要"运行时真实模型"而非 UI 选择别名的场景。
+ */
+export function getRuntimeModelFromMessages(messages: ClaudeStreamMessage[] = []): string | null {
+  return findRuntimeModelFromMessages(messages);
+}
+
+/**
  * Resolve the model for automatic continuation prompts (plan approval and
  * AskUserQuestion answers). These prompts are not explicit user model choices,
  * so they must inherit the running/history session model instead of falling

@@ -106,11 +106,13 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
 
     /**
      * 用户主动输入（滚轮 / 触摸 / 键盘）是“离开底部”的最可靠信号。
-     * 一旦检测到向上意图，立即解除粘底——不依赖容易误判的时间标志。
+     * 一旦检测到向上意图，立即解除粘底——向上滚动本身就是明确的“查看历史”意图，
+     * 不再要求“离底部超过阈值”，否则用户在底部附近小幅上滑会被流式自动滚动立刻拉回（“吸铁石”）。
+     * 仅排除已经精确贴底（≤1px）时的边界噪声。
      */
     const releaseOnUserIntent = (movingUp: boolean) => {
       if (!movingUp) return;
-      if (getDistanceFromBottom(scrollElement) <= RESUME_AUTO_SCROLL_THRESHOLD) return;
+      if (getDistanceFromBottom(scrollElement) <= 1) return;
       syncAutoScrollState(false);
     };
 
