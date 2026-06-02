@@ -29,6 +29,8 @@ export interface PlanModeWidgetProps {
     content?: any;
     is_error?: boolean;
   };
+  /** 工具调用唯一 ID（用作去重键，避免「内容相似的 plan 第二次给出」被误吞） */
+  toolId?: string;
 }
 
 /**
@@ -40,6 +42,7 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
   action,
   plan,
   result,
+  toolId,
 }) => {
   const { t } = useTranslation();
   const isEnter = action === "enter";
@@ -47,13 +50,14 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
   const isError = result?.is_error;
   const hasTriggered = useRef(false);
 
-  // 计算计划 ID
+  // 计算去重键：优先用工具调用唯一 toolId，回退到计划内容哈希
   const planId = useMemo(() => {
+    if (toolId) return `plan_tool_${toolId}`;
     return plan ? getPlanId(plan) : null;
-  }, [plan]);
+  }, [plan, toolId]);
 
   // 尝试获取 PlanMode Context
-  let triggerPlanApproval: ((plan: string) => void) | undefined;
+  let triggerPlanApproval: ((plan: string, toolId?: string) => void) | undefined;
   let getPlanStatus: ((planId: string) => PlanStatus) | undefined;
   let planStatus: PlanStatus = 'pending';
 
@@ -80,11 +84,11 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
       hasTriggered.current = true;
       // 延迟触发，确保 UI 已渲染
       const timer = setTimeout(() => {
-        triggerPlanApproval(plan);
+        triggerPlanApproval(plan, toolId);
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [isExit, plan, triggerPlanApproval, hasDecision, result]);
+  }, [isExit, plan, triggerPlanApproval, hasDecision, result, toolId]);
 
   // 根据操作类型和审批状态选择样式
   const Icon = isEnter ? Search : LogOut;
@@ -140,7 +144,7 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
   // 手动触发审批
   const handleTriggerApproval = () => {
     if (plan && triggerPlanApproval) {
-      triggerPlanApproval(plan);
+      triggerPlanApproval(plan, toolId);
     }
   };
 

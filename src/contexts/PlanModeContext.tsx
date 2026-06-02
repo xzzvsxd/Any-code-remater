@@ -27,7 +27,7 @@ interface PlanModeContextValue {
   togglePlanMode: () => void;
   pendingApproval: PendingPlanApproval | null;
   showApprovalDialog: boolean;
-  triggerPlanApproval: (plan: string) => void;
+  triggerPlanApproval: (plan: string, toolId?: string) => void;
   approvePlan: () => void;
   rejectPlan: () => void;
   closeApprovalDialog: () => void;
@@ -59,24 +59,12 @@ function generatePlanId(plan: string): string {
   return `plan_${Math.abs(hash)}_${plan.length}`;
 }
 
-function loadPlanIds(key: string): Set<string> {
-  try {
-    const stored = sessionStorage.getItem(key);
-    if (stored) {
-      return new Set(JSON.parse(stored));
-    }
-  } catch (e) {
-    console.error(`[PlanMode] Failed to load ${key}:`, e);
-  }
-  return new Set();
-}
-
-function savePlanIds(key: string, ids: Set<string>) {
-  try {
-    sessionStorage.setItem(key, JSON.stringify([...ids]));
-  } catch (e) {
-    console.error(`[PlanMode] Failed to save ${key}:`, e);
-  }
+/**
+ * 解析计划审批的去重键：优先使用工具调用唯一 toolId（每次调用唯一，可避免「内容相似的 plan 第二次给出」被误吞），
+ * 无 toolId 时回退到内容哈希。
+ */
+function resolvePlanDedupeKey(plan: string, toolId?: string): string {
+  return toolId ? `plan_tool_${toolId}` : generatePlanId(plan);
 }
 
 function loadPlanMode(storageKey: string | undefined, fallback: boolean): boolean {
@@ -111,8 +99,9 @@ export function PlanModeProvider({
   const [isPlanMode, setIsPlanModeInternal] = useState(() => loadPlanMode(storageKey, initialPlanMode));
   const [pendingApproval, setPendingApproval] = useState<PendingPlanApproval | null>(null);
   const [showApprovalDialog, setShowApprovalDialog] = useState(false);
-  const [approvedPlanIds, setApprovedPlanIds] = useState<Set<string>>(() => loadPlanIds('approved_plan_ids'));
-  const [rejectedPlanIds, setRejectedPlanIds] = useState<Set<string>>(() => loadPlanIds('rejected_plan_ids'));
+  // 已决策集合仅存内存：刷新/重开会话应允许重新审批，避免「内容相似的 plan 被永久跳过」导致审批对话框不弹。
+  const [approvedPlanIds, setApprovedPlanIds] = useState<Set<string>>(() => new Set());
+  const [rejectedPlanIds, setRejectedPlanIds] = useState<Set<string>>(() => new Set());
 
   const sendPromptCallbackRef = useRef<((prompt: string) => void) | null>(null);
   const storageKeyRef = useRef<string | undefined>(storageKey);
@@ -157,8 +146,8 @@ export function PlanModeProvider({
 
   const isPlanRejected = useCallback((planId: string) => rejectedPlanIds.has(planId), [rejectedPlanIds]);
 
-  const triggerPlanApproval = useCallback((plan: string) => {
-    const planId = generatePlanId(plan);
+  const triggerPlanApproval = useCallback((plan: string, toolId?: string) => {
+    const planId = resolvePlanDedupeKey(plan, toolId);
 
     if (approvedPlanIds.has(planId) || rejectedPlanIds.has(planId)) {
       return;
@@ -183,7 +172,6 @@ export function PlanModeProvider({
     setApprovedPlanIds(prev => {
       const next = new Set(prev);
       next.add(planId);
-      savePlanIds('approved_plan_ids', next);
       return next;
     });
 
@@ -207,7 +195,6 @@ export function PlanModeProvider({
     setRejectedPlanIds(prev => {
       const next = new Set(prev);
       next.add(planId);
-      savePlanIds('rejected_plan_ids', next);
       return next;
     });
 

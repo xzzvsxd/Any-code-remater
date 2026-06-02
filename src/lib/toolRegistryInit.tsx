@@ -738,6 +738,7 @@ export function initializeToolRegistry(): void {
         // 从 input 中提取计划内容
         plan: props.input?.plan || props.input?.content || '',
         result: props.result,
+        toolId: props.toolId,
       })),
       description: '退出 Plan 模式',
     },
