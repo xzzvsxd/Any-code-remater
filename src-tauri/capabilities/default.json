@@ -2,10 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default permissions for the application",
-  "windows": [
-    "main",
-    "session-window-*"
-  ],
+  "windows": ["main", "session-window-*"],
   "permissions": [
     "core:default",
     "core:window:allow-create",
@@ -54,7 +51,6 @@
     "process:allow-restart",
     "process:allow-exit",
     "clipboard-manager:allow-write-text",
-    "clipboard-manager:allow-read-text",
     "notification:default",
     "updater:default",
     {
@@ -65,18 +61,6 @@
         },
         {
           "url": "http://*:*"
-        },
-        {
-          "url": "https://*"
-        },
-        {
-          "url": "http://127.0.0.1:*"
-        },
-        {
-          "url": "http://localhost:*"
-        },
-        {
-          "url": "http://[::1]:*"
         }
       ]
     }

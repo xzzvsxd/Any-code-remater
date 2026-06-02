@@ -35,13 +35,13 @@
 当前版本：
 
 ```text
-5.29.5
+5.28.8
 ```
 
 当前 tag：
 
 ```text
-v5.29.5
+v5.28.8
 ```
 
 主发布 workflow：
@@ -55,14 +55,12 @@ v5.29.5
 ```text
 Resolve release tag
   -> Build (Windows)
-  -> Publish Windows assets early
   -> Build (Linux)
-  -> Publish Linux assets early
   -> Build (macOS-ARM / macOS-Intel)
   -> Create Release
 ```
 
-原因：先让 Windows 产物出来并立刻上传，再跑 Linux 并立刻上传 AppImage/deb，最后跑 macOS；这样 Windows/Linux 用户不用等 macOS 全部编译完才能下载最新版本。
+原因：先让 Windows 产物出来，再跑 Linux，最后跑 macOS，方便定位和控制失败面。
 
 ## 已完成的关键修复
 
@@ -248,32 +246,6 @@ go install github.com/rhysd/actionlint/cmd/actionlint@latest
 Remove-Item -Recurse -Force .tmp-tools
 ```
 
-### Actions 加速规则
-
-发布 workflow 仍保持用户要求的顺序：
-
-```text
-Windows → Linux → macOS ARM/Intel → Release
-```
-
-但缓存 key 必须避免被纯版本号更新击穿：
-
-- `package.json` / `package-lock.json` 顶层版本号不参与 Bun cache key；
-- `src-tauri/Cargo.toml` / `src-tauri/Cargo.lock` 当前应用版本号不参与 Rust cache key；
-- 缓存 key 由 `.github/scripts/write_ci_cache_keys.mjs` 生成；
-- 需要整体重建缓存时只改 workflow 顶层 `CI_CACHE_VERSION`；
-- 不要把 `.ci-cache/` 提交到 Git。
-
-Rust release profile 使用 balanced production 设置：
-
-```text
-opt-level = 2
-lto = "thin"
-codegen-units = 16
-```
-
-不要无意改回 `lto = true` + `codegen-units = 1`，否则 Actions 会重新变慢。
-
 提交：
 
 ```powershell
@@ -285,8 +257,8 @@ git push origin main
 仅在用户要求发布时更新 tag：
 
 ```powershell
-git tag -f -a v5.29.5 -m "Release v5.29.5" HEAD
-git push --force origin v5.29.5
+git tag -f -a v5.28.8 -m "Release v5.28.8" HEAD
+git push --force origin v5.28.8
 ```
 
 这会触发：

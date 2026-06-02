@@ -13,9 +13,9 @@ import { useToolTranslation } from "../common/useToolTranslation";
 
 export interface TodoWidgetProps {
   /** 任务列表 */
-  todos: LegacyAny[];
+  todos: any[];
   /** 工具结果 */
-  result?: LegacyAny;
+  result?: any;
 }
 
 /**
@@ -40,7 +40,7 @@ export const TodoWidget: React.FC<TodoWidgetProps> = ({ todos, result: _result }
   };
 
   // 获取 todo 的文本内容（兼容 Claude 的 content 和 Gemini 的 description）
-  const getTodoText = (todo: LegacyAny): string => {
+  const getTodoText = (todo: any): string => {
     return todo.content || todo.description || '';
   };
 

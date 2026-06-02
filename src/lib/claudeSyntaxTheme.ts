@@ -9,7 +9,7 @@
 
 // 深色主题（默认）
 // Dark theme (default)
-export const claudeSyntaxTheme: LegacyAny = {
+export const claudeSyntaxTheme: any = {
   'code[class*="language-"]': {
     color: '#f3f4f6',
     background: 'transparent',
@@ -202,7 +202,7 @@ export const claudeSyntaxTheme: LegacyAny = {
 
 // 浅色主题
 // Light theme
-export const claudeSyntaxThemeLight: LegacyAny = {
+export const claudeSyntaxThemeLight: any = {
   'code[class*="language-"]': {
     color: '#1f2937',
     background: 'transparent',

@@ -89,7 +89,7 @@ export const AutoCompactSettings: React.FC<AutoCompactSettingsProps> = ({
       // Initialize auto-compact manager if not already done
       try {
         await api.initAutoCompactManager();
-      } catch {
+      } catch (e) {
         // Manager might already be initialized, ignore error
         console.debug("Auto-compact manager might already be initialized");
       }

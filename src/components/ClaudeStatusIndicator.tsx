@@ -157,7 +157,7 @@ export const ClaudeStatusIndicator: React.FC<ClaudeStatusIndicatorProps> = ({
     });
 
     return totalCost;
-  }, [messages, sessionActivity.shouldTrackCost, sessionActivity.isCurrentSession]);
+  }, [messages.length, sessionActivity.shouldTrackCost, sessionActivity.isCurrentSession]);
 
   // Format cost display
   const formatCost = (amount: number): string => {

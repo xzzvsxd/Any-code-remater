@@ -9,9 +9,6 @@ import React from "react";
 import { ChevronRight, CheckCircle2 } from "lucide-react";
 import { detectLinks, makeLinksClickable } from "@/lib/linkDetector";
 
-const ANSI_STYLE_PATTERN = new RegExp(String.raw`(\u001b\[\d+m)`);
-const ANSI_STYLE_TEST_PATTERN = new RegExp(String.raw`\u001b\[\d+m`);
-
 export interface CommandOutputWidgetProps {
   /** 命令输出内容 */
   output: string;
@@ -48,7 +45,7 @@ export const CommandOutputWidget: React.FC<CommandOutputWidgetProps> = ({
   // ANSI 样式解析函数
   const parseAnsiToReact = (text: string) => {
     // 简单的 ANSI 解析 - 处理粗体 (\u001b[1m) 和重置 (\u001b[22m)
-    const parts = text.split(ANSI_STYLE_PATTERN);
+    const parts = text.split(/(\u001b\[\d+m)/);
     let isBold = false;
     const elements: React.ReactNode[] = [];
 
@@ -59,7 +56,7 @@ export const CommandOutputWidget: React.FC<CommandOutputWidgetProps> = ({
       } else if (part === '\u001b[22m') {
         isBold = false;
         return;
-      } else if (ANSI_STYLE_TEST_PATTERN.test(part)) {
+      } else if (part.match(/\u001b\[\d+m/)) {
         // 忽略其他 ANSI 代码
         return;
       }

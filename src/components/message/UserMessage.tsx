@@ -234,8 +234,8 @@ const extractUserText = (message: ClaudeStreamMessage): string => {
   // 如果是数组，提取所有text类型的内容
   else if (Array.isArray(content)) {
     text = content
-      .filter((item: LegacyAny) => item.type === 'text')
-      .map((item: LegacyAny) => item.text || '')
+      .filter((item: any) => item.type === 'text')
+      .map((item: any) => item.text || '')
       .join('\n');
   }
   
@@ -269,7 +269,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   onRevert
 }) => {
   const { t } = useTranslation();
-  const engine = (message as LegacyAny).engine || 'claude';
+  const engine = (message as any).engine || 'claude';
   const text = extractUserText(message);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [capabilities, setCapabilities] = useState<RewindCapabilities | null>(null);
@@ -296,6 +296,9 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   const images = useMemo(() => {
     return [...contentImages, ...textImages];
   }, [contentImages, textImages]);
+
+  // 如果没有文本内容且没有图片，不渲染
+  if (!text && images.length === 0) return null;
 
   // ⚡ 检查是否是 Skills 消息
   const isSkills = isSkillsMessage(text);
@@ -354,10 +357,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
     if (showConfirmDialog) {
       loadCapabilities();
     }
-  }, [showConfirmDialog, promptIndex, sessionId, projectId, projectPath, engine]);
-
-  // 如果没有文本内容且没有图片，不渲染。必须放在 hooks 之后，避免条件式调用 hooks。
-  if (!text && images.length === 0) return null;
+  }, [showConfirmDialog, promptIndex, sessionId, projectId, engine]);
 
   const handleRevertClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -509,12 +509,12 @@ export const UserMessage: React.FC<UserMessageProps> = ({
                 </div>
               </div>
             </TooltipTrigger>
-            {((message as LegacyAny).sentAt || (message as LegacyAny).timestamp) && (
+            {((message as any).sentAt || (message as any).timestamp) && (
               <TooltipContent side="left" className="text-[11px]">
                 <div className="flex flex-col gap-0.5">
                   <span className="font-medium">You</span>
                   <span className="text-muted-foreground">
-                    {formatTimestamp((message as LegacyAny).sentAt || (message as LegacyAny).timestamp)}
+                    {formatTimestamp((message as any).sentAt || (message as any).timestamp)}
                   </span>
                 </div>
               </TooltipContent>

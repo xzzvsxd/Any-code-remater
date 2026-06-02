@@ -52,7 +52,7 @@ export interface UsageData {
  * const standardized = normalizeUsageData(apiUsage);
  * // Result: { input_tokens: 100, output_tokens: 50, cache_creation_tokens: 20, cache_read_tokens: 10 }
  */
-export function normalizeUsageData(usage: LegacyAny): UsageData {
+export function normalizeUsageData(usage: any): UsageData {
   // Delegate to the unified token normalization system
   const standardized = normalizeRawUsage(usage);
 

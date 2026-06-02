@@ -65,7 +65,7 @@ interface ApiStrategy {
   /**
    * 构建请求体
    */
-  buildRequestBody(request: LLMRequest, model: string): LegacyAny;
+  buildRequestBody(request: LLMRequest, model: string): any;
 
   /**
    * 构建请求头
@@ -75,7 +75,7 @@ interface ApiStrategy {
   /**
    * 解析响应
    */
-  parseResponse(data: LegacyAny): string;
+  parseResponse(data: any): string;
 }
 
 /**
@@ -109,8 +109,8 @@ class OpenAIStrategy implements ApiStrategy {
     return `${normalizedUrl}/chat/completions`;
   }
 
-  buildRequestBody(request: LLMRequest, model: string): LegacyAny {
-    const body: LegacyAny = {
+  buildRequestBody(request: LLMRequest, model: string): any {
+    const body: any = {
       model,
       messages: [
         { role: 'system', content: request.systemPrompt },
@@ -136,7 +136,7 @@ class OpenAIStrategy implements ApiStrategy {
     };
   }
 
-  parseResponse(data: LegacyAny): string {
+  parseResponse(data: any): string {
     if (!data.choices || data.choices.length === 0) {
       if (data.error) {
         throw new Error(`API error: ${JSON.stringify(data.error)}`);
@@ -192,8 +192,8 @@ class AnthropicStrategy implements ApiStrategy {
     return `${normalizedUrl}/messages`;
   }
 
-  buildRequestBody(request: LLMRequest, model: string): LegacyAny {
-    const body: LegacyAny = {
+  buildRequestBody(request: LLMRequest, model: string): any {
+    const body: any = {
       model,
       max_tokens: request.maxTokens || 4096,
       system: request.systemPrompt,
@@ -217,7 +217,7 @@ class AnthropicStrategy implements ApiStrategy {
     };
   }
 
-  parseResponse(data: LegacyAny): string {
+  parseResponse(data: any): string {
     if (!data.content || data.content.length === 0) {
       if (data.error) {
         throw new Error(`Anthropic API error: ${JSON.stringify(data.error)}`);
@@ -225,7 +225,7 @@ class AnthropicStrategy implements ApiStrategy {
       throw new Error('Anthropic API returned no content');
     }
 
-    const textContent = data.content.find((c: LegacyAny) => c.type === 'text');
+    const textContent = data.content.find((c: any) => c.type === 'text');
     if (!textContent || !textContent.text) {
       throw new Error('Anthropic API returned empty text content');
     }
@@ -253,8 +253,8 @@ class GeminiStrategy implements ApiStrategy {
     return `${normalizedUrl}/v1beta/models/${model}:generateContent?key=${apiKey}`;
   }
 
-  buildRequestBody(request: LLMRequest): LegacyAny {
-    const body: LegacyAny = {
+  buildRequestBody(request: LLMRequest): any {
+    const body: any = {
       contents: [{
         parts: [
           { text: `${request.systemPrompt}\n\n${request.userPrompt}` }
@@ -262,7 +262,7 @@ class GeminiStrategy implements ApiStrategy {
       }],
     };
 
-    const generationConfig: LegacyAny = {};
+    const generationConfig: any = {};
     if (request.temperature !== undefined && request.temperature !== null) {
       generationConfig.temperature = request.temperature;
     }
@@ -283,7 +283,7 @@ class GeminiStrategy implements ApiStrategy {
     };
   }
 
-  parseResponse(data: LegacyAny): string {
+  parseResponse(data: any): string {
     const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
     if (!content) {

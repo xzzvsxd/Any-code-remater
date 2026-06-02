@@ -17,7 +17,6 @@ import {
 } from '@/components/ui/select';
 import { Popover } from '@/components/ui/popover';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { api } from '@/lib/api';
 import { relaunchApp } from '@/lib/updater';
 import { ask, message } from '@tauri-apps/plugin-dialog';
@@ -34,14 +33,10 @@ export type ClaudeRuntimeMode = 'auto' | 'native' | 'wsl';
 
 export interface ExecutionEngineConfig {
   engine: ExecutionEngine;
-  // Claude-specific config
-  claudeFastMode?: boolean;
   // Codex-specific config
   codexMode?: CodexExecutionMode;
   codexModel?: string;
   codexApiKey?: string;
-  /** Enable Codex service_tier=fast where supported */
-  codexFastMode?: boolean;
   /** Codex reasoning effort level: low, medium, high, xhigh */
   codexReasoningLevel?: 'low' | 'medium' | 'high' | 'xhigh';
   // Gemini-specific config
@@ -82,7 +77,6 @@ interface ClaudeWslModeConfig {
   availableDistros: string[];
   wslEnabled: boolean;
   wslClaudePath: string | null;
-  wslClaudeDir?: string | null;
   wslClaudeVersion: string | null;
   nativeAvailable: boolean;
   actualMode: 'native' | 'wsl';
@@ -373,30 +367,6 @@ export const ExecutionEngineSelector: React.FC<ExecutionEngineSelectorProps> = (
     });
   };
 
-  const handleClaudeFastModeChange = async (enabled: boolean) => {
-    onChange({
-      ...value,
-      claudeFastMode: enabled,
-    });
-
-    try {
-      await api.updateClaudeFastMode(enabled);
-    } catch (error) {
-      console.error('[ExecutionEngineSelector] Failed to persist Claude fast mode:', error);
-      await message('保存 Claude Fast 模式失败: ' + (error instanceof Error ? error.message : String(error)), {
-        title: '错误',
-        kind: 'error',
-      });
-    }
-  };
-
-  const handleCodexFastModeChange = (enabled: boolean) => {
-    onChange({
-      ...value,
-      codexFastMode: enabled,
-    });
-  };
-
   const handleGeminiApprovalModeChange = (mode: 'auto_edit' | 'yolo' | 'default') => {
     onChange({
       ...value,
@@ -523,23 +493,6 @@ export const ExecutionEngineSelector: React.FC<ExecutionEngineSelectorProps> = (
                   </SelectContent>
                 </Select>
               </div>
-
-              {/* Fast Mode */}
-              <label className="flex cursor-pointer items-center justify-between gap-4 rounded-md border p-3">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2 text-sm font-medium">
-                    <Zap className="h-4 w-4 text-amber-500" />
-                    Fast 模式
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    使用 Codex service_tier=fast；仅支持对应账号/模型，当前优先适配 GPT-5.5/GPT-5.4。
-                  </p>
-                </div>
-                <Switch
-                  checked={!!value.codexFastMode}
-                  onCheckedChange={handleCodexFastModeChange}
-                />
-              </label>
 
               {/* Status */}
               <div className="rounded-md border p-2 bg-muted/50">
@@ -823,23 +776,6 @@ export const ExecutionEngineSelector: React.FC<ExecutionEngineSelectorProps> = (
                   {claudeVersion && <span className="text-muted-foreground">• {claudeVersion}</span>}
                 </div>
               </div>
-
-              {/* Fast Mode */}
-              <label className="flex cursor-pointer items-center justify-between gap-4 rounded-md border p-3">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2 text-sm font-medium">
-                    <Zap className="h-4 w-4 text-amber-500" />
-                    Fast 模式
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    开启 Claude Opus fast mode，并优先使用 Opus 4.7 fast 配置。
-                  </p>
-                </div>
-                <Switch
-                  checked={!!value.claudeFastMode}
-                  onCheckedChange={handleClaudeFastModeChange}
-                />
-              </label>
 
               {/* WSL Mode Configuration (Windows only) */}
               {claudeWslModeConfig && (claudeWslModeConfig.nativeAvailable || claudeWslModeConfig.wslAvailable) && (

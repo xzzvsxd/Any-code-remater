@@ -1,6 +1,6 @@
 [package]
 name = "any-code"
-version = "5.29.6"
+version = "5.28.12"
 description = "Any Code - Professional desktop application and toolkit for AI CLI"
 authors = ["mufeedvh", "123vviekr"]
 license = "AGPL-3.0"
@@ -72,26 +72,21 @@ codegen-units = 16  # Enable parallel compilation
 incremental = true  # Enable incremental compilation
 debug = true        # Keep debug info for better debugging
 
-# Production release profile.
-#
-# This intentionally favors a balanced desktop release over smallest-possible
-# binaries. Full LTO + one codegen unit made GitHub Actions releases spend most
-# of their time in final Rust codegen/linking, and every version bump needs all
-# four platform packages. Thin LTO keeps production optimizations while allowing
-# parallel codegen and much faster CI turnaround.
+# Production release profile (current settings)
 [profile.release]
-opt-level = 2       # Balanced runtime speed and compile time
-lto = "thin"        # Much faster than full LTO, still optimized
-codegen-units = 16  # Parallel codegen for faster CI builds
+# Enable more aggressive optimizations for smaller binary size
+opt-level = "z"     # Optimize for size
+lto = true          # Enable Link Time Optimization
+codegen-units = 1   # Reduce parallel codegen units
 panic = "abort"     # Abort on panic instead of unwinding
 strip = true        # Strip symbols from binary
 overflow-checks = false  # Disable overflow checks in release mode for smaller size
 debug = false       # Disable debug info
 incremental = false # Disable incremental compilation for better optimization
 
-# Keep dependencies on the same balanced release profile.
+# Additional size optimizations
 [profile.release.package."*"]
-opt-level = 2
+opt-level = "z"     # Optimize all dependencies for size
 
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!

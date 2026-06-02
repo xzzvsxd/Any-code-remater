@@ -153,7 +153,6 @@ export interface GeminiSessionUsage {
   total_cost: number;
   input_tokens: number;
   output_tokens: number;
-  cache_read_tokens?: number;
   start_time: string;
   first_message?: string;
 }

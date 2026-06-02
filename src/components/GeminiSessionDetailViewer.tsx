@@ -20,7 +20,6 @@ import {
 } from '@/components/ui/collapsible';
 import { X, User, Bot, Wrench, Clock, CheckCircle, XCircle, RefreshCw, ChevronDown, ChevronRight, Cpu } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { useStableCallback } from "@/hooks/useStableCallback";
 
 interface GeminiSessionDetailViewerProps {
   projectPath: string;
@@ -43,27 +42,11 @@ export const GeminiSessionDetailViewer: React.FC<GeminiSessionDetailViewerProps>
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const autoScrolledSessionIdRef = useRef<string | null>(null);
 
-  const loadSession = useStableCallback(async () => {
-    if (!projectPath || !sessionId) return;
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const detail = await api.getGeminiSessionDetail(projectPath, sessionId);
-      setSession(detail);
-    } catch (err) {
-      console.error('Failed to load session detail:', err);
-      setError(err instanceof Error ? err.message : 'Failed to load session detail');
-    } finally {
-      setLoading(false);
-    }
-  });
-useEffect(() => {
+  useEffect(() => {
     if (projectPath && sessionId) {
       loadSession();
     }
-  }, [loadSession, projectPath, sessionId]);
+  }, [projectPath, sessionId]);
 
   // 进入历史会话详情时，默认滚动到最底部以显示最新消息
   useEffect(() => {
@@ -109,8 +92,24 @@ useEffect(() => {
       observer.disconnect();
       clearTimeout(timer);
     };
-  }, [session, session?.sessionId, sessionId]);
+  }, [session?.sessionId]);
 
+  const loadSession = async () => {
+    if (!projectPath || !sessionId) return;
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const detail = await api.getGeminiSessionDetail(projectPath, sessionId);
+      setSession(detail);
+    } catch (err) {
+      console.error('Failed to load session detail:', err);
+      setError(err instanceof Error ? err.message : 'Failed to load session detail');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const formatTimestamp = (timestamp: string) => {
     try {
@@ -144,7 +143,7 @@ useEffect(() => {
   };
 
   // Component for a single tool call with collapsible support
-  const ToolCallItem: React.FC<{ toolCall: LegacyAny; index: number }> = ({ toolCall }) => {
+  const ToolCallItem: React.FC<{ toolCall: any; index: number }> = ({ toolCall }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [argsOpen, setArgsOpen] = useState(false);
 
@@ -259,11 +258,11 @@ useEffect(() => {
     );
   };
 
-  const renderToolCall = (toolCall: LegacyAny, index: number) => {
+  const renderToolCall = (toolCall: any, index: number) => {
     return <ToolCallItem key={toolCall.id || index} toolCall={toolCall} index={index} />;
   };
 
-  const renderMessage = (message: LegacyAny, index: number) => {
+  const renderMessage = (message: any, index: number) => {
     const isUser = message.type === 'user';
 
     return (
@@ -303,7 +302,7 @@ useEffect(() => {
               <p className="text-xs font-medium text-muted-foreground">
                 工具调用 ({message.toolCalls.length})
               </p>
-              {message.toolCalls.map((tc: LegacyAny, idx: number) => renderToolCall(tc, idx))}
+              {message.toolCalls.map((tc: any, idx: number) => renderToolCall(tc, idx))}
             </div>
           )}
 

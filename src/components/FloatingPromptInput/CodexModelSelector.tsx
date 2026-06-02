@@ -1,5 +1,5 @@
 import React from "react";
-import { ChevronUp, Check, Star, Brain, Cpu, Rocket, Zap, Gauge } from "lucide-react";
+import { ChevronUp, Check, Star, Brain, Cpu, Rocket, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -42,20 +42,6 @@ const DEFAULT_CODEX_MODELS: CodexModelConfig[] = [
     name: "GPT-5.4",
     description: "Previous flagship model, 1.05M context",
     icon: <Star className="h-4 w-4 text-fuchsia-500" />,
-    isDefault: false,
-  },
-  {
-    id: "gpt-5.4-mini",
-    name: "GPT-5.4 Mini",
-    description: "Faster, lower-cost variant for lightweight tasks",
-    icon: <Gauge className="h-4 w-4 text-cyan-500" />,
-    isDefault: false,
-  },
-  {
-    id: "gpt-5.4-nano",
-    name: "GPT-5.4 Nano",
-    description: "Smallest fast variant for simple helper tasks",
-    icon: <Gauge className="h-4 w-4 text-sky-500" />,
     isDefault: false,
   },
   {
@@ -123,9 +109,6 @@ function getCodexModelIcon(modelId: string): React.ReactNode {
   }
   if (lower.includes("5.4-pro")) {
     return <Star className="h-4 w-4 text-red-500" />;
-  }
-  if (lower.includes("mini") || lower.includes("nano")) {
-    return <Gauge className="h-4 w-4 text-cyan-500" />;
   }
   if (lower.includes("5.4")) {
     return <Star className="h-4 w-4 text-fuchsia-500" />;

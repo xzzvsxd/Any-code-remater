@@ -3,27 +3,18 @@ import { ReactNode } from "react";
 /**
  * Model type definition
  */
-export type ModelType =
-  | "default"
-  | "best"
-  | "sonnet"
-  | "opus"
-  | "sonnet1m"
-  | "opus1m"
-  | "haiku"
-  | "opusplan"
-  | "custom";
+export type ModelType = "sonnet" | "opus" | "sonnet1m" | "opus1m" | "custom";
 
 /**
  * Thinking mode type definition
- * Claude adaptive thinking with effort levels
+ * Claude 4.6 Adaptive Thinking with effort levels
  */
 export type ThinkingMode = "off" | "adaptive";
 
 /**
- * Thinking effort level
+ * Thinking effort level (Claude 4.6 Adaptive Thinking)
  */
-export type ThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
+export type ThinkingEffort = "low" | "medium" | "high" | "max";
 
 /**
  * Model configuration
@@ -43,7 +34,7 @@ export interface ThinkingModeConfig {
   effort?: ThinkingEffort; // Effort level for adaptive thinking
   name: string;
   description: string;
-  level: number; // 0-5 for visual indicator
+  level: number; // 0-4 for visual indicator
 }
 
 /**

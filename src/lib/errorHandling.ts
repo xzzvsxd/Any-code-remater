@@ -804,7 +804,7 @@ export async function handleAsync<T>(
 /**
  * Decorator for error handling
  */
-export function withErrorHandling<T extends (...args: LegacyAny[]) => Promise<LegacyAny>>(
+export function withErrorHandling<T extends (...args: any[]) => Promise<any>>(
   fn: T,
   options?: {
     context?: Partial<ErrorContext>;

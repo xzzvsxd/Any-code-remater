@@ -13,7 +13,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { claudeSDK } from '@/lib/claudeSDK';
-import { extractTextFromContent, sanitizeAiContextText } from '@/lib/sessionHelpers';
+import { extractTextFromContent } from '@/lib/sessionHelpers';
 import type { ClaudeStreamMessage } from '@/types/claude';
 
 // ============================================================================
@@ -115,7 +115,7 @@ const TEMPLATE_SUGGESTIONS: Record<string, string[]> = {
  * 从消息内容中提取丰富的上下文信息
  * 包括：文本内容、工具调用、工具结果等
  */
-function extractRichContext(content: LegacyAny[] | undefined): string {
+function extractRichContext(content: any[] | undefined): string {
   if (!content || !Array.isArray(content)) return '';
 
   const parts: string[] = [];
@@ -170,17 +170,12 @@ function extractFullSessionContext(messages: ClaudeStreamMessage[]): string {
       const text = extractRichContext(msg.message.content) || extractTextFromContent(msg.message.content);
       if (text) {
         // 助手消息可能较长，适当截断但保留关键信息
-        const sanitized = sanitizeAiContextText(text);
-        if (sanitized) {
-          contextParts.push(`[助手] ${sanitized.slice(0, 800)}`);
-        }
+        contextParts.push(`[助手] ${text.slice(0, 800)}`);
       }
     } else if (msg.type === 'result' && msg.result) {
       // 执行结果：包含命令输出等
-      const resultText = sanitizeAiContextText(msg.result).slice(0, 400);
-      if (resultText) {
-        contextParts.push(`[执行结果] ${resultText}`);
-      }
+      const resultText = msg.result.slice(0, 400);
+      contextParts.push(`[执行结果] ${resultText}`);
     }
   }
 

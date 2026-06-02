@@ -48,7 +48,10 @@ export function useKeyboardShortcuts(config: KeyboardShortcutsConfig): void {
           event.stopPropagation();
 
           // Show revert dialog
-          onShowRevertDialog?.();
+          if (onShowRevertDialog) {
+            onShowRevertDialog();
+          } else {
+          }
         }
 
         setLastEscapeTime(now);

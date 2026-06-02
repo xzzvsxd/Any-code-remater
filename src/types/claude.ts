@@ -5,7 +5,7 @@ export interface ClaudeStreamMessage {
   type: "system" | "assistant" | "user" | "result" | "summary" | "queue-operation" | "thinking" | "tool_use";
   subtype?: string;
   message?: {
-    content?: LegacyAny[];
+    content?: any[];
     role?: string;
     usage?: {
       input_tokens: number;
@@ -42,5 +42,5 @@ export interface ClaudeStreamMessage {
   };
   // Execution engine identifier
   engine?: 'claude' | 'codex' | 'gemini';
-  [key: string]: LegacyAny;
+  [key: string]: any;
 }

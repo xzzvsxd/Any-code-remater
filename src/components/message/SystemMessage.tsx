@@ -178,11 +178,11 @@ const extractMessageContent = (message: ClaudeStreamMessage): string => {
   }
 
   if (typeof content === "object") {
-    if (typeof (content as LegacyAny).text === "string") {
-      return (content as LegacyAny).text;
+    if (typeof (content as any).text === "string") {
+      return (content as any).text;
     }
-    if (typeof (content as LegacyAny).message === "string") {
-      return (content as LegacyAny).message;
+    if (typeof (content as any).message === "string") {
+      return (content as any).message;
     }
 
     try {
@@ -217,11 +217,11 @@ export const SystemMessage: React.FC<SystemMessageProps> = ({
           <Renderer
             toolName="system_initialized"
             input={{
-              sessionId: (message as LegacyAny).session_id ?? (message as LegacyAny).sessionId ?? undefined,
-              model: (message as LegacyAny).model ?? undefined,
-              cwd: (message as LegacyAny).cwd ?? undefined,
-              tools: (message as LegacyAny).tools ?? undefined,
-              timestamp: (message as LegacyAny).receivedAt ?? (message as LegacyAny).timestamp ?? undefined,
+              sessionId: (message as any).session_id ?? (message as any).sessionId ?? undefined,
+              model: (message as any).model ?? undefined,
+              cwd: (message as any).cwd ?? undefined,
+              tools: (message as any).tools ?? undefined,
+              timestamp: (message as any).receivedAt ?? (message as any).timestamp ?? undefined,
             }}
           />
         </div>
@@ -263,7 +263,7 @@ export const SystemMessage: React.FC<SystemMessageProps> = ({
     const commandName = commandNameMatch ? commandNameMatch[1] : null;
     const commandMessage = commandMessageMatch ? commandMessageMatch[1] : null;
 
-    const formattedTime = formatTimestamp((message as LegacyAny).receivedAt ?? (message as LegacyAny).timestamp);
+    const formattedTime = formatTimestamp((message as any).receivedAt ?? (message as any).timestamp);
 
     return (
       <div className={cn("my-2", className)}>
@@ -296,7 +296,7 @@ export const SystemMessage: React.FC<SystemMessageProps> = ({
     return null;
   }
 
-  const formattedTime = formatTimestamp((message as LegacyAny).receivedAt ?? (message as LegacyAny).timestamp);
+  const formattedTime = formatTimestamp((message as any).receivedAt ?? (message as any).timestamp);
 
   return (
     <div className={cn("my-4", className)}>
@@ -325,11 +325,11 @@ const ExecutionStatusMessage: React.FC<{ message: ClaudeStreamMessage; className
   message,
   className,
 }) => {
-  const content = (message as LegacyAny).result || extractMessageContent(message);
+  const content = (message as any).result || extractMessageContent(message);
   if (!content) return null;
 
   const subtype = message.subtype;
-  const formattedTime = formatTimestamp((message as LegacyAny).receivedAt ?? (message as LegacyAny).timestamp);
+  const formattedTime = formatTimestamp((message as any).receivedAt ?? (message as any).timestamp);
   const isComplete = subtype === "execution-complete";
   const isCancelled = subtype === "execution-cancelled";
   const title = isComplete ? "AI 执行完成" : isCancelled ? "已取消当前会话" : "AI 执行失败";
@@ -374,7 +374,7 @@ const CommandOutputMessage: React.FC<{ message: ClaudeStreamMessage; className?:
   const content = extractMessageContent(message);
   if (!content) return null;
 
-  const formattedTime = formatTimestamp((message as LegacyAny).receivedAt ?? (message as LegacyAny).timestamp);
+  const formattedTime = formatTimestamp((message as any).receivedAt ?? (message as any).timestamp);
 
   return (
     <div className={cn("my-4", className)}>
@@ -427,7 +427,7 @@ const CommandErrorMessage: React.FC<{ message: ClaudeStreamMessage; className?: 
   const content = extractMessageContent(message);
   if (!content) return null;
 
-  const formattedTime = formatTimestamp((message as LegacyAny).receivedAt ?? (message as LegacyAny).timestamp);
+  const formattedTime = formatTimestamp((message as any).receivedAt ?? (message as any).timestamp);
 
   return (
     <div className={cn("my-4", className)}>

@@ -35,7 +35,7 @@ export interface UpdatePlanWidgetProps {
   plan?: PlanStep[];
   /** 工具结果 */
   result?: {
-    content?: LegacyAny;
+    content?: any;
     is_error?: boolean;
   };
 }

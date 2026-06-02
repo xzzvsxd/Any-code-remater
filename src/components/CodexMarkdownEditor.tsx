@@ -8,7 +8,6 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useTheme } from "@/contexts/ThemeContext";
-import { useStableCallback } from "@/hooks/useStableCallback";
 
 interface CodexMarkdownEditorProps {
   /**
@@ -44,7 +43,11 @@ export const CodexMarkdownEditor: React.FC<CodexMarkdownEditorProps> = ({
   const hasChanges = content !== originalContent;
 
   // Load the Codex system prompt on mount
-  const loadCodexSystemPrompt = useStableCallback(async () => {
+  useEffect(() => {
+    loadCodexSystemPrompt();
+  }, []);
+
+  const loadCodexSystemPrompt = async () => {
     try {
       setLoading(true);
       setError(null);
@@ -66,11 +69,7 @@ export const CodexMarkdownEditor: React.FC<CodexMarkdownEditorProps> = ({
     } finally {
       setLoading(false);
     }
-  });
-useEffect(() => {
-    loadCodexSystemPrompt();
-  }, [loadCodexSystemPrompt]);
-
+  };
 
   const handleSave = async () => {
     try {

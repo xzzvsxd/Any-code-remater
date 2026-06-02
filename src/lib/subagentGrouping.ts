@@ -1,6 +1,6 @@
 /**
  * 子代理消息分组逻辑
- *
+ * 
  * 核心思路：
  * 1. 识别 Task 工具调用（子代理启动边界）
  * 2. 收集该 Task 对应的所有子代理消息（有 parent_tool_use_id）
@@ -32,7 +32,7 @@ export interface SubagentGroup {
 /**
  * 消息组类型（用于渲染）
  */
-export type MessageGroup =
+export type MessageGroup = 
   | { type: 'normal'; message: ClaudeStreamMessage; index: number }
   | { type: 'subagent'; group: SubagentGroup }
   | { type: 'aggregated'; messages: ClaudeStreamMessage[]; index: number }; // 新增：聚合消息组
@@ -42,12 +42,12 @@ export type MessageGroup =
  */
 export function hasTaskToolCall(message: ClaudeStreamMessage): boolean {
   if (message.type !== 'assistant') return false;
-
+  
   const content = message.message?.content;
   if (!Array.isArray(content)) return false;
-
-  return content.some((item: LegacyAny) =>
-    item.type === 'tool_use' &&
+  
+  return content.some((item: any) => 
+    item.type === 'tool_use' && 
     item.name?.toLowerCase() === 'task'
   );
 }
@@ -58,10 +58,10 @@ export function hasTaskToolCall(message: ClaudeStreamMessage): boolean {
 export function extractTaskToolUseIds(message: ClaudeStreamMessage): string[] {
   if (!hasTaskToolCall(message)) return [];
 
-  const content = message.message?.content as LegacyAny[];
+  const content = message.message?.content as any[];
   return content
-    .filter((item: LegacyAny) => item.type === 'tool_use' && item.name?.toLowerCase() === 'task')
-    .map((item: LegacyAny) => item.id)
+    .filter((item: any) => item.type === 'tool_use' && item.name?.toLowerCase() === 'task')
+    .map((item: any) => item.id)
     .filter(Boolean);
 }
 
@@ -73,10 +73,10 @@ export function extractTaskToolDetails(message: ClaudeStreamMessage): Map<string
 
   if (!hasTaskToolCall(message)) return details;
 
-  const content = message.message?.content as LegacyAny[];
+  const content = message.message?.content as any[];
   content
-    .filter((item: LegacyAny) => item.type === 'tool_use' && item.name?.toLowerCase() === 'task')
-    .forEach((item: LegacyAny) => {
+    .filter((item: any) => item.type === 'tool_use' && item.name?.toLowerCase() === 'task')
+    .forEach((item: any) => {
       if (item.id) {
         details.set(item.id, {
           subagentType: item.input?.subagent_type,
@@ -92,11 +92,11 @@ export function extractTaskToolDetails(message: ClaudeStreamMessage): Map<string
  */
 export function isSubagentMessage(message: ClaudeStreamMessage): boolean {
   // 检查是否有 parent_tool_use_id
-  const hasParent = !!(message as LegacyAny).parent_tool_use_id;
-
+  const hasParent = !!(message as any).parent_tool_use_id;
+  
   // 检查是否标记为侧链
-  const isSidechain = !!(message as LegacyAny).isSidechain;
-
+  const isSidechain = !!(message as any).isSidechain;
+  
   return hasParent || isSidechain;
 }
 
@@ -104,12 +104,12 @@ export function isSubagentMessage(message: ClaudeStreamMessage): boolean {
  * 获取消息的 parent_tool_use_id
  */
 export function getParentToolUseId(message: ClaudeStreamMessage): string | null {
-  return (message as LegacyAny).parent_tool_use_id || null;
+  return (message as any).parent_tool_use_id || null;
 }
 
 /**
  * 获取技术性消息的具体聚合类型
- *
+ * 
  * 返回值：
  * - 'tool': 仅包含工具调用或结果
  * - 'thinking': 仅包含思考内容
@@ -118,10 +118,10 @@ export function getParentToolUseId(message: ClaudeStreamMessage): string | null 
 function getTechnicalMessageType(message: ClaudeStreamMessage): 'tool' | 'thinking' | null {
   // Thinking 类型的消息
   if (message.type === 'thinking') return 'thinking';
-
+  
   // 必须是 assistant 类型
   if (message.type !== 'assistant') return null;
-
+  
   const content = message.message?.content;
   if (!Array.isArray(content)) return null;
 
@@ -129,7 +129,7 @@ function getTechnicalMessageType(message: ClaudeStreamMessage): 'tool' | 'thinki
   let hasTool = false;
   let hasText = false;
 
-  content.forEach((item: LegacyAny) => {
+  content.forEach((item: any) => {
     if (item.type === 'thinking') {
       hasThinking = true;
     } else if (item.type === 'tool_use' || item.type === 'tool_result') {
@@ -152,7 +152,7 @@ function getTechnicalMessageType(message: ClaudeStreamMessage): 'tool' | 'thinki
   // 如果返回 'tool'，它会和前后的 tool 合并。
   // 如果返回 'thinking'，它会和前后的 thinking 合并。
   // 如果返回 null，它不参与合并。
-
+  
   if (hasThinking && hasTool) {
     // 这是一个复杂的混合消息，为了安全起见，我们暂不将其与其他消息合并，
     // 以免混淆。它自身内部已经包含了 Thinking 和 Tool。
@@ -299,8 +299,8 @@ export function groupMessages(messages: ClaudeStreamMessage[]): MessageGroup[] {
   // 第四遍：合并连续的技术性消息（Tools & Thinking）
   // ✅ FIX: 仅允许同类型的技术性消息合并（Thinking 与 Tool 分离）
   const finalGroups: MessageGroup[] = [];
-  let currentAggregation: {
-    messages: ClaudeStreamMessage[];
+  let currentAggregation: { 
+    messages: ClaudeStreamMessage[]; 
     startIndex: number;
     aggType: 'tool' | 'thinking'; // 记录当前聚合组的类型
   } | null = null;
@@ -339,18 +339,18 @@ export function groupMessages(messages: ClaudeStreamMessage[]): MessageGroup[] {
               messages: currentAggregation.messages,
               index: currentAggregation.startIndex
             });
-            currentAggregation = {
-              messages: [msg],
+            currentAggregation = { 
+              messages: [msg], 
               startIndex: group.index,
-              aggType: msgType
+              aggType: msgType 
             };
           }
         } else {
           // 开始新的聚合
-          currentAggregation = {
-            messages: [msg],
+          currentAggregation = { 
+            messages: [msg], 
             startIndex: group.index,
-            aggType: msgType
+            aggType: msgType 
           };
         }
       } else {
@@ -392,7 +392,7 @@ export function shouldHideMessage(message: ClaudeStreamMessage, groups: MessageG
     const parentId = getParentToolUseId(message);
     if (parentId) {
       // 检查是否有对应的子代理组
-      return groups.some(g =>
+      return groups.some(g => 
         g.type === 'subagent' && g.group.taskToolUseId === parentId
       );
     }
@@ -409,12 +409,12 @@ export function getSubagentMessageRole(message: ClaudeStreamMessage): 'user' | '
     // 检查是否有文本内容（子代理的提示词）
     const content = message.message?.content;
     if (Array.isArray(content)) {
-      const hasText = content.some((item: LegacyAny) => item.type === 'text');
+      const hasText = content.some((item: any) => item.type === 'text');
       if (hasText) {
         return 'assistant'; // 子代理的输出
       }
     }
   }
-
-  return message.type as LegacyAny;
+  
+  return message.type as any;
 }

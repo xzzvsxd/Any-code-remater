@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { api } from "@/lib/api";
 import { ImageAttachment } from "../types";
-import { useStableCallback } from "@/hooks/useStableCallback";
 
 export interface UseImageHandlingOptions {
   prompt: string;
@@ -36,7 +35,7 @@ export function useImageHandling({
   };
 
   // Extract image paths from prompt text
-  const extractImagePaths = useStableCallback((text: string): string[] => {
+  const extractImagePaths = (text: string): string[] => {
     const quotedRegex = /@"([^"]+)"/g;
     const unquotedRegex = /@([^@\n\s]+)/g;
     const pathsSet = new Set<string>();
@@ -55,7 +54,7 @@ export function useImageHandling({
     }
     
     // Remove quoted mentions to avoid double-matching
-    const textWithoutQuoted = text.replace(quotedRegex, '');
+    let textWithoutQuoted = text.replace(quotedRegex, '');
     
     // Extract unquoted paths
     matches = Array.from(textWithoutQuoted.matchAll(unquotedRegex));
@@ -71,13 +70,13 @@ export function useImageHandling({
     }
 
     return Array.from(pathsSet);
-  });
+  };
 
   // Update embedded images when prompt changes
   useEffect(() => {
     const imagePaths = extractImagePaths(prompt);
     setEmbeddedImages(imagePaths);
-  }, [prompt, projectPath, extractImagePaths]);
+  }, [prompt, projectPath]);
 
   // Set up Tauri drag-drop event listener
   useEffect(() => {
@@ -142,7 +141,7 @@ export function useImageHandling({
         unlistenDragDropRef.current = null;
       }
     };
-  }, [prompt, projectPath, isExpanded, extractImagePaths, onPromptChange, expandedTextareaRef, textareaRef]);
+  }, [prompt, projectPath, isExpanded]);
 
   // Handle paste images from clipboard
   const handlePaste = async (e: React.ClipboardEvent) => {

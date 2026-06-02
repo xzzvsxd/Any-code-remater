@@ -11,9 +11,10 @@
  * - 支持多引擎（Claude、Codex、Gemini）
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { api, type Session } from '@/lib/api';
+import { normalizeUsageData } from '@/lib/utils';
 import type { ClaudeStreamMessage } from '@/types/claude';
 import type { CodexRateLimits } from '@/types/codex';
 import {
@@ -33,12 +34,6 @@ import {
   loadUiOnlySessionMessages,
   mergeUiOnlySessionMessages,
 } from '@/lib/uiOnlySessionEvents';
-import {
-  mergeOlderHistoryMessages,
-  normalizeLoadedHistoryMessages,
-} from '@/lib/sessionHistoryPaging';
-
-const SESSION_HISTORY_PAGE_SIZE = 300;
 
 /**
  * Hook 配置
@@ -121,21 +116,6 @@ interface UseSessionStreamReturn {
   loadSessionHistory: () => Promise<void>;
 
   /**
-   * 按需加载更早历史
-   */
-  loadOlderSessionHistory: () => Promise<void>;
-
-  /**
-   * 是否还有更早历史
-   */
-  hasMoreHistoryBefore: boolean;
-
-  /**
-   * 是否正在加载更早历史
-   */
-  isLoadingOlderHistory: boolean;
-
-  /**
    * 检查活跃会话
    */
   checkForActiveSession: () => Promise<void>;
@@ -178,54 +158,16 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
   // Internal refs
   const messageQueueRef = useRef<AsyncQueue<ClaudeStreamMessage> | null>(null);
   const loadingSessionIdRef = useRef<string | null>(null);
-  const historyOffsetRef = useRef(0);
-  const hasMoreHistoryBeforeRef = useRef(false);
-  const [hasMoreHistoryBefore, setHasMoreHistoryBeforeState] = useState(false);
-  const [isLoadingOlderHistory, setIsLoadingOlderHistory] = useState(false);
-
-  const setHasMoreHistoryBefore = useCallback((value: boolean) => {
-    hasMoreHistoryBeforeRef.current = value;
-    setHasMoreHistoryBeforeState(value);
-  }, []);
 
   /**
    * 获取引擎类型
    */
   const getEngine = useCallback((): EngineType => {
-    const engine = (session as LegacyAny)?.engine;
+    const engine = (session as any)?.engine;
     if (engine === 'codex') return 'codex';
     if (engine === 'gemini') return 'gemini';
     return 'claude';
   }, [session]);
-
-  const convertAndNormalizeHistory = useCallback((
-    history: ClaudeStreamMessage[],
-    engine: EngineType
-  ): ClaudeStreamMessage[] => {
-    let convertedHistory = history;
-
-    if (engine === 'codex') {
-      codexConverter.reset();
-      const converted: ClaudeStreamMessage[] = [];
-      for (const event of history) {
-        const msg = codexConverter.convertEventObject(event as LegacyAny);
-        if (msg) converted.push(msg);
-      }
-      convertedHistory = converted;
-
-      if (setCodexRateLimits) {
-        setCodexRateLimits(codexConverter.getRateLimits());
-      }
-    }
-
-    const warnedTypes = new Set<string>();
-    return normalizeLoadedHistoryMessages(convertedHistory, type => {
-      if (!warnedTypes.has(type)) {
-        warnedTypes.add(type);
-        console.debug('[useSessionStream] Filtering out message type:', type);
-      }
-    });
-  }, [setCodexRateLimits]);
 
   /**
    * 处理消息
@@ -259,8 +201,6 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
 
     const currentSessionId = session.id;
     loadingSessionIdRef.current = currentSessionId;
-    historyOffsetRef.current = 0;
-    setHasMoreHistoryBefore(false);
 
     try {
       setIsHistoryLoading(true);
@@ -274,25 +214,92 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
         try {
           const geminiDetail = await api.getGeminiSessionDetail(session.project_path, session.id);
           history = convertGeminiSessionDetailToClaudeMessages(geminiDetail);
-          setHasMoreHistoryBefore(false);
         } catch (err) {
           console.error('[useSessionStream] Failed to load Gemini session:', err);
           throw err;
         }
       } else {
-        // Claude/Codex 首屏只加载最近一页；更早历史通过 loadOlderSessionHistory 按需加载。
-        const page = await api.loadSessionHistoryPage(
-          session.id,
-          session.project_id,
-          engine,
-          { offset: 0, limit: SESSION_HISTORY_PAGE_SIZE }
-        );
-        history = page.messages as ClaudeStreamMessage[];
-        historyOffsetRef.current = page.nextOffset ?? history.length;
-        setHasMoreHistoryBefore(Boolean(page.hasMoreBefore));
+        // Claude/Codex
+        history = await api.loadSessionHistory(session.id, session.project_id, engine);
+
+        // Codex 消息需要转换
+        if (engine === 'codex') {
+          codexConverter.reset();
+          const converted: ClaudeStreamMessage[] = [];
+          for (const event of history) {
+            const msg = codexConverter.convertEventObject(event);
+            if (msg) converted.push(msg);
+          }
+          history = converted;
+
+          if (setCodexRateLimits) {
+            setCodexRateLimits(codexConverter.getRateLimits());
+          }
+        }
       }
 
-      const processedMessages = convertAndNormalizeHistory(history, engine);
+      // 过滤无效消息类型
+      const validTypes = ['user', 'assistant', 'system', 'result', 'summary', 'thinking', 'tool_use'];
+      const warnedTypes = new Set<string>();
+
+      const loadedMessages: ClaudeStreamMessage[] = history
+        .filter(entry => {
+          const type = entry.type;
+          if (type && !validTypes.includes(type)) {
+            if (!warnedTypes.has(type)) {
+              warnedTypes.add(type);
+              console.debug('[useSessionStream] Filtering out message type:', type);
+            }
+            return false;
+          }
+          return true;
+        })
+        .map(entry => ({
+          ...entry,
+          type: entry.type || 'assistant',
+        }));
+
+      // 规范化 usage 数据
+      const processedMessages = loadedMessages.map(msg => {
+        if (msg.message?.usage) {
+          msg.message.usage = normalizeUsageData(msg.message.usage);
+        }
+        if (msg.usage) {
+          msg.usage = normalizeUsageData(msg.usage);
+        }
+        if ((msg as any).codexMetadata?.usage) {
+          (msg as any).codexMetadata.usage = normalizeUsageData((msg as any).codexMetadata.usage);
+        }
+
+        // 将斜杠命令相关消息重新分类为 system
+        if (msg.type === 'user') {
+          const content = msg.message?.content;
+          let textContent = '';
+
+          if (typeof content === 'string') {
+            textContent = content;
+          } else if (Array.isArray(content)) {
+            textContent = content
+              .filter((item: any) => item?.type === 'text')
+              .map((item: any) => item?.text || '')
+              .join('\n');
+          }
+
+          const isCommandOutput = textContent.includes('<local-command-stdout>');
+          const isCommandMeta = textContent.includes('<command-name>') || textContent.includes('<command-message>');
+          const isCommandError = textContent.includes('Unknown slash command:');
+
+          if (isCommandOutput || isCommandMeta || isCommandError) {
+            return {
+              ...msg,
+              type: 'system' as const,
+              subtype: isCommandOutput ? 'command-output' : isCommandError ? 'command-error' : 'command-meta',
+            };
+          }
+        }
+
+        return msg;
+      });
 
       // Extract model display names from init messages in history
       for (const msg of processedMessages) {
@@ -357,84 +364,12 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
     isNewSessionInstance,
     isMountedRef,
     getEngine,
-    convertAndNormalizeHistory,
     setIsHistoryLoading,
     setError,
     setMessages,
     setRawJsonlOutput,
-    setHasMoreHistoryBefore,
+    setCodexRateLimits,
     onSessionNotFound,
-  ]);
-
-  /**
-   * 按需加载更早历史。只 prepend 一页旧消息，不再为了翻阅历史而把整个
-   * JSONL 重新灌进 React，避免长会话打开/上翻时卡死。
-   */
-  const loadOlderSessionHistory = useCallback(async () => {
-    if (!session) return;
-    if (isNewSessionInstance) return;
-    if (isLoadingOlderHistory) return;
-    if (!hasMoreHistoryBeforeRef.current) return;
-
-    const engine = getEngine();
-    if (engine === 'gemini') {
-      setHasMoreHistoryBefore(false);
-      return;
-    }
-
-    const currentSessionId = session.id;
-    const offset = historyOffsetRef.current;
-
-    try {
-      setIsLoadingOlderHistory(true);
-
-      const page = await api.loadSessionHistoryPage(
-        session.id,
-        session.project_id,
-        engine,
-        { offset, limit: SESSION_HISTORY_PAGE_SIZE }
-      );
-
-      if (loadingSessionIdRef.current !== currentSessionId) {
-        console.debug('[useSessionStream] Session changed while loading older history, discarding results');
-        return;
-      }
-
-      if (!isMountedRef.current) {
-        return;
-      }
-
-      const rawPageMessages = page.messages as ClaudeStreamMessage[];
-      const processedMessages = convertAndNormalizeHistory(rawPageMessages, engine);
-
-      setMessages(prev => mergeOlderHistoryMessages(prev, processedMessages));
-      setRawJsonlOutput(prev => [
-        ...rawPageMessages.map(message => JSON.stringify(message)),
-        ...prev,
-      ]);
-      historyOffsetRef.current = page.nextOffset ?? offset;
-      setHasMoreHistoryBefore(Boolean(page.hasMoreBefore));
-    } catch (err) {
-      console.error('[useSessionStream] Failed to load older session history:', err);
-      if (isMountedRef.current) {
-        setError('加载更早会话历史失败');
-      }
-    } finally {
-      if (isMountedRef.current) {
-        setIsLoadingOlderHistory(false);
-      }
-    }
-  }, [
-    session,
-    isNewSessionInstance,
-    isLoadingOlderHistory,
-    getEngine,
-    isMountedRef,
-    convertAndNormalizeHistory,
-    setMessages,
-    setRawJsonlOutput,
-    setHasMoreHistoryBefore,
-    setError,
   ]);
 
   /**
@@ -544,7 +479,21 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
     setIsLoading(true);
     hasActiveSessionRef.current = true;
     setCancelSessionId?.(sessionId);
-  }, [isMountedRef, isListeningRef, hasActiveSessionRef, unlistenRefs, getEngine, setCancelSessionId, setClaudeSessionId, setError, setIsLoading, processMessage, getRunElapsedSeconds, session?.project_path]);
+  }, [
+    isMountedRef,
+    isListeningRef,
+    hasActiveSessionRef,
+    unlistenRefs,
+    getEngine,
+    setCancelSessionId,
+    setClaudeSessionId,
+    setError,
+    setIsLoading,
+    setIsHistoryLoading,
+    processMessage,
+    getRunElapsedSeconds,
+    session?.project_path,
+  ]);
 
   /**
    * 检查活跃会话
@@ -569,9 +518,9 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
 
       if (loadingSessionIdRef.current !== currentSessionId) return;
 
-      const activeSession = activeSessions.find((s: LegacyAny) => {
+      const activeSession = activeSessions.find((s: any) => {
         if ('process_type' in s && s.process_type && 'ClaudeSession' in s.process_type) {
-          return (s.process_type as LegacyAny).ClaudeSession.session_id === session.id;
+          return (s.process_type as any).ClaudeSession.session_id === session.id;
         }
         return false;
       });
@@ -606,9 +555,6 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
 
   return {
     loadSessionHistory,
-    loadOlderSessionHistory,
-    hasMoreHistoryBefore,
-    isLoadingOlderHistory,
     checkForActiveSession,
     reconnectToSession,
     messageQueue: messageQueueRef,

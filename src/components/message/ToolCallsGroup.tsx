@@ -21,7 +21,7 @@ interface ToolCall {
   id: string;
   type: 'tool_use';
   name: string;
-  input?: Record<string, LegacyAny>;
+  input?: Record<string, any>;
 }
 
 export interface ToolCallsGroupProps {
@@ -58,7 +58,7 @@ export const ToolCallsGroup: React.FC<ToolCallsGroupProps> = ({
     if (!message.message?.content || !Array.isArray(message.message.content)) {
       return [];
     }
-    return message.message.content.filter((item: LegacyAny) => item.type === 'tool_use') as ToolCall[];
+    return message.message.content.filter((item: any) => item.type === 'tool_use') as ToolCall[];
   }, [message]);
 
   const { getResultById, getStatusById } = useToolResults();
@@ -362,7 +362,7 @@ const SingleToolCall = memo(SingleToolCallComponent);
 interface FallbackToolRenderProps {
   tool: ToolCall;
   result?: {
-    content?: LegacyAny;
+    content?: any;
     is_error?: boolean;
   };
 }
@@ -417,7 +417,7 @@ const extractTextContent = (value: unknown): string => {
 /**
  * 处理结果内容，将转义的换行符转换为实际换行符
  */
-const parseResultContent = (content: LegacyAny): string => {
+const parseResultContent = (content: any): string => {
   // 先提取文本内容
   const text = extractTextContent(content);
 

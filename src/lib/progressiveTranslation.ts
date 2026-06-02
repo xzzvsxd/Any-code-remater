@@ -200,7 +200,7 @@ export class ProgressiveTranslationManager {
 
       
 
-    } catch (error: LegacyAny) {
+    } catch (error: any) {
       console.error(`[ProgressiveTranslation] Error processing task ${task.id}:`, error);
 
       // Handle retry logic

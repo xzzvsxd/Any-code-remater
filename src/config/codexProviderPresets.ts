@@ -16,7 +16,7 @@ export interface CodexProviderPreset {
   websiteUrl: string;
   // 第三方供应商可提供单独的获取 API Key 链接
   apiKeyUrl?: string;
-  auth: Record<string, LegacyAny>; // 将写入 ~/.codex/auth.json
+  auth: Record<string, any>; // 将写入 ~/.codex/auth.json
   config: string; // 将写入 ~/.codex/config.toml（TOML 字符串）
   isOfficial?: boolean; // 标识是否为官方预设
   isPartner?: boolean; // 标识是否为商业合作伙伴
@@ -31,7 +31,7 @@ export interface CodexProviderPreset {
 /**
  * 生成第三方供应商的 auth.json
  */
-export function generateThirdPartyAuth(apiKey: string): Record<string, LegacyAny> {
+export function generateThirdPartyAuth(apiKey: string): Record<string, any> {
   return {
     OPENAI_API_KEY: apiKey || "",
   };
@@ -43,7 +43,7 @@ export function generateThirdPartyAuth(apiKey: string): Record<string, LegacyAny
 export function generateThirdPartyConfig(
   providerName: string,
   baseUrl: string,
-  modelName = "gpt-5.5",
+  modelName = "gpt-5-codex",
 ): string {
   // 清理供应商名称，确保符合TOML键名规范
   const cleanProviderName =
@@ -85,7 +85,7 @@ export function extractModelFromConfig(configText: string): string {
       if (match) return match[1];
     }
   }
-  return "gpt-5.5";
+  return "gpt-5-codex";
 }
 
 /**
@@ -123,7 +123,7 @@ export function setModelInConfig(configText: string, newModel: string): string {
 /**
  * 从 auth.json 中提取 API Key
  */
-export function extractApiKeyFromAuth(auth: Record<string, LegacyAny>): string {
+export function extractApiKeyFromAuth(auth: Record<string, any>): string {
   return auth.OPENAI_API_KEY || auth.OPENAI_KEY || auth.API_KEY || "";
 }
 
@@ -149,7 +149,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     isOfficial: true,
     auth: generateThirdPartyAuth(""),
     config: `model_provider = "azure"
-model = "gpt-5.5"
+model = "gpt-5-codex"
 model_reasoning_effort = "high"
 disable_response_storage = true
 
@@ -170,7 +170,7 @@ requires_openai_auth = true`,
     category: "custom",
     isCustomTemplate: true,
     auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig("custom", "https://your-api-endpoint.com/v1", "gpt-5.5"),
+    config: generateThirdPartyConfig("custom", "https://your-api-endpoint.com/v1", "gpt-5-codex"),
     description: "provider.codexPresets.customDesc",
   },
 ];

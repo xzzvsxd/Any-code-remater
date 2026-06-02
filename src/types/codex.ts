@@ -17,8 +17,8 @@
 export interface CodexBaseEvent {
   type: string;
   timestamp?: string;
-  payload?: LegacyAny;
-  [key: string]: LegacyAny;
+  payload?: any;
+  [key: string]: any;
 }
 
 /**
@@ -80,8 +80,8 @@ export interface CodexMcpToolCallItem {
   id: string;
   type: 'mcp_tool_call';
   tool_name: string;
-  tool_input: LegacyAny;
-  tool_output?: LegacyAny;
+  tool_input: any;
+  tool_output?: any;
   status: 'in_progress' | 'completed' | 'failed';
 }
 
@@ -92,7 +92,7 @@ export interface CodexWebSearchItem {
   id: string;
   type: 'web_search';
   query: string;
-  results?: LegacyAny[];
+  results?: any[];
   status: 'in_progress' | 'completed' | 'failed';
 }
 
@@ -143,14 +143,8 @@ export interface CodexExecutionOptions {
   /** Execution mode (default: read-only) */
   mode?: CodexExecutionMode;
 
-  /** Model to use (e.g., gpt-5.5) */
+  /** Model to use (e.g., gpt-5.3-codex) */
   model?: string;
-
-  /** Enable Codex fast service tier for supported models */
-  fastMode?: boolean;
-
-  /** Reasoning effort for this run */
-  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
 
   /** Enable JSON output mode */
   json?: boolean;

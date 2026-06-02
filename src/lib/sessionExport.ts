@@ -71,7 +71,7 @@ export function exportAsMarkdown(
   messages.forEach((msg) => {
     // 检查是否是工具结果消息（type 为 user 但内容包含 tool_result）
     const isToolResultMessage = msg.type === 'user' && Array.isArray(msg.message?.content) && 
-      msg.message.content.some((item: LegacyAny) => item.type === 'tool_result');
+      msg.message.content.some((item: any) => item.type === 'tool_result');
     
     // 检查是否是纯用户消息（type 为 user 且不包含 tool_result）
     const isPureUserMessage = msg.type === 'user' && !isToolResultMessage;
@@ -98,13 +98,13 @@ export function exportAsMarkdown(
   // 添加统计信息
   const userMessages = messages.filter(m => {
     const isToolResult = m.type === 'user' && Array.isArray(m.message?.content) && 
-      m.message.content.some((item: LegacyAny) => item.type === 'tool_result');
+      m.message.content.some((item: any) => item.type === 'tool_result');
     return m.type === 'user' && !isToolResult;
   }).length;
   const assistantMessages = messages.filter(m => m.type === 'assistant').length;
   const toolResultMessages = messages.filter(m => {
     return m.type === 'user' && Array.isArray(m.message?.content) && 
-      m.message.content.some((item: LegacyAny) => item.type === 'tool_result');
+      m.message.content.some((item: any) => item.type === 'tool_result');
   }).length;
   
   markdown += '\n---\n\n';
@@ -130,7 +130,7 @@ function extractToolResultContent(msg: ClaudeStreamMessage): string {
 
   const results: string[] = [];
   
-  content.forEach((item: LegacyAny) => {
+  content.forEach((item: any) => {
     if (item.type === 'tool_result') {
       const toolId = item.tool_use_id ? ` (ID: ${item.tool_use_id.slice(0, 8)}...)` : '';
       const isError = item.is_error || false;
@@ -166,10 +166,10 @@ function extractMessageContent(msg: ClaudeStreamMessage): string {
     const parts: string[] = [];
     
     // 首先提取思考块（如果有）
-    const thinkingBlocks = content.filter((item: LegacyAny) => item.type === 'thinking');
+    const thinkingBlocks = content.filter((item: any) => item.type === 'thinking');
     if (thinkingBlocks.length > 0) {
       const thinkingContent = thinkingBlocks
-        .map((item: LegacyAny) => item.thinking || '')
+        .map((item: any) => item.thinking || '')
         .filter(Boolean)
         .join('\n\n');
       
@@ -180,7 +180,7 @@ function extractMessageContent(msg: ClaudeStreamMessage): string {
     
     // 然后提取其他内容块（注意：tool_result 不在这里处理）
     const otherContent = content
-      .map((item: LegacyAny) => {
+      .map((item: any) => {
         if (typeof item === 'string') return item;
         if (item.type === 'text') return item.text || '';
         if (item.type === 'thinking') return ''; // 已在上面处理

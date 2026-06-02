@@ -53,24 +53,8 @@ function parseQuestionJsonString(value: string): unknown | null {
   try {
     return JSON.parse(trimmed);
   } catch {
-    const repaired = repairLooseJsonString(trimmed);
-    if (repaired === trimmed) {
-      return null;
-    }
-
-    try {
-      return JSON.parse(repaired);
-    } catch {
-      return null;
-    }
+    return null;
   }
-}
-
-function repairLooseJsonString(value: string): string {
-  return value.replace(
-    /\\u\s*([0-9a-fA-F])\s*([0-9a-fA-F])\s*([0-9a-fA-F])\s*([0-9a-fA-F])/g,
-    "\\u$1$2$3$4"
-  );
 }
 
 function normalizeOptions(value: unknown): Question["options"] {

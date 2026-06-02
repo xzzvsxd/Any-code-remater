@@ -21,7 +21,6 @@ use super::super::prompt_tracker::{
     PromptRecordWithCapabilities, RewindCapabilities, RewindMode,
 };
 // Import WSL utilities
-#[cfg(target_os = "windows")]
 use super::super::wsl_utils;
 // Import session helpers
 use super::session::find_session_file;

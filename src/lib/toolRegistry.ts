@@ -15,11 +15,11 @@ export interface ToolRenderProps {
   toolName: string;
 
   /** 工具输入对象 */
-  input?: Record<string, LegacyAny>;
+  input?: Record<string, any>;
 
   /** 工具结果对象 */
   result?: {
-    content?: LegacyAny;
+    content?: any;
     is_error?: boolean;
   };
 

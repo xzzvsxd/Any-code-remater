@@ -35,7 +35,6 @@ import { GeneralSettings } from "./settings/GeneralSettings";
 import { PermissionsSettings } from "./settings/PermissionsSettings";
 import { EnvironmentSettings } from "./settings/EnvironmentSettings";
 import { HooksSettings } from "./settings/HooksSettings";
-import { useStableCallback } from "@/hooks/useStableCallback";
 
 interface SettingsProps {
   /**
@@ -108,14 +107,21 @@ export const Settings: React.FC<SettingsProps> = ({
   
   // Hooks state
   const [userHooksChanged, setUserHooksChanged] = useState(false);
-  const getUserHooks = React.useRef<(() => LegacyAny) | null>(null);
+  const getUserHooks = React.useRef<(() => any) | null>(null);
 
   // Provider sub-tabs state
   const [providerSubTab, setProviderSubTab] = useState("claude");
   
   // 挂载时加载设置
   // Load settings on mount
-  const loadSettings = useStableCallback(async () => {
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  /**
+   * Loads the current Claude settings
+   */
+  const loadSettings = async () => {
     try {
       setLoading(true);
       setError(null);
@@ -180,14 +186,7 @@ export const Settings: React.FC<SettingsProps> = ({
     } finally {
       setLoading(false);
     }
-  });
-useEffect(() => {
-    loadSettings();
-  }, [loadSettings]);
-
-  /**
-   * Loads the current Claude settings
-   */
+  };
 
   /**
    * Saves the current settings
@@ -261,7 +260,7 @@ useEffect(() => {
   /**
    * Updates a simple setting value
    */
-  const updateSetting = (key: string, value: LegacyAny) => {
+  const updateSetting = (key: string, value: any) => {
     setSettings(prev => ({ ...prev, [key]: value }));
   };
 

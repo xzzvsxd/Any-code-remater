@@ -50,7 +50,7 @@ export const LSResultWidget: React.FC<LSResultWidgetProps> = ({ content }) => {
         const parsed = JSON.parse(trimmedContent);
         const items = Array.isArray(parsed) ? parsed : (parsed.files || parsed.entries || []);
         if (Array.isArray(items)) {
-          items.forEach((item: LegacyAny) => {
+          items.forEach((item: any) => {
             const name = typeof item === 'string' ? item : (item.name || item.path || String(item));
             const isDirectory = name.endsWith('/') ||
               item.type === 'directory' ||

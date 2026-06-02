@@ -3,15 +3,15 @@ import { View } from '@/types/navigation';
 
 interface HistoryItem {
   view: View;
-  params: Record<string, LegacyAny>;
+  params: Record<string, any>;
 }
 
 interface NavigationContextType {
   currentView: View;
-  viewParams: Record<string, LegacyAny>;
+  viewParams: Record<string, any>;
   previousView: View | null;
   history: HistoryItem[];
-  navigateTo: (view: View, params?: Record<string, LegacyAny>) => void;
+  navigateTo: (view: View, params?: Record<string, any>) => void;
   goBack: () => void;
   canGoBack: boolean;
   setNavigationInterceptor: (interceptor: ((nextView: View) => boolean) | null) => void;
@@ -21,13 +21,13 @@ const NavigationContext = createContext<NavigationContextType | undefined>(undef
 
 export const NavigationProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [currentView, setCurrentView] = useState<View>("projects");
-  const [viewParams, setViewParams] = useState<Record<string, LegacyAny>>({});
+  const [viewParams, setViewParams] = useState<Record<string, any>>({});
   // Initialize history with the default view and empty params
   const [history, setHistory] = useState<HistoryItem[]>([{ view: "projects", params: {} }]);
   const [previousView, setPreviousView] = useState<View | null>(null);
   const [navigationInterceptor, setNavigationInterceptor] = useState<((nextView: View) => boolean) | null>(null);
 
-  const navigateTo = useCallback((newView: View, params?: Record<string, LegacyAny>) => {
+  const navigateTo = useCallback((newView: View, params?: Record<string, any>) => {
     // Check interceptor
     if (navigationInterceptor) {
       const shouldProceed = navigationInterceptor(newView);

@@ -21,7 +21,7 @@ export interface WriteWidgetProps {
   /** 文件内容 */
   content: string;
   /** 工具结果 */
-  result?: LegacyAny;
+  result?: any;
   /** 是否正在流式输出 */
   isStreaming?: boolean;
 }

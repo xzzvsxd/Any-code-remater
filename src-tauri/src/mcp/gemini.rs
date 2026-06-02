@@ -28,3 +28,8 @@ pub fn import_from_gemini() -> Result<HashMap<String, Value>, String> {
     // 不进行严格验证，保持原始数据
     Ok(servers)
 }
+
+/// 将多个服务器同步到 Gemini
+pub fn sync_servers_to_gemini(servers: &HashMap<String, Value>) -> Result<(), String> {
+    crate::gemini_mcp::set_mcp_servers_map(servers)
+}

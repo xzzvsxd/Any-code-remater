@@ -2,10 +2,10 @@ import React, { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
-import {
-  X,
-  Folder,
-  File,
+import { 
+  X, 
+  Folder, 
+  File, 
   ArrowLeft,
   FileCode,
   FileText,
@@ -15,7 +15,6 @@ import {
 } from "lucide-react";
 import type { FileEntry } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { useStableCallback } from "@/hooks/useStableCallback";
 
 // Global caches that persist across component instances
 const globalDirectoryCache = new Map<string, FileEntry[]>();
@@ -54,25 +53,25 @@ interface FilePickerProps {
 // File icon mapping based on extension
 const getFileIcon = (entry: FileEntry) => {
   if (entry.is_directory) return Folder;
-
+  
   const ext = entry.extension?.toLowerCase();
   if (!ext) return File;
-
+  
   // Code files
   if (['ts', 'tsx', 'js', 'jsx', 'py', 'rs', 'go', 'java', 'cpp', 'c', 'h'].includes(ext)) {
     return FileCode;
   }
-
+  
   // Text/Markdown files
   if (['md', 'txt', 'json', 'yaml', 'yml', 'toml', 'xml', 'html', 'css'].includes(ext)) {
     return FileText;
   }
-
+  
   // Image files
   if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico'].includes(ext)) {
     return FileImage;
   }
-
+  
   return File;
 };
 
@@ -103,9 +102,9 @@ export const FilePicker: React.FC<FilePickerProps> = ({
   className,
 }) => {
   const searchQuery = initialQuery;
-
+  
   const [currentPath, setCurrentPath] = useState(basePath);
-  const [entries, setEntries] = useState<FileEntry[]>(() =>
+  const [entries, setEntries] = useState<FileEntry[]>(() => 
     searchQuery.trim() ? [] : globalDirectoryCache.get(basePath) || []
   );
   const [searchResults, setSearchResults] = useState<FileEntry[]>(() => {
@@ -127,16 +126,16 @@ export const FilePicker: React.FC<FilePickerProps> = ({
     }
     return globalDirectoryCache.has(basePath);
   });
-
+  
   const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const fileListRef = useRef<HTMLDivElement>(null);
-
+  
   // Computed values
   const displayEntries = searchQuery.trim() ? searchResults : entries;
   const canGoBack = pathHistory.length > 1;
-
+  
   // Get relative path for display
-  const relativePath = currentPath.startsWith(basePath)
+  const relativePath = currentPath.startsWith(basePath) 
     ? currentPath.slice(basePath.length) || '/'
     : currentPath;
 
@@ -146,57 +145,21 @@ export const FilePicker: React.FC<FilePickerProps> = ({
   }, [currentPath]);
 
   // Debounced search
-  const performSearch = useStableCallback(async (query: string) => {
-    try {
-      // Create cache key that includes both query and basePath
-      const cacheKey = `${basePath}:${query}`;
-
-      // Check cache first and show immediately
-      if (globalSearchCache.has(cacheKey)) {
-        setSearchResults(globalSearchCache.get(cacheKey) || []);
-        setIsShowingCached(true);
-        setError(null);
-      } else {
-        // Only show loading if we don't have cached data
-        setIsLoading(true);
-      }
-
-      // Always fetch fresh results in background
-      const results = await api.searchFiles(basePath, query);
-
-      // Cache the results
-      globalSearchCache.set(cacheKey, results);
-
-      // Update with fresh results
-      setSearchResults(results);
-      setIsShowingCached(false);
-      setError(null);
-    } catch (err) {
-      console.error('[FilePicker] Search failed:', query, err);
-      // Only set error if we don't have cached data to show
-      const cacheKey = `${basePath}:${query}`;
-      if (!globalSearchCache.has(cacheKey)) {
-        setError(err instanceof Error ? err.message : '搜索失败');
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  });
-useEffect(() => {
+  useEffect(() => {
     if (searchDebounceRef.current) {
       clearTimeout(searchDebounceRef.current);
     }
 
     if (searchQuery.trim()) {
       const cacheKey = `${basePath}:${searchQuery}`;
-
+      
       // Immediately show cached results if available
       if (globalSearchCache.has(cacheKey)) {
         setSearchResults(globalSearchCache.get(cacheKey) || []);
         setIsShowingCached(true);
         setError(null);
       }
-
+      
       // Schedule fresh search after debounce
       searchDebounceRef.current = setTimeout(() => {
         performSearch(searchQuery);
@@ -211,7 +174,7 @@ useEffect(() => {
         clearTimeout(searchDebounceRef.current);
       }
     };
-  }, [searchQuery, basePath, performSearch]);
+  }, [searchQuery, basePath]);
 
   // Reset selected index when entries change
   useEffect(() => {
@@ -219,23 +182,10 @@ useEffect(() => {
   }, [entries, searchResults]);
 
   // Keyboard navigation
-  const navigateBack = useStableCallback(() => {
-    if (pathHistory.length > 1) {
-      const newHistory = [...pathHistory];
-      newHistory.pop(); // Remove current
-      const previousPath = newHistory[newHistory.length - 1];
-
-      // Don't go beyond the base path
-      if (previousPath.startsWith(basePath) || previousPath === basePath) {
-        setCurrentPath(previousPath);
-        setPathHistory(newHistory);
-      }
-    }
-  });
-useEffect(() => {
+  useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const displayEntries = searchQuery.trim() ? searchResults : entries;
-
+      
       // ⚡ 修复：只处理文件选择器相关的按键，使用 capture 阶段确保优先执行
       switch (e.key) {
         case 'Escape':
@@ -243,7 +193,7 @@ useEffect(() => {
           e.stopPropagation();
           onClose();
           break;
-
+          
         case 'Enter':
           e.preventDefault();
           e.stopPropagation();
@@ -252,19 +202,19 @@ useEffect(() => {
             onSelect(displayEntries[selectedIndex]);
           }
           break;
-
+          
         case 'ArrowUp':
           e.preventDefault();
           e.stopPropagation();
           setSelectedIndex(prev => Math.max(0, prev - 1));
           break;
-
+          
         case 'ArrowDown':
           e.preventDefault();
           e.stopPropagation();
           setSelectedIndex(prev => Math.min(displayEntries.length - 1, prev + 1));
           break;
-
+          
         case 'ArrowRight':
           e.preventDefault();
           e.stopPropagation();
@@ -276,7 +226,7 @@ useEffect(() => {
             }
           }
           break;
-
+          
         case 'ArrowLeft':
           e.preventDefault();
           e.stopPropagation();
@@ -291,7 +241,7 @@ useEffect(() => {
     // ⚡ 使用 capture 阶段，确保优先于其他组件处理
     window.addEventListener('keydown', handleKeyDown, { capture: true });
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
-  }, [entries, searchResults, selectedIndex, searchQuery, canGoBack, onClose, onSelect, navigateBack]);
+  }, [entries, searchResults, selectedIndex, searchQuery, canGoBack, onClose, onSelect]);
 
   // Scroll selected item into view
   useEffect(() => {
@@ -317,10 +267,10 @@ useEffect(() => {
 
       // Always fetch fresh data in background
       const contents = await api.listDirectoryContents(path);
-
+      
       // Cache the results
       globalDirectoryCache.set(path, contents);
-
+      
       // Update with fresh data
       setEntries(contents);
       setIsShowingCached(false);
@@ -337,9 +287,60 @@ useEffect(() => {
     }
   };
 
+  const performSearch = async (query: string) => {
+    try {
+      // Create cache key that includes both query and basePath
+      const cacheKey = `${basePath}:${query}`;
+
+      // Check cache first and show immediately
+      if (globalSearchCache.has(cacheKey)) {
+        setSearchResults(globalSearchCache.get(cacheKey) || []);
+        setIsShowingCached(true);
+        setError(null);
+      } else {
+        // Only show loading if we don't have cached data
+        setIsLoading(true);
+      }
+
+      // Always fetch fresh results in background
+      const results = await api.searchFiles(basePath, query);
+      
+      // Cache the results
+      globalSearchCache.set(cacheKey, results);
+      
+      // Update with fresh results
+      setSearchResults(results);
+      setIsShowingCached(false);
+      setError(null);
+    } catch (err) {
+      console.error('[FilePicker] Search failed:', query, err);
+      // Only set error if we don't have cached data to show
+      const cacheKey = `${basePath}:${query}`;
+      if (!globalSearchCache.has(cacheKey)) {
+        setError(err instanceof Error ? err.message : '搜索失败');
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const navigateToDirectory = (path: string) => {
     setCurrentPath(path);
     setPathHistory(prev => [...prev, path]);
+  };
+
+  const navigateBack = () => {
+    if (pathHistory.length > 1) {
+      const newHistory = [...pathHistory];
+      newHistory.pop(); // Remove current
+      const previousPath = newHistory[newHistory.length - 1];
+      
+      // Don't go beyond the base path
+      if (previousPath.startsWith(basePath) || previousPath === basePath) {
+        setCurrentPath(previousPath);
+        setPathHistory(newHistory);
+      }
+    }
   };
 
   // ⚡ 优化：直观的鼠标操作
@@ -351,12 +352,12 @@ useEffect(() => {
 
   const handleEntryClick = (entry: FileEntry) => {
     clickCountRef.current += 1;
-
+    
     // 清除之前的定时器
     if (clickTimerRef.current) {
       clearTimeout(clickTimerRef.current);
     }
-
+    
     // 等待判断是单击还是双击
     clickTimerRef.current = setTimeout(() => {
       if (clickCountRef.current === 1) {
@@ -368,7 +369,7 @@ useEffect(() => {
       clickCountRef.current = 0;
     }, 250);
   };
-
+  
   const handleEntryDoubleClick = (entry: FileEntry) => {
     // 清除单击定时器
     if (clickTimerRef.current) {
@@ -376,7 +377,7 @@ useEffect(() => {
       clickTimerRef.current = null;
     }
     clickCountRef.current = 0;
-
+    
     // 双击：选中文件或目录
     onSelect(entry);
   };
@@ -459,7 +460,7 @@ useEffect(() => {
               const Icon = getFileIcon(entry);
               const isSearching = searchQuery.trim() !== '';
               const isSelected = index === selectedIndex;
-
+              
               return (
                 <button
                   key={entry.path}
@@ -485,21 +486,21 @@ useEffect(() => {
                     "h-4 w-4 flex-shrink-0",
                     entry.is_directory ? "text-blue-500" : "text-muted-foreground"
                   )} />
-
+                  
                   <span className="flex-1 truncate">
                     {entry.name}
                   </span>
-
+                  
                   {!entry.is_directory && entry.size > 0 && (
                     <span className="text-xs text-muted-foreground">
                       {formatFileSize(entry.size)}
                     </span>
                   )}
-
+                  
                   {entry.is_directory && (
                     <ChevronRight className="h-4 w-4 text-muted-foreground" />
                   )}
-
+                  
                   {isSearching && (
                     <span className="text-xs text-muted-foreground font-mono truncate max-w-[150px]">
                       {entry.path.replace(basePath, '').replace(/^\//, '')}
@@ -535,4 +536,4 @@ useEffect(() => {
       </div>
     </motion.div>
   );
-};
+}; 

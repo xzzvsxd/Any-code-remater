@@ -34,7 +34,7 @@ export interface PreviewState {
 export interface MessageContentPart {
   type: string;
   text?: string | { text: string };
-  [key: string]: LegacyAny;
+  [key: string]: any;
 }
 
 /**
@@ -142,7 +142,7 @@ export async function copyAsMarkdown(
               contentText = content.content.text;
             } else if (Array.isArray(content.content)) {
               contentText = content.content
-                .map((c: LegacyAny) => (typeof c === 'string' ? c : c.text || JSON.stringify(c)))
+                .map((c: any) => (typeof c === 'string' ? c : c.text || JSON.stringify(c)))
                 .join('\n');
             } else {
               contentText = JSON.stringify(content.content, null, 2);
@@ -222,19 +222,6 @@ export function extractTextFromContent(content: MessageContent): string {
   return "";
 }
 
-const UPSTREAM_CONTEXT_TRUNCATION_MARKER =
-  /\s*\uFFFD?\s*\[content truncated to fit context limit\][\s\S]*$/i;
-
-/**
- * Removes upstream-injected context truncation markers before text is reused as
- * AI context. The visible chat transcript still keeps the original upstream
- * text; this only prevents the marker and any impossible-to-trust tail from
- * being fed into the next prompt.
- */
-export function sanitizeAiContextText(text: string): string {
-  return text.replace(UPSTREAM_CONTEXT_TRUNCATION_MARKER, "").trimEnd();
-}
-
 /**
  * Extracts conversation context from recent messages for prompt enhancement
  * @param messages Array of Claude stream messages
@@ -257,7 +244,7 @@ export function getConversationContext(
   const meaningfulMessages = messages.filter(msg => {
     // UI-only terminal/error events are persisted for the frontend, but must
     // never be fed back into prompt enhancement or the next AI request.
-    if ((msg as LegacyAny).excludeFromAiContext === true || (msg as LegacyAny).uiOnly === true) return false;
+    if ((msg as any).excludeFromAiContext === true || (msg as any).uiOnly === true) return false;
     if (msg.type === "system" && (
       msg.subtype === "execution-error" ||
       msg.subtype === "execution-cancelled" ||
@@ -289,19 +276,14 @@ export function getConversationContext(
       const assistantText = extractTextFromContent(msg.message.content);
 
       if (assistantText) {
-        const sanitized = sanitizeAiContextText(assistantText);
-        if (sanitized) {
-          const truncated = maybeTruncateContextText(sanitized, config.maxAssistantMessageLength, config);
-          contextLine = `助手: ${truncated}`;
-        }
+        const truncated = maybeTruncateContextText(assistantText, config.maxAssistantMessageLength, config);
+        contextLine = `助手: ${truncated}`;
       }
     } else if (msg.type === "result" && msg.result && config.includeExecutionResults) {
       // Include execution results if enabled in config
-      const resultText = sanitizeAiContextText(msg.result);
-      if (resultText) {
-        const truncated = maybeTruncateContextText(resultText, config.maxExecutionResultLength, config);
-        contextLine = `执行结果: ${truncated}`;
-      }
+      const resultText = msg.result;
+      const truncated = maybeTruncateContextText(resultText, config.maxExecutionResultLength, config);
+      contextLine = `执行结果: ${truncated}`;
     }
 
     if (contextLine) {

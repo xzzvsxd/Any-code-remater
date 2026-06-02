@@ -46,7 +46,7 @@ export interface UseContextWindowUsageResult extends ContextWindowUsage {
  * 注意：这里的 usage 代表当前 API 调用的上下文使用情况（快照），
  * 而不是单条消息的增量 token 数。
  */
-function getUsageCandidate(message: LegacyAny, engine?: string): LegacyAny | null {
+function getUsageCandidate(message: any, engine?: string): any | null {
   // Codex: 过滤掉累计 usage 事件（会远超上下文窗口大小，不能用于 Context Window）
   if (engine === 'codex') {
     const codexItemType = message?.codexMetadata?.codexItemType;
@@ -92,7 +92,7 @@ function getUsageCandidate(message: LegacyAny, engine?: string): LegacyAny | nul
   return null;
 }
 
-function normalizeUsageForIndicator(rawUsage: LegacyAny): {
+function normalizeUsageForIndicator(rawUsage: any): {
   inputTokens: number;
   outputTokens: number;
   cacheCreationTokens: number;
@@ -129,7 +129,7 @@ function extractCurrentUsage(messages: ClaudeStreamMessage[], engine?: string, c
     cacheReadTokens: number;
   } | null => {
     for (let i = messages.length - 1; i >= 0; i--) {
-      const message = messages[i] as LegacyAny;
+      const message = messages[i] as any;
       if (!shouldConsider(message)) continue;
 
       const usage = getUsageCandidate(message, engine);
@@ -146,13 +146,13 @@ function extractCurrentUsage(messages: ClaudeStreamMessage[], engine?: string, c
   };
 
   // 优先使用显式 current_usage（语义最明确）
-  const fromExplicitCurrentUsage = scan((m) => Boolean((m as LegacyAny)?.context_window?.current_usage));
+  const fromExplicitCurrentUsage = scan((m) => Boolean((m as any)?.context_window?.current_usage));
   if (fromExplicitCurrentUsage) return fromExplicitCurrentUsage;
 
   // Claude: 优先从 assistant/result 中提取，避免实时流中混入“累计/会话级”usage 的 system 消息污染统计
   if (engine === 'claude') {
     const fromClaudeMainFlow = scan((m) => {
-      const t = (m as LegacyAny)?.type;
+      const t = (m as any)?.type;
       return t === 'assistant' || t === 'result';
     });
     if (fromClaudeMainFlow) return fromClaudeMainFlow;
@@ -160,7 +160,7 @@ function extractCurrentUsage(messages: ClaudeStreamMessage[], engine?: string, c
 
   // Gemini: usage 快照通常挂在 result 消息上
   if (engine === 'gemini') {
-    const fromGeminiResult = scan((m) => (m as LegacyAny)?.type === 'result');
+    const fromGeminiResult = scan((m) => (m as any)?.type === 'result');
     if (fromGeminiResult) return fromGeminiResult;
   }
 
@@ -197,7 +197,7 @@ export function useContextWindowUsage(
     // Codex: prefer runtime-reported context window when available (token_count events)
     if (engine === 'codex') {
       for (let i = messages.length - 1; i >= 0; i--) {
-        const maybeCtx = (messages[i] as LegacyAny)?.codexMetadata?.modelContextWindow;
+        const maybeCtx = (messages[i] as any)?.codexMetadata?.modelContextWindow;
         // 仅在运行时值更大时采用，避免把“可用窗口/阈值”之类的较小值误当作模型总窗口
         if (typeof maybeCtx === 'number' && maybeCtx > contextWindowSize) {
           contextWindowSize = maybeCtx;
@@ -210,8 +210,8 @@ export function useContextWindowUsage(
     if (engine === 'claude' || engine === 'gemini') {
       for (let i = messages.length - 1; i >= 0; i--) {
         const maybeCtx =
-          (messages[i] as LegacyAny)?.context_window?.context_window_size ??
-          (messages[i] as LegacyAny)?.context_window_size;
+          (messages[i] as any)?.context_window?.context_window_size ??
+          (messages[i] as any)?.context_window_size;
 
         if (typeof maybeCtx === 'number' && maybeCtx > contextWindowSize) {
           contextWindowSize = maybeCtx;

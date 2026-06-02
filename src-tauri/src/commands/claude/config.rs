@@ -13,7 +13,6 @@ use tokio::sync::OnceCell;
 
 use super::super::wsl_utils;
 use super::paths::{get_claude_dir, get_codex_dir};
-#[cfg(target_os = "windows")]
 use super::platform;
 use super::{ClaudeMdFile, ClaudeSettings, ClaudeVersionStatus};
 use crate::commands::permission_config::{
@@ -387,8 +386,8 @@ pub async fn save_claude_settings(settings: serde_json::Value) -> Result<String,
     Ok("Settings saved successfully".to_string())
 }
 
-/// Updates the effort level in settings.json.
-/// Writes the current Claude Code effort env var and cleans up legacy token-based fields.
+/// Updates the thinking mode in settings.json using Claude 4.6 Adaptive Thinking
+/// Sets CLAUDE_CODE_THINKING_EFFORT env var and cleans up legacy MAX_THINKING_TOKENS
 #[tauri::command]
 pub async fn update_thinking_mode(enabled: bool, effort: Option<String>) -> Result<String, String> {
     log::info!(
@@ -426,20 +425,17 @@ pub async fn update_thinking_mode(enabled: bool, effort: Option<String>) -> Resu
         .as_object_mut()
         .ok_or("env is not an object")?;
 
-    // Update Claude Code effort env var. Remove the older name to avoid
-    // duplicated/conflicting effort settings while still reading it on the frontend.
+    // Update CLAUDE_CODE_THINKING_EFFORT (Claude 4.6 Adaptive Thinking)
     if enabled {
         let effort_value = effort.unwrap_or_else(|| "high".to_string());
         env_obj.insert(
-            "CLAUDE_CODE_EFFORT_LEVEL".to_string(),
+            "CLAUDE_CODE_THINKING_EFFORT".to_string(),
             serde_json::json!(effort_value),
         );
-        env_obj.remove("CLAUDE_CODE_THINKING_EFFORT");
-        log::info!("Set CLAUDE_CODE_EFFORT_LEVEL to {}", effort_value);
+        log::info!("Set CLAUDE_CODE_THINKING_EFFORT to {}", effort_value);
     } else {
-        env_obj.remove("CLAUDE_CODE_EFFORT_LEVEL");
         env_obj.remove("CLAUDE_CODE_THINKING_EFFORT");
-        log::info!("Removed Claude Code effort env vars");
+        log::info!("Removed CLAUDE_CODE_THINKING_EFFORT from env");
     }
 
     // Clean up legacy fields
@@ -459,56 +455,6 @@ pub async fn update_thinking_mode(enabled: bool, effort: Option<String>) -> Resu
     log::info!("Thinking mode updated successfully");
     Ok(format!(
         "Thinking mode {} successfully",
-        if enabled { "enabled" } else { "disabled" }
-    ))
-}
-
-#[tauri::command]
-pub async fn update_claude_fast_mode(enabled: bool) -> Result<String, String> {
-    let claude_dir = get_claude_dir().map_err(|e| format!("Failed to get claude dir: {}", e))?;
-    let settings_path = claude_dir.join("settings.json");
-
-    let mut settings = if settings_path.exists() {
-        let content = fs::read_to_string(&settings_path)
-            .map_err(|e| format!("Failed to read settings: {}", e))?;
-        serde_json::from_str::<serde_json::Value>(&content)
-            .map_err(|e| format!("Failed to parse settings: {}", e))?
-    } else {
-        serde_json::json!({})
-    };
-
-    if !settings.is_object() {
-        settings = serde_json::json!({});
-    }
-
-    let settings_obj = settings.as_object_mut().unwrap();
-    if enabled {
-        settings_obj.insert("fastMode".to_string(), serde_json::json!(true));
-        let env_value = settings_obj
-            .entry("env".to_string())
-            .or_insert_with(|| serde_json::json!({}));
-        if let Some(env_obj) = env_value.as_object_mut() {
-            env_obj.insert(
-                "CLAUDE_CODE_ENABLE_OPUS_4_7_FAST_MODE".to_string(),
-                serde_json::json!("1"),
-            );
-            env_obj.insert("CLAUDE_CODE_FAST_MODE".to_string(), serde_json::json!("1"));
-        }
-    } else {
-        settings_obj.remove("fastMode");
-        if let Some(env_obj) = settings_obj.get_mut("env").and_then(|v| v.as_object_mut()) {
-            env_obj.remove("CLAUDE_CODE_ENABLE_OPUS_4_7_FAST_MODE");
-            env_obj.remove("CLAUDE_CODE_FAST_MODE");
-        }
-    }
-
-    let json_string = serde_json::to_string_pretty(&settings)
-        .map_err(|e| format!("Failed to serialize settings: {}", e))?;
-    fs::write(&settings_path, &json_string)
-        .map_err(|e| format!("Failed to write settings: {}", e))?;
-
-    Ok(format!(
-        "Claude fast mode {} successfully",
         if enabled { "enabled" } else { "disabled" }
     ))
 }
@@ -1086,8 +1032,6 @@ pub struct ClaudeWslModeInfo {
     pub wsl_enabled: bool,
     /// Claude path in WSL (if detected)
     pub wsl_claude_path: Option<String>,
-    /// Claude config directory exposed to Windows via WSL UNC path
-    pub wsl_claude_dir: Option<String>,
     /// Claude version in WSL (if detected)
     pub wsl_claude_version: Option<String>,
     /// Is native Claude available
@@ -1152,9 +1096,6 @@ fn do_get_claude_wsl_mode_config() -> ClaudeWslModeInfo {
         available_distros,
         wsl_enabled: runtime.enabled,
         wsl_claude_path: runtime.claude_path_in_wsl.clone(),
-        wsl_claude_dir: wsl_utils::get_wsl_claude_dir()
-            .as_ref()
-            .map(|path| path.to_string_lossy().to_string()),
         wsl_claude_version,
         native_available,
         actual_mode: actual_mode.to_string(),

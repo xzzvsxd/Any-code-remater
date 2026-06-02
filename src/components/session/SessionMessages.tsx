@@ -1,4 +1,4 @@
-import React, { useImperativeHandle, forwardRef, useCallback, useEffect, useRef } from "react";
+import React, { useImperativeHandle, forwardRef, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { StreamMessageV2 } from "@/components/message";
@@ -13,7 +13,7 @@ import type { ExecutionStatusInfo } from "@/components/FloatingPromptInput/types
  * 使用 ResizeObserver 并在内容变化时自动通知虚拟列表重新测量。
  * 仅对正在流式输出的消息进行防抖，历史消息立即更新以防止滚动抖动。
  */
-const MeasurableItem = ({ virtualItem, measureElement, isStreaming, children, ...props }: LegacyAny) => {
+const MeasurableItem = ({ virtualItem, measureElement, isStreaming, children, ...props }: any) => {
   const elRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef(measureElement);
   
@@ -97,12 +97,6 @@ interface SessionMessagesProps {
   executionStatus?: ExecutionStatusInfo;
   /** 取消执行回调 - 用于CLI风格处理指示器 */
   onCancel?: () => void;
-  /** 是否还有更早的历史消息可按需加载 */
-  hasMoreHistoryBefore?: boolean;
-  /** 是否正在加载更早历史 */
-  isLoadingOlderHistory?: boolean;
-  /** 加载更早历史 */
-  onLoadOlderHistory?: () => Promise<void> | void;
 }
 
 export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesProps>(({
@@ -111,55 +105,10 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
   error,
   parentRef,
   executionStatus,
-  onCancel,
-  hasMoreHistoryBefore = false,
-  isLoadingOlderHistory = false,
-  onLoadOlderHistory
+  onCancel
 }, ref) => {
   // ✅ 从 SessionContext 获取配置和回调，避免 Props Drilling
   const { settings, sessionId, projectId, projectPath, onLinkDetected, onRevert, getPromptIndexForMessage } = useSession();
-  const loadOlderInFlightRef = useRef(false);
-
-  const handleLoadOlderHistory = useCallback(async () => {
-    if (!hasMoreHistoryBefore || isLoadingOlderHistory || !onLoadOlderHistory) return;
-    if (loadOlderInFlightRef.current) return;
-
-    const scrollElement = parentRef.current;
-    const previousScrollHeight = scrollElement?.scrollHeight ?? 0;
-    const previousScrollTop = scrollElement?.scrollTop ?? 0;
-
-    loadOlderInFlightRef.current = true;
-    try {
-      await onLoadOlderHistory();
-    } catch (error) {
-      console.error('[SessionMessages] Failed to load older history:', error);
-    } finally {
-      requestAnimationFrame(() => {
-        if (scrollElement) {
-          const nextScrollHeight = scrollElement.scrollHeight;
-          scrollElement.scrollTop = nextScrollHeight - previousScrollHeight + previousScrollTop;
-        }
-        loadOlderInFlightRef.current = false;
-      });
-    }
-  }, [hasMoreHistoryBefore, isLoadingOlderHistory, onLoadOlderHistory, parentRef]);
-
-  useEffect(() => {
-    const scrollElement = parentRef.current;
-    if (!scrollElement || !hasMoreHistoryBefore || !onLoadOlderHistory) return;
-
-    const handleScroll = () => {
-      if (scrollElement.scrollTop <= 96) {
-        void handleLoadOlderHistory();
-      }
-    };
-
-    scrollElement.addEventListener('scroll', handleScroll, { passive: true });
-    return () => {
-      scrollElement.removeEventListener('scroll', handleScroll);
-    };
-  }, [parentRef, hasMoreHistoryBefore, onLoadOlderHistory, handleLoadOlderHistory]);
-
   /**
    * ✅ OPTIMIZED: Virtual list configuration for improved performance
    */
@@ -182,16 +131,16 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
         let height = 60;
         messageGroup.messages.forEach(msg => {
             // Add height for thinking blocks
-            if (msg.type === 'thinking' || (msg.message?.content && Array.isArray(msg.message.content) && msg.message.content.some((c:LegacyAny) => c.type === 'thinking'))) {
+            if (msg.type === 'thinking' || (msg.message?.content && Array.isArray(msg.message.content) && msg.message.content.some((c:any) => c.type === 'thinking'))) {
                 height += 100;
             }
             // Add height for tool calls
             if (msg.message?.content && Array.isArray(msg.message.content)) {
-                const toolCalls = msg.message.content.filter((c:LegacyAny) => c.type === 'tool_use');
+                const toolCalls = msg.message.content.filter((c:any) => c.type === 'tool_use');
                 height += toolCalls.length * 60;
                 
                 // Add height for tool results (if visible)
-                const toolResults = msg.message.content.filter((c:LegacyAny) => c.type === 'tool_result');
+                const toolResults = msg.message.content.filter((c:any) => c.type === 'tool_result');
                 height += toolResults.length * 40;
             }
         });
@@ -356,19 +305,6 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
         paddingBottom: '24px', // 底部留一点间距即可
       }}
     >
-      {hasMoreHistoryBefore && (
-        <div className="sticky top-2 z-20 flex justify-center px-4 pb-2">
-          <button
-            type="button"
-            onClick={() => void handleLoadOlderHistory()}
-            disabled={isLoadingOlderHistory}
-            className="rounded-full border border-border/70 bg-background/95 px-4 py-2 text-xs font-medium text-muted-foreground shadow-sm backdrop-blur transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isLoadingOlderHistory ? '正在加载更早消息…' : '加载更早消息'}
-          </button>
-        </div>
-      )}
-
       <div
         className="relative w-full max-w-5xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-[85%] mx-auto px-4 pt-8 pb-4"
         style={{
@@ -436,8 +372,6 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
         idleSeconds={executionStatus?.idleSeconds}
         canCancel={executionStatus?.canCancel}
         isCancelling={executionStatus?.isCancelling}
-        statusLabel={executionStatus?.statusLabel}
-        statusHint={executionStatus?.statusHint}
       />
 
       {/* Error indicator - 移除固定 marginBottom，因为输入框不再是 fixed 定位 */}

@@ -419,6 +419,34 @@ pub fn convert_raw_to_unified_message(raw: &Value) -> Value {
 // Usage Extraction
 // ============================================================================
 
+/// Extract usage information from a Gemini result event
+pub fn extract_usage(event: &GeminiStreamEvent) -> Option<(u64, u64)> {
+    if let GeminiStreamEvent::Result {
+        stats: Some(stats),
+        usage_metadata,
+        ..
+    } = event
+    {
+        if let Some(usage) = build_unified_usage(Some(stats), usage_metadata.as_ref()) {
+            let input = usage
+                .get("input_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let output = usage
+                .get("output_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            Some((input, output))
+        } else {
+            let input = stats.input_tokens.unwrap_or(0);
+            let output = stats.output_tokens.unwrap_or(0);
+            Some((input, output))
+        }
+    } else {
+        None
+    }
+}
+
 fn build_unified_usage(
     stats: Option<&GeminiStats>,
     usage_metadata: Option<&TokenUsage>,

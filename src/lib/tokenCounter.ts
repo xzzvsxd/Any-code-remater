@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Official Claude Token Counter Service
  *
  * 鍩轰簬Claude瀹樻柟Token Count API鐨勫噯纭畉oken璁＄畻鏈嶅姟
@@ -20,35 +20,23 @@ import { api } from './api';
 export const CLAUDE_PRICING = {
   // Claude 4.7 Series (Latest - May 2026)
   'claude-opus-4-7': {
-    input: 5.0,
-    output: 25.0,
-    cache_write: 6.25,
-    cache_read: 0.50,
-  },
-  'claude-opus-4-7-fast': {
-    input: 30.0,
-    output: 150.0,
-    cache_write: 37.5,
-    cache_read: 3.0,
+    input: 15.0,
+    output: 75.0,
+    cache_write: 18.75,
+    cache_read: 1.50,
   },
   // Claude 4.6 Series
   'claude-opus-4-6': {
-    input: 5.0,
-    output: 25.0,
-    cache_write: 6.25,
-    cache_read: 0.50,
+    input: 15.0,
+    output: 75.0,
+    cache_write: 18.75,
+    cache_read: 1.50,
   },
   'claude-sonnet-4-6': {
     input: 3.0,
     output: 15.0,
     cache_write: 3.75,
     cache_read: 0.30,
-  },
-  'claude-opus-4-6-fast': {
-    input: 30.0,
-    output: 150.0,
-    cache_write: 37.5,
-    cache_read: 3.0,
   },
   // Claude 4.5 Series
   'claude-opus-4-5': {
@@ -117,15 +105,12 @@ export const CLAUDE_PRICING = {
 
 export const CLAUDE_CONTEXT_WINDOWS = {
   // Claude 4.7 / 4.6 Series
-  'claude-opus-4-7': 1000000,
+  'claude-opus-4-7': 200000,
   'claude-opus-4-7[1m]': 1000000,
-  'claude-opus-4-7-1m': 1000000,
-  'claude-opus-4-7-fast': 1000000,
   'claude-opus-4-6': 200000,
   'claude-opus-4-6[1m]': 1000000,
-  'claude-sonnet-4-6': 1000000,
+  'claude-sonnet-4-6': 200000,
   'claude-sonnet-4-6[1m]': 1000000,
-  'claude-sonnet-4-6-1m': 1000000,
   // Claude 4.5 Series
   'claude-opus-4-5': 200000,
   'claude-opus-4-5-20251101': 200000,
@@ -136,8 +121,8 @@ export const CLAUDE_CONTEXT_WINDOWS = {
   // Claude 4.1 Series
   'claude-opus-4-1': 200000,
   'claude-opus-4-1-20250805': 200000,
-  'default': 1000000,
-  // 榛樿鍊?  'default': 1000000,
+  'default': 200000,
+  // 榛樿鍊?  'default': 200000,
 } as const;
 
 // ============================================================================
@@ -147,12 +132,9 @@ export const CLAUDE_CONTEXT_WINDOWS = {
 
 export const CODEX_CONTEXT_WINDOWS = {
   'gpt-5.5': 1_050_000,
-  'gpt-5.5-fast': 1_050_000,
   'gpt-5.5-pro': 1_050_000,
   'gpt-5.4': 1_050_000,
   'gpt-5.4-pro': 1_050_000,
-  'gpt-5.4-mini': 1_050_000,
-  'gpt-5.4-nano': 1_050_000,
   // GPT-5.3-Codex 绯诲垪 - 鏈€鏂颁唬鐮佹ā鍨嬶紙2026骞?鏈堝彂甯冿級
   // 400K context window, 128K max output
   'gpt-5.3-codex': 400000,
@@ -168,8 +150,8 @@ export const CODEX_CONTEXT_WINDOWS = {
   'codex-mini-latest': 272000,
   // o4-mini (Codex 搴曞眰妯″瀷)
   'o4-mini': 128000,
-  'default': 1_050_000,
-  // 榛樿鍊?  'default': 1_050_000,
+  'default': 400000,
+  // 榛樿鍊?  'default': 400000,
 } as const;
 
 // ============================================================================
@@ -179,11 +161,6 @@ export const CODEX_CONTEXT_WINDOWS = {
 // ============================================================================
 
 export const GEMINI_CONTEXT_WINDOWS = {
-  'auto-gemini-3': 1_000_000,
-  'auto-gemini-2.5': 1_000_000,
-  'pro': 1_000_000,
-  'flash': 1_000_000,
-  'flash-lite': 1_000_000,
   'gemini-3.1-pro-preview': 2_000_000,
   'gemini-3-pro-preview': 1_000_000,
   'gemini-3-pro-image-preview': 1_000_000,
@@ -219,7 +196,7 @@ export function getContextWindowSize(model?: string, engine?: string): number {
     }
 
     // 甯歌鍙樹綋锛?exp / -preview / 鐗堟湰鏃ユ湡鍚庣紑绛?-> 鍥為€€鍒板鏃忛粯璁?1M
-    if (normalized === 'auto' || normalized === 'pro' || normalized === 'flash' || normalized === 'flash-lite' || normalized.startsWith('auto-gemini-') || normalized.startsWith('gemini-')) {
+    if (normalized.startsWith('gemini-')) {
       return GEMINI_CONTEXT_WINDOWS['default'];
     }
 
@@ -240,20 +217,11 @@ export function getContextWindowSize(model?: string, engine?: string): number {
     if (lowerModel.includes('5.5-pro') || lowerModel.includes('5_5_pro')) {
       return CODEX_CONTEXT_WINDOWS['gpt-5.5-pro'];
     }
-    if (lowerModel.includes('5.5') && lowerModel.includes('fast')) {
-      return CODEX_CONTEXT_WINDOWS['gpt-5.5-fast'];
-    }
     if (lowerModel.includes('gpt-5.5') || lowerModel.includes('gpt_5_5') || lowerModel.includes('5.5')) {
       return CODEX_CONTEXT_WINDOWS['gpt-5.5'];
     }
     if (lowerModel.includes('5.4-pro') || lowerModel.includes('5_4_pro')) {
       return CODEX_CONTEXT_WINDOWS['gpt-5.4-pro'];
-    }
-    if (lowerModel.includes('5.4-mini') || lowerModel.includes('5_4_mini')) {
-      return CODEX_CONTEXT_WINDOWS['gpt-5.4-mini'];
-    }
-    if (lowerModel.includes('5.4-nano') || lowerModel.includes('5_4_nano')) {
-      return CODEX_CONTEXT_WINDOWS['gpt-5.4-nano'];
     }
     if (lowerModel.includes('gpt-5.4') || lowerModel.includes('gpt_5_4') || lowerModel.includes('5.4')) {
       return CODEX_CONTEXT_WINDOWS['gpt-5.4'];
@@ -306,7 +274,7 @@ export function getContextWindowSize(model?: string, engine?: string): number {
 
     // 閫氱敤 Codex 鍖归厤 - 榛樿浣跨敤 codex-mini-latest (200K)
     if (lowerModel.includes('codex')) {
-      return CODEX_CONTEXT_WINDOWS['gpt-5.5'];
+      return CODEX_CONTEXT_WINDOWS['codex-mini-latest'];
     }
 
     return CODEX_CONTEXT_WINDOWS['default'];
@@ -329,14 +297,8 @@ export function getContextWindowSize(model?: string, engine?: string): number {
   return CLAUDE_CONTEXT_WINDOWS['default'];
 }
 export const MODEL_ALIASES = {
-  'default': 'claude-sonnet-4-6',
-  'best': 'claude-opus-4-7',
   'opus': 'claude-opus-4-7',
   'opus1m': 'claude-opus-4-7[1m]',
-  'opus[1m]': 'claude-opus-4-7[1m]',
-  'claude-opus-4-7[1m]': 'claude-opus-4-7[1m]',
-  'claude-opus-4-7-1m': 'claude-opus-4-7[1m]',
-  'claude-opus-4-7-fast': 'claude-opus-4-7-fast',
   'opus4.7': 'claude-opus-4-7',
   'opus-4.7': 'claude-opus-4-7',
   'opus4.6': 'claude-opus-4-6',
@@ -347,9 +309,6 @@ export const MODEL_ALIASES = {
   'opus-4.1': 'claude-opus-4-1',
   'sonnet': 'claude-sonnet-4-6',
   'sonnet1m': 'claude-sonnet-4-6[1m]',
-  'sonnet[1m]': 'claude-sonnet-4-6[1m]',
-  'claude-sonnet-4-6[1m]': 'claude-sonnet-4-6[1m]',
-  'claude-sonnet-4-6-1m': 'claude-sonnet-4-6[1m]',
   'sonnet4.6': 'claude-sonnet-4-6',
   'sonnet-4.6': 'claude-sonnet-4-6',
   'sonnet4.5': 'claude-sonnet-4-5',
@@ -357,7 +316,6 @@ export const MODEL_ALIASES = {
   'haiku': 'claude-haiku-4-5',
   'haiku4.5': 'claude-haiku-4-5',
   'haiku-4.5': 'claude-haiku-4-5',
-  'opusplan': 'claude-opus-4-7',
 } as const;
 
 /**
@@ -400,7 +358,7 @@ export interface ClaudeTool {
   description: string;
   input_schema: {
     type: 'object';
-    properties: Record<string, LegacyAny>;
+    properties: Record<string, any>;
     required?: string[];
   };
 }
@@ -518,26 +476,13 @@ export class TokenCounterService {
 
     // Priority-based matching (order matters! MUST match backend logic)
 
-    if (normalized === 'default') {
-      return 'claude-sonnet-4-6';
-    }
-    if (normalized === 'best' || normalized === 'opusplan') {
-      return 'claude-opus-4-7';
-    }
-
     // Claude 4.7 Series (Latest)
     if (normalized.includes('opus') && (normalized.includes('4.7') || normalized.includes('4-7'))) {
-      if (normalized.includes('fast')) {
-        return 'claude-opus-4-7-fast';
-      }
       return 'claude-opus-4-7';
     }
 
     // Claude 4.6 Series
     if (normalized.includes('opus') && (normalized.includes('4.6') || normalized.includes('4-6'))) {
-      if (normalized.includes('fast')) {
-        return 'claude-opus-4-6-fast';
-      }
       return 'claude-opus-4-6';
     }
     if (normalized.includes('sonnet') && (normalized.includes('4.6') || normalized.includes('4-6'))) {
@@ -593,7 +538,7 @@ export class TokenCounterService {
     }
 
     try {
-      const requestData: LegacyAny = {
+      const requestData: any = {
         model: normalizedModel,
         messages: messages.map(msg => ({
           role: msg.role,
@@ -613,8 +558,8 @@ export class TokenCounterService {
 
       return {
         input_tokens: response.input_tokens,
-        cache_creation_input_tokens: (response as LegacyAny).cache_creation_input_tokens,
-        cache_read_input_tokens: (response as LegacyAny).cache_read_input_tokens,
+        cache_creation_input_tokens: (response as any).cache_creation_input_tokens,
+        cache_read_input_tokens: (response as any).cache_read_input_tokens,
       };
     } catch (error) {
       console.warn('[TokenCounter] API璋冪敤澶辫触锛屼娇鐢ㄤ及绠楁柟娉?', error);
@@ -688,7 +633,7 @@ export class TokenCounterService {
         try {
           const result = await this.countTokens(req.messages, req.model, req.tools, req.systemPrompt);
           results.push(result);
-        } catch {
+        } catch (err) {
           results.push({ input_tokens: 0 });
         }
       }
@@ -986,7 +931,7 @@ export const calculateCost = (usage: TokenUsage, model?: string) =>
 /**
  * 鍚戝悗鍏煎鐨勫嚱鏁颁繚鐣? * Normalize usage data from different API response formats
  */
-export function normalizeTokenUsage(usage: LegacyAny): TokenUsage {
+export function normalizeTokenUsage(usage: any): TokenUsage {
   return tokenCounter.normalizeUsage(usage);
 }
 
@@ -1074,7 +1019,7 @@ export function aggregateTokenUsage(usages: TokenUsage[]): TokenUsage {
  * Calculate session-level statistics with trends
  */
 export function calculateSessionStats(
-  messages: Array<{ usage?: LegacyAny; timestamp?: string; receivedAt?: string }>,
+  messages: Array<{ usage?: any; timestamp?: string; receivedAt?: string }>,
   model?: string
 ): SessionTokenStats {
   // Extract valid usage data from messages

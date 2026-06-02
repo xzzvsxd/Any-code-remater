@@ -20,7 +20,7 @@ export interface MultiEditWidgetProps {
   /** 编辑列表 */
   edits: Array<{ old_string: string; new_string: string }>;
   /** 工具结果 */
-  result?: LegacyAny;
+  result?: any;
 }
 
 /**

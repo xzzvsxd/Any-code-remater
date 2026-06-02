@@ -8,7 +8,6 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useTheme } from "@/contexts/ThemeContext";
-import { useStableCallback } from "@/hooks/useStableCallback";
 
 interface GeminiMarkdownEditorProps {
   /**
@@ -43,7 +42,11 @@ export const GeminiMarkdownEditor: React.FC<GeminiMarkdownEditorProps> = ({
   const hasChanges = content !== originalContent;
 
   // Load the Gemini system prompt on mount
-  const loadGeminiSystemPrompt = useStableCallback(async () => {
+  useEffect(() => {
+    loadGeminiSystemPrompt();
+  }, []);
+
+  const loadGeminiSystemPrompt = async () => {
     try {
       setLoading(true);
       setError(null);
@@ -57,11 +60,7 @@ export const GeminiMarkdownEditor: React.FC<GeminiMarkdownEditorProps> = ({
     } finally {
       setLoading(false);
     }
-  });
-useEffect(() => {
-    loadGeminiSystemPrompt();
-  }, [loadGeminiSystemPrompt]);
-
+  };
 
   const handleSave = async () => {
     try {

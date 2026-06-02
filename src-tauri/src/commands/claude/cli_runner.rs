@@ -42,18 +42,14 @@ impl Drop for ClaudeProcessState {
 
 /// Maps frontend model IDs to Claude CLI model aliases
 /// Converts frontend-friendly model names to official Claude Code model identifiers
-/// Uses Claude Code aliases so model routing can stay current.
+/// Updated to use Claude 4.6 (released February 2026) as the latest models
 pub(super) fn map_model_to_claude_alias(model: &str) -> String {
     match model {
-        "default" => "default".to_string(),
-        "best" => "best".to_string(),
         "sonnet1m" => "sonnet[1m]".to_string(),
         "sonnet" => "sonnet".to_string(),
         "opus1m" => "opus[1m]".to_string(),
-        // Use 'opus' alias which automatically resolves to latest Opus.
+        // Use 'opus' alias which automatically resolves to latest Opus (Claude 4.6)
         "opus" => "opus".to_string(),
-        "haiku" => "haiku".to_string(),
-        "opusplan" => "opusplan".to_string(),
         // Pass through any other model names unchanged (for future compatibility)
         _ => model.to_string(),
     }
@@ -182,10 +178,9 @@ fn create_system_command(
     args: Vec<String>,
     project_path: &str,
     model: Option<&str>,
-    fast_mode: bool,
     _max_thinking_tokens: Option<u32>, // Keep parameter for compatibility but don't use it
 ) -> Result<Command, String> {
-    create_windows_command(claude_path, args, project_path, model, fast_mode)
+    create_windows_command(claude_path, args, project_path, model)
 }
 
 /// Create a Windows command
@@ -195,7 +190,6 @@ fn create_windows_command(
     args: Vec<String>,
     project_path: &str,
     model: Option<&str>,
-    fast_mode: bool,
 ) -> Result<Command, String> {
     let mut cmd = create_command_with_env(claude_path);
 
@@ -206,11 +200,6 @@ fn create_windows_command(
             model_name
         );
         cmd.env("ANTHROPIC_MODEL", model_name);
-    }
-
-    if fast_mode {
-        cmd.env("CLAUDE_CODE_ENABLE_OPUS_4_7_FAST_MODE", "1");
-        cmd.env("CLAUDE_CODE_FAST_MODE", "1");
     }
 
     // Note: MAX_THINKING_TOKENS is now controlled via settings.json env field
@@ -250,10 +239,8 @@ pub async fn execute_claude_code(
     plan_mode: Option<bool>,
     max_thinking_tokens: Option<u32>,
     tab_id: Option<String>,
-    fast_mode: Option<bool>,
 ) -> Result<(), String> {
     let plan_mode = plan_mode.unwrap_or(false);
-    let fast_mode = fast_mode.unwrap_or(false);
     log::info!(
         "Starting Claude Code session with project context resume in: {} with model: {}, plan_mode: {}",
         project_path,
@@ -291,11 +278,7 @@ pub async fn execute_claude_code(
 
     // 使用新的参数构建函数（先映射模型名称）
     // 🔥 修复：prompt 不再通过命令行参数传递，改为 stdin 管道传递
-    let mapped_model = if fast_mode {
-        "opus".to_string()
-    } else {
-        map_model_to_claude_alias(&model)
-    };
+    let mapped_model = map_model_to_claude_alias(&model);
     let args = build_execution_args(&execution_config, &mapped_model);
 
     // Create command
@@ -304,7 +287,6 @@ pub async fn execute_claude_code(
         args,
         &project_path,
         Some(&mapped_model),
-        fast_mode,
         max_thinking_tokens,
     )?;
     spawn_claude_process(app, cmd, prompt, model, project_path, tab_id, None).await
@@ -321,10 +303,8 @@ pub async fn continue_claude_code(
     plan_mode: Option<bool>,
     max_thinking_tokens: Option<u32>,
     tab_id: Option<String>,
-    fast_mode: Option<bool>,
 ) -> Result<(), String> {
     let plan_mode = plan_mode.unwrap_or(false);
-    let fast_mode = fast_mode.unwrap_or(false);
     log::info!(
         "Continuing Claude Code conversation in: {} with model: {}, plan_mode: {}",
         project_path,
@@ -362,11 +342,7 @@ pub async fn continue_claude_code(
 
     // 使用新的参数构建函数，添加 -c 标志用于继续对话（先映射模型名称）
     // 🔥 修复：prompt 不再通过命令行参数传递，改为 stdin 管道传递
-    let mapped_model = if fast_mode {
-        "opus".to_string()
-    } else {
-        map_model_to_claude_alias(&model)
-    };
+    let mapped_model = map_model_to_claude_alias(&model);
     let mut args = build_execution_args(&execution_config, &mapped_model);
 
     // 在开头插入 -c 标志
@@ -378,7 +354,6 @@ pub async fn continue_claude_code(
         args,
         &project_path,
         Some(&mapped_model),
-        fast_mode,
         max_thinking_tokens,
     )?;
     spawn_claude_process(app, cmd, prompt, model, project_path, tab_id, None).await
@@ -396,10 +371,8 @@ pub async fn resume_claude_code(
     plan_mode: Option<bool>,
     max_thinking_tokens: Option<u32>,
     tab_id: Option<String>,
-    fast_mode: Option<bool>,
 ) -> Result<(), String> {
     let plan_mode = plan_mode.unwrap_or(false);
-    let fast_mode = fast_mode.unwrap_or(false);
     log::info!(
         "Resuming Claude Code session: {} in: {} with model: {}, plan_mode: {}",
         session_id,
@@ -449,11 +422,7 @@ pub async fn resume_claude_code(
 
     // 使用新的参数构建函数，添加 --resume 和 session_id（先映射模型名称）
     // 🔥 修复：prompt 不再通过命令行参数传递，改为 stdin 管道传递
-    let mapped_model = if fast_mode {
-        "opus".to_string()
-    } else {
-        map_model_to_claude_alias(&model)
-    };
+    let mapped_model = map_model_to_claude_alias(&model);
     let mut args = build_execution_args(&execution_config, &mapped_model);
 
     // 为resume模式重新组织参数：--resume session_id 应该在最前面
@@ -468,7 +437,6 @@ pub async fn resume_claude_code(
         args,
         &project_path,
         Some(&mapped_model),
-        fast_mode,
         max_thinking_tokens,
     )?;
 
@@ -499,7 +467,6 @@ pub async fn resume_claude_code(
                 Some(plan_mode),
                 max_thinking_tokens,
                 tab_id,
-                Some(fast_mode),
             )
             .await
         }
@@ -579,44 +546,6 @@ pub async fn cancel_claude_execution(
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{
-        has_claude_file_reference, is_slash_command, should_pass_prompt_via_arg,
-        PROMPT_ARG_SAFE_MAX_BYTES,
-    };
-
-    #[test]
-    fn detects_slash_commands_for_prompt_arg_mode() {
-        assert!(is_slash_command("/help"));
-        assert!(should_pass_prompt_via_arg("/compact"));
-        assert!(!is_slash_command("please run /help"));
-        assert!(!is_slash_command("/this-is-not-a-short-command\nwith details"));
-    }
-
-    #[test]
-    fn detects_claude_file_and_image_mentions() {
-        assert!(has_claude_file_reference(r#"看这张 @"C:\tmp\ui mock.png""#));
-        assert!(has_claude_file_reference("read @/home/me/mock.png"));
-        assert!(has_claude_file_reference("read @images/high-fidelity.webp"));
-        assert!(has_claude_file_reference("read @./relative/file.md"));
-        assert!(should_pass_prompt_via_arg("read @images/high-fidelity.png"));
-    }
-
-    #[test]
-    fn ignores_email_like_at_tokens() {
-        assert!(!has_claude_file_reference("contact a@b.com for details"));
-        assert!(!should_pass_prompt_via_arg("contact a@b.com for details"));
-    }
-
-    #[test]
-    fn keeps_very_long_file_reference_prompts_on_stdin() {
-        let long_prompt = format!("{} @images/mock.png", "x".repeat(PROMPT_ARG_SAFE_MAX_BYTES + 1));
-        assert!(has_claude_file_reference(&long_prompt));
-        assert!(!should_pass_prompt_via_arg(&long_prompt));
-    }
-}
-
 /// Get all running Claude sessions
 #[tauri::command]
 pub async fn list_running_claude_sessions(
@@ -646,62 +575,9 @@ fn is_slash_command(prompt: &str) -> bool {
     trimmed.starts_with('/') && !trimmed.contains('\n') && trimmed.len() < 256
 }
 
-/// Keep prompt-as-argument mode below Windows' command-line limit with room for
-/// the executable path, flags, model name and JSON output options.
-const PROMPT_ARG_SAFE_MAX_BYTES: usize = 24 * 1024;
-
-/// Claude Code only expands slash commands and @file references in prompt
-/// argument mode (`-p <prompt>`).  Plain stdin is safer for very long text, but
-/// it makes image/file mentions arrive as literal text, which is why pasted or
-/// dropped images looked "read" yet produced no visual content.
-fn has_claude_file_reference(prompt: &str) -> bool {
-    for (index, ch) in prompt.char_indices() {
-        if ch != '@' {
-            continue;
-        }
-
-        let prev = prompt[..index].chars().next_back();
-        let starts_at_token_boundary = prev
-            .map(|c| c.is_whitespace() || matches!(c, '(' | '[' | '{' | ':' | '，' | '。' | '；'))
-            .unwrap_or(true);
-        if !starts_at_token_boundary {
-            // Avoid matching email addresses / handles embedded in words.
-            continue;
-        }
-
-        let rest = &prompt[index + ch.len_utf8()..];
-        let Some(next) = rest.chars().next() else {
-            continue;
-        };
-
-        if next.is_whitespace() {
-            continue;
-        }
-
-        // Supported UI forms:
-        //   @"C:\path with spaces\image.png"
-        //   @/home/me/image.png
-        //   @.\relative\image.png
-        //   @images/high-fidelity.png
-        if matches!(next, '"' | '\'' | '/' | '\\' | '.' | '~') || next.is_ascii_alphanumeric() {
-            return true;
-        }
-    }
-
-    false
-}
-
-fn should_pass_prompt_via_arg(prompt: &str) -> bool {
-    if is_slash_command(prompt) {
-        return true;
-    }
-
-    has_claude_file_reference(prompt) && prompt.len() <= PROMPT_ARG_SAFE_MAX_BYTES
-}
-
 /// Helper function to spawn Claude process and handle streaming
-/// 🔥 修复：斜杠命令和 @file/@image 引用通过 -p 参数传递（触发 CLI 解析），
-/// 普通长文本 prompt 继续通过 stdin 管道传递，避免操作系统命令行长度限制。
+/// 🔥 修复：斜杠命令通过 -p 参数传递（触发命令解析），普通 prompt 通过 stdin 管道传递
+/// 这样既支持斜杠命令，又避免操作系统命令行长度限制（Windows ~8KB, Linux/macOS ~128KB-2MB）
 /// 🔒 CRITICAL FIX: 添加 tab_id 参数，用于全局事件中标识消息来源，解决新建会话并发时的消息串扰
 async fn spawn_claude_process(
     app: AppHandle,
@@ -715,22 +591,13 @@ async fn spawn_claude_process(
     use std::sync::Mutex;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-    // 🔥 关键修复：检测斜杠命令和 @file/@image 引用，通过 -p 参数传递以触发 CLI 解析。
-    // Claude CLI 的 stdin 模式适合长文本，但不会可靠展开 @ 图片/文件引用。
-    let use_p_flag = should_pass_prompt_via_arg(&prompt);
+    // 🔥 关键修复：检测斜杠命令，通过 -p 参数传递以触发命令解析
+    // Claude CLI 只在 -p 参数中解析斜杠命令，stdin 管道不会触发
+    let use_p_flag = is_slash_command(&prompt);
     if use_p_flag {
-        log::info!(
-            "Using -p prompt argument mode (slash_command={}, file_reference={})",
-            is_slash_command(&prompt),
-            has_claude_file_reference(&prompt)
-        );
+        log::info!("Detected slash command, using -p flag: {}", prompt.trim());
         cmd.arg("-p");
         cmd.arg(&prompt);
-    } else if has_claude_file_reference(&prompt) {
-        log::warn!(
-            "Prompt contains @file references but is {} bytes; falling back to stdin to avoid command-line limit",
-            prompt.len()
-        );
     }
 
     // Spawn the process
@@ -739,7 +606,7 @@ async fn spawn_claude_process(
         .map_err(|e| format!("Failed to spawn Claude: {}", e))?;
 
     // 🔥 普通 prompt 通过 stdin 管道传递，避免命令行长度限制
-    // 斜杠命令和 @file/@image 引用已通过 -p 参数传递，不需要 stdin
+    // 斜杠命令已通过 -p 参数传递，不需要 stdin
     if !use_p_flag {
         if let Some(mut stdin) = child.stdin.take() {
             // 克隆 prompt 以便在 async 块中使用（避免生命周期问题）

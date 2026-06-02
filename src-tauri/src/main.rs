@@ -2,7 +2,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod claude_binary;
-mod claude_binary_discovery;
 mod commands;
 mod process;
 mod utils; // 新增：通用工具模块
@@ -50,7 +49,6 @@ use commands::claude::{
     list_projects,
     list_running_claude_sessions,
     load_session_history,
-    load_session_history_page,
     open_new_session,
     read_claude_md_file,
     reset_claude_execution_config,
@@ -64,7 +62,6 @@ use commands::claude::{
     set_claude_wsl_mode_config,
     set_custom_claude_path,
     update_claude_execution_config,
-    update_claude_fast_mode,
     update_claude_permission_config,
     update_hooks_config,
     update_thinking_mode,
@@ -162,7 +159,6 @@ use commands::codex::{
     get_current_codex_config,
     list_codex_sessions,
     load_codex_session_history,
-    load_codex_session_history_page,
     record_codex_prompt_completed,
     // Codex rewind commands
     record_codex_prompt_sent,
@@ -367,13 +363,11 @@ fn main() {
             save_system_prompt,
             save_codex_system_prompt,
             save_claude_settings,
-            update_claude_fast_mode,
             update_thinking_mode,
             find_claude_md_files,
             read_claude_md_file,
             save_claude_md_file,
             load_session_history,
-            load_session_history_page,
             execute_claude_code,
             continue_claude_code,
             resume_claude_code,
@@ -537,7 +531,6 @@ fn main() {
             list_codex_sessions,
             delete_codex_session,
             load_codex_session_history,
-            load_codex_session_history_page,
             get_codex_prompt_list,
             get_codex_prompt_list_with_capabilities,
             check_codex_rewind_capabilities,

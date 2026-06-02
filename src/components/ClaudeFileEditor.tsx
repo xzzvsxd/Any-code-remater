@@ -8,7 +8,6 @@ import { api, type ClaudeMdFile } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useTheme } from "@/contexts/ThemeContext";
-import { useStableCallback } from "@/hooks/useStableCallback";
 
 interface ClaudeFileEditorProps {
   /**
@@ -51,7 +50,11 @@ export const ClaudeFileEditor: React.FC<ClaudeFileEditorProps> = ({
   const hasChanges = content !== originalContent;
 
   // Load the file content on mount
-  const loadFileContent = useStableCallback(async () => {
+  useEffect(() => {
+    loadFileContent();
+  }, [file.absolute_path]);
+
+  const loadFileContent = async () => {
     try {
       setLoading(true);
       setError(null);
@@ -64,11 +67,7 @@ export const ClaudeFileEditor: React.FC<ClaudeFileEditorProps> = ({
     } finally {
       setLoading(false);
     }
-  });
-useEffect(() => {
-    loadFileContent();
-  }, [file.absolute_path, loadFileContent]);
-
+  };
 
   const handleSave = async () => {
     try {

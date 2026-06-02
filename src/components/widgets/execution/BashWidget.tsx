@@ -16,7 +16,7 @@ export interface BashWidgetProps {
   /** 命令描述（可选） */
   description?: string;
   /** 工具结果 */
-  result?: LegacyAny;
+  result?: any;
 }
 
 /**
@@ -45,7 +45,7 @@ export const BashWidget: React.FC<BashWidgetProps> = ({
         resultContent = result.content.text;
       } else if (Array.isArray(result.content)) {
         resultContent = result.content
-          .map((c: LegacyAny) => (typeof c === 'string' ? c : c.text || JSON.stringify(c)))
+          .map((c: any) => (typeof c === 'string' ? c : c.text || JSON.stringify(c)))
           .join('\n');
       } else {
         resultContent = JSON.stringify(result.content, null, 2);

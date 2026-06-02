@@ -137,7 +137,6 @@ pub mod windows_job {
 }
 
 #[cfg(not(windows))]
-#[allow(dead_code)]
 pub mod windows_job {
     /// Dummy JobObject for non-Windows platforms
     pub struct JobObject;

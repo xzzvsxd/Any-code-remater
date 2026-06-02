@@ -63,7 +63,7 @@ export const ViewRouter: React.FC = () => {
   const [showClaudeBinaryDialog, setShowClaudeBinaryDialog] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
   const [showNavigationConfirm, setShowNavigationConfirm] = useState(false);
-  const [pendingView, setPendingView] = useState<LegacyAny | null>(null); // Store pending view for confirmation
+  const [pendingView, setPendingView] = useState<any | null>(null); // Store pending view for confirmation
 
   // Global keyboard shortcuts
   useGlobalKeyboardShortcuts({
@@ -145,7 +145,7 @@ export const ViewRouter: React.FC = () => {
     try {
       // Find the session to check its engine type
       const session = sessions.find(s => s.id === sessionId);
-      const engine = (session as LegacyAny)?.engine;
+      const engine = (session as any)?.engine;
 
       if (engine === 'codex') {
         // Delete Codex session
@@ -184,7 +184,7 @@ export const ViewRouter: React.FC = () => {
       sessionIds.forEach(id => {
         const session = sessions.find(s => s.id === id);
         if (session) {
-          const engine = (session as LegacyAny).engine;
+          const engine = (session as any).engine;
           if (engine === 'codex') {
             codexSessionIds.push(id);
           } else if (engine === 'gemini') {

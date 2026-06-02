@@ -18,7 +18,7 @@ export interface TaskOutputWidgetProps {
   timeout?: number;
   /** 工具结果 */
   result?: {
-    content?: LegacyAny;
+    content?: any;
     is_error?: boolean;
   };
 }
@@ -26,7 +26,7 @@ export interface TaskOutputWidgetProps {
 /**
  * 解析任务输出内容
  */
-function parseTaskOutput(content: LegacyAny): {
+function parseTaskOutput(content: any): {
   status?: string;
   output?: string;
   taskId?: string;

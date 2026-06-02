@@ -109,7 +109,7 @@ export function AcemcpConfigSettings({ className }: AcemcpConfigSettingsProps) {
     }
   };
 
-  const handleChange = (field: keyof AcemcpConfig, value: LegacyAny) => {
+  const handleChange = (field: keyof AcemcpConfig, value: any) => {
     setConfig({ ...config, [field]: value });
     setHasChanges(true);
     setTestStatus('idle');
@@ -144,7 +144,7 @@ export function AcemcpConfigSettings({ className }: AcemcpConfigSettingsProps) {
     try {
       await copyTextToClipboard(cliConfig);
       alert(t('acemcp.configCopied'));
-    } catch {
+    } catch (error) {
       alert(t('errors.generic') + ':\n\n' + cliConfig);
     }
   };

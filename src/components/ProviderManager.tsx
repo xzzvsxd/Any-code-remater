@@ -17,7 +17,7 @@ import {
   Edit,
   Trash,
   DollarSign,
-  Infinity as InfinityIcon,
+  Infinity,
   Calendar
 } from 'lucide-react';
 import { api, type ProviderConfig, type CurrentProviderConfig, type ApiKeyUsage } from '@/lib/api';
@@ -25,7 +25,6 @@ import { Toast } from '@/components/ui/toast';
 import ProviderForm from './ProviderForm';
 import { useTranslation } from "@/hooks/useTranslation";
 import { SortableList } from '@/components/ui/sortable-list';
-import { useStableCallback } from "@/hooks/useStableCallback";
 
 interface ProviderManagerProps {
   onBack: () => void;
@@ -57,7 +56,11 @@ export default function ProviderManager({ onBack }: ProviderManagerProps) {
   // 用量缓存：key 是 provider id，value 是用量数据
   const [usageCache, setUsageCache] = useState<Record<string, ApiKeyUsage>>({});
 
-  const loadData = useStableCallback(async () => {
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
     try {
       setLoading(true);
       const [presetsData, configData] = await Promise.all([
@@ -72,11 +75,7 @@ export default function ProviderManager({ onBack }: ProviderManagerProps) {
     } finally {
       setLoading(false);
     }
-  });
-useEffect(() => {
-    loadData();
-  }, [loadData]);
-
+  };
 
   const switchProvider = async (config: ProviderConfig) => {
     try {
@@ -277,7 +276,7 @@ useEffect(() => {
       // 重新加载数据以恢复原始顺序
       loadData();
     }
-  }, [loadData, t]);
+  }, [t]);
 
   if (loading) {
     return (
@@ -415,7 +414,7 @@ useEffect(() => {
                       <div className="text-muted-foreground">
                         {usageCache[config.id].is_unlimited ? (
                           <span className="text-green-600 font-medium flex items-center justify-end gap-1">
-                            {t('provider.remaining')} <InfinityIcon className="h-3 w-3" /> {t('provider.unlimited')}
+                            {t('provider.remaining')} <Infinity className="h-3 w-3" /> {t('provider.unlimited')}
                           </span>
                         ) : (
                           <>
@@ -646,7 +645,7 @@ useEffect(() => {
                   <span className={`font-semibold ${usageData.is_unlimited ? 'text-green-600' : ''}`}>
                     {usageData.is_unlimited ? (
                       <span className="flex items-center gap-1">
-                        <InfinityIcon className="h-4 w-4" />
+                        <Infinity className="h-4 w-4" />
                         {t('provider.unlimited')}
                       </span>
                     ) : (
@@ -673,7 +672,7 @@ useEffect(() => {
                   }`}>
                     {usageData.is_unlimited ? (
                       <span className="flex items-center gap-1">
-                        <InfinityIcon className="h-4 w-4" />
+                        <Infinity className="h-4 w-4" />
                         {t('provider.noLimit')}
                       </span>
                     ) : (

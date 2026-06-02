@@ -45,7 +45,6 @@ import {
 import { api } from "@/lib/api";
 import { useTranslation } from "@/hooks/useTranslation";
 import { Toast, ToastContainer } from "./ui/toast";
-import { useStableCallback } from "@/hooks/useStableCallback";
 
 interface TableInfo {
   name: string;
@@ -65,7 +64,7 @@ interface ColumnInfo {
 interface TableData {
   table_name: string;
   columns: ColumnInfo[];
-  rows: Record<string, LegacyAny>[];
+  rows: Record<string, any>[];
   total_rows: number;
   page: number;
   page_size: number;
@@ -74,7 +73,7 @@ interface TableData {
 
 interface QueryResult {
   columns: string[];
-  rows: LegacyAny[][];
+  rows: any[][];
   rows_affected?: number;
   last_insert_rowid?: number;
 }
@@ -94,9 +93,9 @@ export const StorageTab: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   // Dialog states
-  const [editingRow, setEditingRow] = useState<Record<string, LegacyAny> | null>(null);
-  const [newRow, setNewRow] = useState<Record<string, LegacyAny> | null>(null);
-  const [deletingRow, setDeletingRow] = useState<Record<string, LegacyAny> | null>(null);
+  const [editingRow, setEditingRow] = useState<Record<string, any> | null>(null);
+  const [newRow, setNewRow] = useState<Record<string, any> | null>(null);
+  const [deletingRow, setDeletingRow] = useState<Record<string, any> | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showSqlEditor, setShowSqlEditor] = useState(false);
   const [sqlQuery, setSqlQuery] = useState("");
@@ -107,7 +106,23 @@ export const StorageTab: React.FC = () => {
   /**
    * Load all tables on mount
    */
-  const loadTables = useStableCallback(async () => {
+  useEffect(() => {
+    loadTables();
+  }, []);
+
+  /**
+   * Load table data when selected table changes
+   */
+  useEffect(() => {
+    if (selectedTable) {
+      loadTableData(1);
+    }
+  }, [selectedTable]);
+
+  /**
+   * Load all tables from the database
+   */
+  const loadTables = async () => {
     try {
       setLoading(true);
       setError(null);
@@ -122,15 +137,12 @@ export const StorageTab: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  });
-useEffect(() => {
-    loadTables();
-  }, [loadTables]);
+  };
 
   /**
-   * Load table data when selected table changes
+   * Load data for the selected table
    */
-  const loadTableData = useStableCallback(async (page: number, search?: string) => {
+  const loadTableData = async (page: number, search?: string) => {
     if (!selectedTable) return;
 
     try {
@@ -150,20 +162,7 @@ useEffect(() => {
     } finally {
       setLoading(false);
     }
-  });
-useEffect(() => {
-    if (selectedTable) {
-      loadTableData(1);
-    }
-  }, [loadTableData, selectedTable]);
-
-  /**
-   * Load all tables from the database
-   */
-
-  /**
-   * Load data for the selected table
-   */
+  };
 
   /**
    * Handle search
@@ -173,17 +172,17 @@ useEffect(() => {
       setSearchQuery(value);
       loadTableData(1, value);
     },
-    [loadTableData]
+    [selectedTable]
   );
 
   /**
    * Get primary key values for a row
    */
-  const getPrimaryKeyValues = (row: Record<string, LegacyAny>): Record<string, LegacyAny> => {
+  const getPrimaryKeyValues = (row: Record<string, any>): Record<string, any> => {
     if (!tableData) return {};
     
     const pkColumns = tableData.columns.filter(col => col.pk);
-    const pkValues: Record<string, LegacyAny> = {};
+    const pkValues: Record<string, any> = {};
     
     pkColumns.forEach(col => {
       pkValues[col.name] = row[col.name];
@@ -195,7 +194,7 @@ useEffect(() => {
   /**
    * Handle row update
    */
-  const handleUpdateRow = async (updates: Record<string, LegacyAny>) => {
+  const handleUpdateRow = async (updates: Record<string, any>) => {
     if (!editingRow || !selectedTable) return;
 
     try {
@@ -235,7 +234,7 @@ useEffect(() => {
   /**
    * Handle new row insertion
    */
-  const handleInsertRow = async (values: Record<string, LegacyAny>) => {
+  const handleInsertRow = async (values: Record<string, any>) => {
     if (!selectedTable) return;
 
     try {
@@ -306,7 +305,7 @@ useEffect(() => {
   /**
    * Format cell value for display
    */
-  const formatCellValue = (value: LegacyAny, maxLength: number = 100): string => {
+  const formatCellValue = (value: any, maxLength: number = 100): string => {
     if (value === null) return "NULL";
     if (value === undefined) return "";
     if (typeof value === "boolean") return value ? "true" : "false";

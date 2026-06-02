@@ -320,7 +320,7 @@ pub async fn open_skills_directory(project_path: Option<String>) -> Result<Strin
 /// - ~/.claude/plugins/installed_plugins.json (main config file)
 /// - ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/ (plugin files)
 #[tauri::command]
-pub async fn list_plugins(project_path: Option<String>) -> Result<Vec<PluginInfo>, String> {
+pub async fn list_plugins(_project_path: Option<String>) -> Result<Vec<PluginInfo>, String> {
     info!("Listing installed plugins");
     let mut plugins = Vec::new();
 
@@ -449,33 +449,6 @@ pub async fn list_plugins(project_path: Option<String>) -> Result<Vec<PluginInfo
                 "installed_plugins.json not found at {:?}",
                 installed_plugins_path
             );
-        }
-    }
-
-    // Legacy/manual plugin installs may exist as direct folders even when
-    // installed_plugins.json is missing or incomplete.  Keep them visible
-    // instead of returning an empty plugin list.
-    let mut seen_paths: std::collections::HashSet<String> =
-        plugins.iter().map(|plugin| plugin.path.clone()).collect();
-    if let Ok(claude_dir) = get_claude_dir() {
-        let legacy_plugins_dir = claude_dir.join("plugins");
-        if legacy_plugins_dir.exists() {
-            for plugin in scan_plugins_directory(&legacy_plugins_dir)? {
-                if seen_paths.insert(plugin.path.clone()) {
-                    plugins.push(plugin);
-                }
-            }
-        }
-    }
-
-    if let Some(project_path) = project_path {
-        let project_plugins_dir = Path::new(&project_path).join(".claude").join("plugins");
-        if project_plugins_dir.exists() {
-            for plugin in scan_plugins_directory(&project_plugins_dir)? {
-                if seen_paths.insert(plugin.path.clone()) {
-                    plugins.push(plugin);
-                }
-            }
         }
     }
 

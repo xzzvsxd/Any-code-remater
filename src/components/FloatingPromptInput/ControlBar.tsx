@@ -38,11 +38,11 @@ interface ControlBarProps {
   onTogglePlanMode?: () => void;
   hasMessages: boolean;
   sessionCost?: string;
-  sessionStats?: LegacyAny;
+  sessionStats?: any;
   showCostPopover: boolean;
   setShowCostPopover: (show: boolean) => void;
-  messages?: LegacyAny[];
-  session?: LegacyAny;
+  messages?: any[];
+  session?: any;
   codexRateLimits?: CodexRateLimits | null;
   isEnhancing: boolean;
   executionStatus?: ExecutionStatusInfo;
@@ -51,7 +51,7 @@ interface ControlBarProps {
   setEnableProjectContext: (enable: boolean) => void;
   enableDualAPI: boolean;
   setEnableDualAPI: (enable: boolean) => void;
-  getEnabledProviders: () => LegacyAny[];
+  getEnabledProviders: () => any[];
   handleEnhancePromptWithAPI: (id: string) => void;
   onCancel: () => void;
   onSend: () => void;
@@ -98,12 +98,10 @@ export const ControlBar: React.FC<ControlBarProps> = ({
 
   const contextWindowModel =
     executionEngineConfig.engine === 'codex'
-      ? (executionEngineConfig.codexFastMode && (session?.model || executionEngineConfig.codexModel)?.includes('gpt-5.5')
-        ? 'gpt-5.5-fast'
-        : (session?.model || executionEngineConfig.codexModel))
+      ? (session?.model || executionEngineConfig.codexModel)
       : executionEngineConfig.engine === 'gemini'
         ? (executionEngineConfig.geminiModel || session?.model)
-        : (executionEngineConfig.claudeFastMode ? 'claude-opus-4-7-fast' : selectedModel);
+        : selectedModel;
 
   // Extract latest Codex rate limits from messages
   const codexRateLimits = useMemo<CodexRateLimits | null>(() => {
@@ -122,7 +120,7 @@ export const ControlBar: React.FC<ControlBarProps> = ({
     // Find the latest message with rate limits in codexMetadata
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
-      const rateLimits = (msg as LegacyAny)?.codexMetadata?.rateLimits;
+      const rateLimits = (msg as any)?.codexMetadata?.rateLimits;
       if (rateLimits && (rateLimits.primary || rateLimits.secondary)) {
         return rateLimits;
       }

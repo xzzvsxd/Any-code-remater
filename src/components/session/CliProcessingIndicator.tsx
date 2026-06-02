@@ -10,8 +10,6 @@ interface CliProcessingIndicatorProps {
   idleSeconds?: number;
   canCancel?: boolean;
   isCancelling?: boolean;
-  statusLabel?: string;
-  statusHint?: string;
 }
 
 // CLI风格的处理状态词汇
@@ -38,8 +36,6 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
   idleSeconds = 0,
   canCancel = true,
   isCancelling = false,
-  statusLabel,
-  statusHint,
 }) => {
   const { t } = useTranslation();
   const [dotCount, setDotCount] = useState(0);
@@ -95,7 +91,6 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
   }, [isProcessing, onCancel, canCancel, isCancelling]);
 
   const currentVerb = PROCESSING_VERBS[verbIndex];
-  const displayLabel = statusLabel || currentVerb;
   const dots = ".".repeat(dotCount);
   const paddedDots = dots.padEnd(3, " ");
   const formatElapsed = (seconds: number) => {
@@ -116,10 +111,10 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -10 }}
           transition={{ duration: 0.2 }}
-          className="w-full max-w-5xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-[86%] mx-auto px-4 py-3"
+          className="w-full max-w-5xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-[85%] mx-auto px-4 py-3"
         >
-          <div className="command-surface flex items-center gap-2 px-3 py-2 font-mono text-sm shadow-sm">
-            {/* Status dot */}
+          <div className="flex items-center gap-2 font-mono text-sm">
+            {/* 星号指示器 - 带脉冲动画 */}
             <motion.span
               animate={{
                 opacity: [1, 0.4, 1],
@@ -130,26 +125,26 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
                 repeat: Infinity,
                 ease: "easeInOut"
               }}
-              className="h-2 w-2 rounded-full bg-primary"
-            />
+              className="text-amber-500 dark:text-amber-400 font-bold"
+            >
+              ✦
+            </motion.span>
 
             {/* 动态处理文本 */}
             <span className="text-foreground/90">
               <motion.span
-                key={displayLabel}
+                key={currentVerb}
                 initial={{ opacity: 0, x: -5 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: 5 }}
                 transition={{ duration: 0.2 }}
-                className="text-primary font-medium"
+                className="text-amber-600 dark:text-amber-400 font-medium"
               >
-                {displayLabel}
+                {currentVerb}
               </motion.span>
-              {!statusLabel && (
-                <span className="text-muted-foreground font-mono w-[24px] inline-block">
-                  {paddedDots}
-                </span>
-              )}
+              <span className="text-muted-foreground font-mono w-[24px] inline-block">
+                {paddedDots}
+              </span>
             </span>
 
             {/* 提示信息 */}
@@ -160,7 +155,7 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
               {onCancel && canCancel && !isCancelling && (
                 <button
                   onClick={onCancel}
-                  className="hover:text-destructive transition-colors cursor-pointer"
+                  className="hover:text-red-500 transition-colors cursor-pointer"
                 >
                   {t('cliIndicator.escToCancel', 'esc to cancel')}
                 </button>
@@ -182,19 +177,13 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
                 <motion.span
                   animate={{ opacity: [0.4, 1, 0.4] }}
                   transition={{ duration: 1.5, repeat: Infinity }}
-                  className="inline-block w-1.5 h-1.5 rounded-full bg-primary/70"
+                  className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500/70"
                 />
                 {t('cliIndicator.thinking', 'thinking')}
               </span>
               )
             </span>
           </div>
-
-          {statusHint && (
-            <div className="mt-2 rounded-md border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
-              {statusHint}
-            </div>
-          )}
 
           {idleNotice && (
             <div className="mt-2 rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
@@ -207,7 +196,7 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
             className="mt-2 h-[2px] bg-muted-foreground/10 rounded-full overflow-hidden"
           >
             <motion.div
-              className="h-full bg-primary/80"
+              className="h-full bg-gradient-to-r from-amber-500/50 via-amber-400 to-amber-500/50"
               animate={{
                 x: ["-100%", "100%"],
               }}

@@ -32,7 +32,7 @@ export interface WindowSyncEvent {
   tabId: string;
   sessionId?: string;
   projectPath?: string;
-  data?: LegacyAny;
+  data?: any;
 }
 
 // ============================================================================
@@ -123,7 +123,7 @@ export async function focusSessionWindow(windowLabel: string): Promise<void> {
 export async function emitToWindow(
   windowLabel: string,
   eventName: string,
-  payload: LegacyAny
+  payload: any
 ): Promise<void> {
   try {
     await invoke('emit_to_window', {
@@ -146,7 +146,7 @@ export async function emitToWindow(
  */
 export async function broadcastToSessionWindows(
   eventName: string,
-  payload: LegacyAny
+  payload: any
 ): Promise<number> {
   try {
     return await invoke<number>('broadcast_to_session_windows', {

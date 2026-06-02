@@ -26,7 +26,7 @@ function toNumber(value: unknown): number | null {
  */
 export function extractGeminiUsage(tokens: unknown): GeminiUsage | null {
   if (!tokens || typeof tokens !== 'object') return null;
-  const t = tokens as LegacyAny;
+  const t = tokens as any;
 
   const inputFromStats = toNumber(t.input_tokens);
   const outputFromStats = toNumber(t.output_tokens);
@@ -105,7 +105,7 @@ export function convertGeminiSessionDetailToClaudeMessages(
     }
 
     // Gemini assistant message
-    const assistantContent: LegacyAny[] = [];
+    const assistantContent: any[] = [];
 
     // Add tool calls if present
     if (Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0) {
@@ -124,7 +124,7 @@ export function convertGeminiSessionDetailToClaudeMessages(
 
           // Extract Gemini functionResponse format: [{ functionResponse: { response: { output }}}]
           if (Array.isArray(toolCall.result)) {
-            const first = toolCall.result[0] as LegacyAny;
+            const first = toolCall.result[0] as any;
             if (first?.functionResponse?.response?.output !== undefined) {
               resultContent = first.functionResponse.response.output;
             }

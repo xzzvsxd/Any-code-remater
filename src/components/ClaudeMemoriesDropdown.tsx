@@ -6,7 +6,6 @@ import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { api, type ClaudeMdFile } from "@/lib/api";
 import { formatUnixTimestamp } from "@/lib/date-utils";
-import { useStableCallback } from "@/hooks/useStableCallback";
 
 interface ClaudeMemoriesDropdownProps {
   /**
@@ -25,7 +24,7 @@ interface ClaudeMemoriesDropdownProps {
 
 /**
  * ClaudeMemoriesDropdown component - Shows all CLAUDE.md files in a project
- *
+ * 
  * @example
  * <ClaudeMemoriesDropdown
  *   projectPath="/Users/example/project"
@@ -41,9 +40,15 @@ export const ClaudeMemoriesDropdown: React.FC<ClaudeMemoriesDropdownProps> = ({
   const [files, setFiles] = useState<ClaudeMdFile[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
+  
   // Load CLAUDE.md files when dropdown opens
-  const loadClaudeMdFiles = useStableCallback(async () => {
+  useEffect(() => {
+    if (isOpen && files.length === 0) {
+      loadClaudeMdFiles();
+    }
+  }, [isOpen]);
+  
+  const loadClaudeMdFiles = async () => {
     try {
       setLoading(true);
       setError(null);
@@ -55,20 +60,14 @@ export const ClaudeMemoriesDropdown: React.FC<ClaudeMemoriesDropdownProps> = ({
     } finally {
       setLoading(false);
     }
-  });
-useEffect(() => {
-    if (isOpen && files.length === 0) {
-      loadClaudeMdFiles();
-    }
-  }, [files.length, isOpen, loadClaudeMdFiles]);
-
-
+  };
+  
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
-
+  
   return (
     <div className={cn("w-full", className)}>
       <Card className="overflow-hidden">
@@ -91,7 +90,7 @@ useEffect(() => {
             <ChevronDown className="h-4 w-4 text-muted-foreground" />
           </motion.div>
         </button>
-
+        
         {/* Dropdown Content */}
         <AnimatePresence>
           {isOpen && (
@@ -156,4 +155,4 @@ useEffect(() => {
       </Card>
     </div>
   );
-};
+}; 

@@ -220,13 +220,13 @@ export const TabManager: React.FC<TabManagerProps> = ({
 
     // Priority 3: Tabs restored from localStorage - do nothing, tabs are already there
     // Priority 4: No initial data - show empty state
-  }, [createNewTab, initialProjectPath, initialSession, switchToTab, tabs]); // Empty deps - only run once on mount
+  }, []); // Empty deps - only run once on mount
 
   return (
     <TooltipProvider>
       <div className={cn("h-full flex flex-col bg-background", className)}>
         {/* 🎨 极简标签页栏 */}
-        <div className="flex-shrink-0 border-b border-border [createNewTab, initialProjectPath, initialSession, switchToTab, tabs]-background">
+        <div className="flex-shrink-0 border-b border-border bg-background">
           <div className="flex items-center h-12 px-4 gap-2">
             {/* 返回按钮 */}
             <Button

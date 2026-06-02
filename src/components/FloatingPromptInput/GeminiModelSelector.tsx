@@ -23,105 +23,41 @@ export interface GeminiModelConfig {
  * Default Gemini models used as fallback when no cached data is available.
  * Intentionally kept as the known baseline; dynamically discovered models
  * from stream init messages will merge/override these.
- * Updated: May 2026
+ * Updated: February 2026
  */
 const DEFAULT_GEMINI_MODELS: GeminiModelConfig[] = [
   {
-    id: 'auto-gemini-3',
-    name: 'Auto (Gemini 3)',
-    description: 'Recommended auto routing between Gemini 3 Pro/Flash Preview',
-    icon: <Sparkles className="h-4 w-4 text-blue-500" />,
+    id: 'gemini-3.1-pro-preview',
+    name: 'Gemini 3.1 Pro (Preview)',
+    description: '最新旗舰模型，2M 上下文（2026年2月）',
+    icon: <Star className="h-4 w-4 text-amber-500" />,
+    isDefault: false,
+  },
+  {
+    id: 'gemini-3-flash',
+    name: 'Gemini 3 Flash',
+    description: '最快模型，适合日常编码',
+    icon: <Gauge className="h-4 w-4 text-yellow-500" />,
     isDefault: true,
   },
   {
-    id: 'pro',
-    name: 'Pro',
-    description: 'Gemini CLI Pro alias for complex reasoning',
-    icon: <Star className="h-4 w-4 text-amber-500" />,
-    isDefault: false,
-  },
-  {
-    id: 'flash',
-    name: 'Flash',
-    description: 'Gemini CLI Flash alias for fast everyday coding',
-    icon: <Gauge className="h-4 w-4 text-yellow-500" />,
-    isDefault: false,
-  },
-  {
-    id: 'flash-lite',
-    name: 'Flash-Lite',
-    description: 'Gemini CLI Flash-Lite alias for lightweight tasks',
-    icon: <Gauge className="h-4 w-4 text-cyan-500" />,
-    isDefault: false,
-  },
-  {
-    id: 'gemini-3.1-pro-preview',
-    name: 'Gemini 3.1 Pro (Preview)',
-    description: 'Flagship preview model rolling out gradually',
-    icon: <Star className="h-4 w-4 text-amber-500" />,
+    id: 'gemini-3-pro',
+    name: 'Gemini 3 Pro',
+    description: '强推理和编码能力',
+    icon: <Sparkles className="h-4 w-4 text-blue-500" />,
     isDefault: false,
   },
   {
     id: 'gemini-3-pro-preview',
     name: 'Gemini 3 Pro (Preview)',
-    description: 'Gemini 3 Pro preview for complex reasoning',
+    description: 'Experimental preview version',
     icon: <FlaskConical className="h-4 w-4 text-purple-500" />,
-    isDefault: false,
-  },
-  {
-    id: 'gemini-3-flash-preview',
-    name: 'Gemini 3 Flash (Preview)',
-    description: 'Gemini 3 fast preview model',
-    icon: <Gauge className="h-4 w-4 text-yellow-500" />,
-    isDefault: false,
-  },
-  {
-    id: 'auto-gemini-2.5',
-    name: 'Auto (Gemini 2.5)',
-    description: 'Stable auto routing between Gemini 2.5 Pro and Flash',
-    icon: <Sparkles className="h-4 w-4 text-blue-500" />,
-    isDefault: false,
-  },
-  {
-    id: 'gemini-2.5-pro',
-    name: 'Gemini 2.5 Pro',
-    description: 'Stable Pro model',
-    icon: <Sparkles className="h-4 w-4 text-blue-500" />,
-    isDefault: false,
-  },
-  {
-    id: 'gemini-2.5-flash',
-    name: 'Gemini 2.5 Flash',
-    description: 'Stable Flash model',
-    icon: <Gauge className="h-4 w-4 text-yellow-500" />,
-    isDefault: false,
-  },
-  {
-    id: 'gemini-2.5-flash-lite',
-    name: 'Gemini 2.5 Flash-Lite',
-    description: 'Stable lightweight model',
-    icon: <Gauge className="h-4 w-4 text-cyan-500" />,
-    isDefault: false,
-  },
-  // Backward-compatible IDs used by existing configs/history.
-  {
-    id: 'gemini-3-flash',
-    name: 'Gemini 3 Flash',
-    description: 'Backward-compatible Gemini 3 Flash ID',
-    icon: <Gauge className="h-4 w-4 text-yellow-500" />,
-    isDefault: false,
-  },
-  {
-    id: 'gemini-3-pro',
-    name: 'Gemini 3 Pro',
-    description: 'Backward-compatible Gemini 3 Pro ID',
-    icon: <Sparkles className="h-4 w-4 text-blue-500" />,
     isDefault: false,
   },
   {
     id: 'gemini-3-flash-thinking',
     name: 'Gemini 3 Flash Thinking',
-    description: 'Backward-compatible thinking model ID',
+    description: 'Fast model with chain-of-thought',
     icon: <Brain className="h-4 w-4 text-green-500" />,
     isDefault: false,
   },
@@ -133,14 +69,8 @@ const DEFAULT_GEMINI_MODELS: GeminiModelConfig[] = [
  */
 function getGeminiModelIcon(modelId: string): React.ReactNode {
   const lower = modelId.toLowerCase();
-  if (lower.startsWith('auto') || lower === 'pro') {
-    return <Sparkles className="h-4 w-4 text-blue-500" />;
-  }
   if (lower.includes('thinking')) {
     return <Brain className="h-4 w-4 text-green-500" />;
-  }
-  if (lower.includes('flash-lite')) {
-    return <Gauge className="h-4 w-4 text-cyan-500" />;
   }
   if (lower.includes('preview') || lower.includes('exp')) {
     return <FlaskConical className="h-4 w-4 text-purple-500" />;

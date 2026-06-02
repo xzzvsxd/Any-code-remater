@@ -20,10 +20,10 @@ export interface MCPWidgetProps {
   /** MCP 工具名称 (格式: mcp__namespace__method) */
   toolName: string;
   /** 输入参数 */
-  input?: LegacyAny;
+  input?: any;
   /** 工具结果 */
   result?: {
-    content?: LegacyAny;
+    content?: any;
     is_error?: boolean;
   };
 }
@@ -108,7 +108,7 @@ export const MCPWidget: React.FC<MCPWidgetProps> = ({
   };
 
   // 处理结果内容，将转义的换行符转换为实际换行符
-  const parseResultContent = (content: LegacyAny): string => {
+  const parseResultContent = (content: any): string => {
     // 先提取文本内容
     const text = extractTextContent(content);
 

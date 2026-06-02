@@ -35,7 +35,6 @@ pub struct GeminiSessionUsage {
     pub total_cost: f64,
     pub input_tokens: u64,
     pub output_tokens: u64,
-    pub cache_read_tokens: u64,
     pub start_time: String,
     pub first_message: Option<String>,
 }
@@ -80,8 +79,6 @@ pub struct GeminiUsageStats {
     pub total_tokens: u64,
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
-    pub total_cache_creation_tokens: u64,
-    pub total_cache_read_tokens: u64,
     pub total_sessions: u64,
     pub by_model: Vec<GeminiModelUsage>,
     pub by_date: Vec<GeminiDailyUsage>,
@@ -103,37 +100,7 @@ struct ModelPricing {
 fn get_gemini_pricing(model: &str) -> ModelPricing {
     let normalized = model.to_lowercase();
 
-    // Gemini CLI Auto/Pro alias maps to Gemini 3 Pro Preview for conservative estimates.
-    if normalized.contains("auto-gemini-3") || normalized == "auto" || normalized == "pro" {
-        return ModelPricing {
-            input: 2.00,
-            output: 12.00,
-            cache_read: 0.20,
-        };
-    }
-
-    // Gemini CLI Flash-Lite alias
-    if normalized == "flash-lite" {
-        return ModelPricing {
-            input: 0.10,
-            output: 0.40,
-            cache_read: 0.01,
-        };
-    }
-
-    // Gemini CLI Flash alias / Gemini 3 Flash Preview
-    if normalized == "flash"
-        || normalized.contains("gemini-3-flash")
-        || normalized.contains("gemini_3_flash")
-    {
-        return ModelPricing {
-            input: 0.50,
-            output: 3.00,
-            cache_read: 0.05,
-        };
-    }
-
-    // Gemini 3.1 Pro Preview
+    // Gemini 3.1 Pro Preview (Latest - February 2026)
     if normalized.contains("gemini-3.1-pro")
         || normalized.contains("gemini_3_1_pro")
         || normalized.contains("3.1-pro")
@@ -145,21 +112,12 @@ fn get_gemini_pricing(model: &str) -> ModelPricing {
         };
     }
 
-    // Gemini 3 Pro Preview / legacy Gemini 3 Pro ID
+    // Gemini 3 Pro Preview
     if normalized.contains("gemini-3-pro") || normalized.contains("gemini_3_pro") {
         return ModelPricing {
             input: 2.00,
             output: 12.00,
             cache_read: 0.20,
-        };
-    }
-
-    // Auto route between Gemini 2.5 Pro and Flash; use Pro for conservative estimates.
-    if normalized.contains("auto-gemini-2.5") {
-        return ModelPricing {
-            input: 1.25,
-            output: 10.00,
-            cache_read: 0.125,
         };
     }
 
@@ -199,26 +157,30 @@ fn get_gemini_pricing(model: &str) -> ModelPricing {
         };
     }
 
-    // Default to Gemini 3 Pro Preview pricing
+    // Gemini 3 Flash (default for new sessions)
+    if normalized.contains("gemini-3-flash") || normalized.contains("gemini_3_flash") {
+        return ModelPricing {
+            input: 0.30,
+            output: 2.50,
+            cache_read: 0.03,
+        };
+    }
+
+    // Default to Gemini 2.5 Pro pricing
     ModelPricing {
-        input: 2.00,
-        output: 12.00,
-        cache_read: 0.20,
+        input: 1.25,
+        output: 10.00,
+        cache_read: 0.125,
     }
 }
-fn calculate_cost(
-    model: &str,
-    input_tokens: u64,
-    output_tokens: u64,
-    cache_read_tokens: u64,
-) -> f64 {
+
+fn calculate_cost(model: &str, input_tokens: u64, output_tokens: u64) -> f64 {
     let pricing = get_gemini_pricing(model);
 
     let input_cost = (input_tokens as f64 / 1_000_000.0) * pricing.input;
     let output_cost = (output_tokens as f64 / 1_000_000.0) * pricing.output;
-    let cache_read_cost = (cache_read_tokens as f64 / 1_000_000.0) * pricing.cache_read;
 
-    input_cost + output_cost + cache_read_cost
+    input_cost + output_cost
 }
 
 // ============================================================================
@@ -232,20 +194,13 @@ fn read_session_detail_from_path(path: &PathBuf) -> Result<GeminiSessionDetail, 
     serde_json::from_str(&content).map_err(|e| format!("Failed to parse session file: {}", e))
 }
 
-fn read_token_count(tokens: &serde_json::Map<String, serde_json::Value>, keys: &[&str]) -> u64 {
-    keys.iter()
-        .find_map(|key| tokens.get(*key).and_then(|value| value.as_u64()))
-        .unwrap_or(0)
-}
-
 fn parse_session_for_usage(path: &PathBuf, project_hash: &str) -> Option<GeminiSessionUsage> {
     let detail = read_session_detail_from_path(path).ok()?;
 
     // Extract token usage from messages
     let mut total_input_tokens: u64 = 0;
     let mut total_output_tokens: u64 = 0;
-    let mut total_cache_read_tokens: u64 = 0;
-    let mut model = "auto-gemini-3".to_string();
+    let mut model = "gemini-3-flash".to_string();
     let mut first_message: Option<String> = None;
 
     for message in &detail.messages {
@@ -256,37 +211,12 @@ fn parse_session_for_usage(path: &PathBuf, project_hash: &str) -> Option<GeminiS
 
         // Extract tokens if available
         if let Some(tokens) = message.get("tokens").and_then(|v| v.as_object()) {
-            total_input_tokens += read_token_count(
-                tokens,
-                &[
-                    "input",
-                    "input_tokens",
-                    "prompt",
-                    "promptTokenCount",
-                    "prompt_token_count",
-                ],
-            );
-            total_output_tokens += read_token_count(
-                tokens,
-                &[
-                    "output",
-                    "output_tokens",
-                    "candidates",
-                    "candidatesTokenCount",
-                    "candidates_token_count",
-                ],
-            );
-            total_cache_read_tokens += read_token_count(
-                tokens,
-                &[
-                    "cache_read",
-                    "cache_read_tokens",
-                    "cached_input_tokens",
-                    "cached",
-                    "cachedContentTokenCount",
-                    "cached_content_token_count",
-                ],
-            );
+            if let Some(input) = tokens.get("input").and_then(|v| v.as_u64()) {
+                total_input_tokens += input;
+            }
+            if let Some(output) = tokens.get("output").and_then(|v| v.as_u64()) {
+                total_output_tokens += output;
+            }
         }
 
         // Get first user message
@@ -307,12 +237,7 @@ fn parse_session_for_usage(path: &PathBuf, project_hash: &str) -> Option<GeminiS
         return None;
     }
 
-    let total_cost = calculate_cost(
-        &model,
-        total_input_tokens,
-        total_output_tokens,
-        total_cache_read_tokens,
-    );
+    let total_cost = calculate_cost(&model, total_input_tokens, total_output_tokens);
 
     Some(GeminiSessionUsage {
         session_id: detail.session_id,
@@ -322,7 +247,6 @@ fn parse_session_for_usage(path: &PathBuf, project_hash: &str) -> Option<GeminiS
         total_cost,
         input_tokens: total_input_tokens,
         output_tokens: total_output_tokens,
-        cache_read_tokens: total_cache_read_tokens,
         start_time: detail.start_time,
         first_message,
     })
@@ -439,7 +363,6 @@ fn get_gemini_usage_stats_blocking(
     let mut total_cost = 0.0;
     let mut total_input_tokens = 0u64;
     let mut total_output_tokens = 0u64;
-    let mut total_cache_read_tokens = 0u64;
 
     let mut model_stats: HashMap<String, GeminiModelUsage> = HashMap::new();
     let mut daily_stats: HashMap<String, GeminiDailyUsage> = HashMap::new();
@@ -449,7 +372,6 @@ fn get_gemini_usage_stats_blocking(
         total_cost += session.total_cost;
         total_input_tokens += session.input_tokens;
         total_output_tokens += session.output_tokens;
-        total_cache_read_tokens += session.cache_read_tokens;
 
         // Update model stats
         let model_stat = model_stats
@@ -467,7 +389,6 @@ fn get_gemini_usage_stats_blocking(
         model_stat.total_cost += session.total_cost;
         model_stat.input_tokens += session.input_tokens;
         model_stat.output_tokens += session.output_tokens;
-        model_stat.cache_read_tokens += session.cache_read_tokens;
         model_stat.total_tokens = model_stat.input_tokens + model_stat.output_tokens;
         model_stat.session_count += 1;
 
@@ -541,8 +462,6 @@ fn get_gemini_usage_stats_blocking(
         total_tokens: total_input_tokens + total_output_tokens,
         total_input_tokens,
         total_output_tokens,
-        total_cache_creation_tokens: 0,
-        total_cache_read_tokens,
         total_sessions: filtered_sessions.len() as u64,
         by_model,
         by_date,

@@ -11,7 +11,6 @@ import type { GeminiSessionInfo } from '@/types/gemini';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Clock, RefreshCw, Trash2, Play, Eye } from 'lucide-react';
-import { useStableCallback } from "@/hooks/useStableCallback";
 
 interface GeminiSessionHistoryPanelProps {
   projectPath: string;
@@ -31,7 +30,13 @@ export const GeminiSessionHistoryPanel: React.FC<GeminiSessionHistoryPanelProps>
   const [error, setError] = useState<string | null>(null);
 
   // Load sessions on mount and when projectPath changes
-  const loadSessions = useStableCallback(async () => {
+  useEffect(() => {
+    if (projectPath) {
+      loadSessions();
+    }
+  }, [projectPath]);
+
+  const loadSessions = async () => {
     if (!projectPath) return;
 
     setLoading(true);
@@ -46,13 +51,7 @@ export const GeminiSessionHistoryPanel: React.FC<GeminiSessionHistoryPanelProps>
     } finally {
       setLoading(false);
     }
-  });
-useEffect(() => {
-    if (projectPath) {
-      loadSessions();
-    }
-  }, [loadSessions, projectPath]);
-
+  };
 
   const handleResume = (sessionId: string) => {
     if (onResumeSession) {

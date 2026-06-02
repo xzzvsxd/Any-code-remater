@@ -29,7 +29,7 @@ const statusLabels: Record<string, string> = {
 /**
  * 从所有消息中构建 taskId → subject 查找表
  */
-function buildTaskSubjectLookup(messages: LegacyAny[]): Map<string, string> {
+function buildTaskSubjectLookup(messages: any[]): Map<string, string> {
   const lookup = new Map<string, string>();
   const toolUseInputs = new Map<string, string>();
 
@@ -73,8 +73,8 @@ function buildTaskSubjectLookup(messages: LegacyAny[]): Map<string, string> {
 
 export interface TaskToolCall {
   name: string;
-  input: LegacyAny;
-  result?: LegacyAny;
+  input: any;
+  result?: any;
   id?: string;
 }
 
@@ -206,18 +206,18 @@ const TaskUpdateRow: React.FC<{ taskId: string; status?: string; subject?: strin
 // ============================================================================
 
 export interface TaskCreateWidgetProps {
-  subject?: string; description?: string; activeForm?: string; result?: LegacyAny;
+  subject?: string; description?: string; activeForm?: string; result?: any;
 }
 export const TaskCreateWidget: React.FC<TaskCreateWidgetProps> = () => null;
 
 export interface TaskUpdateWidgetProps {
   taskId?: string; status?: string; subject?: string;
-  description?: string; activeForm?: string; result?: LegacyAny;
+  description?: string; activeForm?: string; result?: any;
 }
 export const TaskUpdateWidget: React.FC<TaskUpdateWidgetProps> = () => null;
 
-export interface TaskListWidgetProps { result?: LegacyAny; }
+export interface TaskListWidgetProps { result?: any; }
 export const TaskListWidget: React.FC<TaskListWidgetProps> = () => null;
 
-export interface TaskGetWidgetProps { taskId?: string; result?: LegacyAny; }
+export interface TaskGetWidgetProps { taskId?: string; result?: any; }
 export const TaskGetWidget: React.FC<TaskGetWidgetProps> = () => null;

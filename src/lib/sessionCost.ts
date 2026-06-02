@@ -34,23 +34,23 @@ interface MutableBillingEvent extends BillingEvent {
   order: number;
 }
 
-const MODEL_FALLBACK = 'claude-sonnet-4-6';
-const CODEX_MODEL_FALLBACK = 'gpt-5.5';
-const GEMINI_MODEL_FALLBACK = 'auto-gemini-3';
+const MODEL_FALLBACK = 'claude-sonnet-4.6';
+const CODEX_MODEL_FALLBACK = 'gpt-5.3-codex';
+const GEMINI_MODEL_FALLBACK = 'gemini-3-flash';
 
 /**
  * 检测消息的引擎类型
  */
 function getEngineType(message: ClaudeStreamMessage): string {
   // 检查消息上的 engine 字段
-  const engine = (message as LegacyAny).engine;
+  const engine = (message as any).engine;
   if (engine) return engine;
 
   // 检查 codexMetadata 字段（Codex 特有）
-  if ((message as LegacyAny).codexMetadata) return 'codex';
+  if ((message as any).codexMetadata) return 'codex';
 
   // 检查 geminiMetadata 字段（Gemini 特有）
-  if ((message as LegacyAny).geminiMetadata?.provider === 'gemini') return 'gemini';
+  if ((message as any).geminiMetadata?.provider === 'gemini') return 'gemini';
 
   // 默认为 Claude
   return 'claude';
@@ -66,15 +66,15 @@ export function aggregateSessionCost(messages: ClaudeStreamMessage[]): SessionCo
     // Codex: 只处理 token_count/turn.completed 等 system usage 消息（增量 usage）
     // Gemini: 只处理 result 消息（usage 快照，按 turn 计费）
     const isClaudeBillable = engine === 'claude' && message.type === 'assistant';
-    const isCodexBillable = engine === 'codex' && message.type === 'system' && (message as LegacyAny).usage;
-    const isGeminiBillable = engine === 'gemini' && message.type === 'result' && (message as LegacyAny).usage;
+    const isCodexBillable = engine === 'codex' && message.type === 'system' && (message as any).usage;
+    const isGeminiBillable = engine === 'gemini' && message.type === 'result' && (message as any).usage;
 
     // 对于 Codex 引擎，需要特殊处理以避免重复计算：
     // - thread_token_usage_updated (assistant 类型): 累计值，跳过（不应累加）
     // - turn.completed (system 类型，无 codexMetadata): 单次 turn 增量，允许（实时对话）
     // - token_count (system 类型，有 codexMetadata.codexItemType): 增量值，允许（历史加载）
     if (engine === 'codex') {
-      const codexItemType = (message as LegacyAny).codexMetadata?.codexItemType;
+      const codexItemType = (message as any).codexMetadata?.codexItemType;
 
       // 跳过 thread_token_usage_updated（累计值，不应累加到费用统计）
       if (codexItemType === 'thread_token_usage_updated') {
@@ -178,22 +178,22 @@ function calculateTotalTokens(tokens: StandardizedTokenUsage): number {
 }
 
 function getBillingKey(message: ClaudeStreamMessage, index: number): string {
-  const nestedId = (message as LegacyAny)?.message?.id;
+  const nestedId = (message as any)?.message?.id;
   if (typeof nestedId === 'string' && nestedId.trim() !== '') {
     return `message:${nestedId}`;
   }
 
-  const messageId = (message as LegacyAny).id;
+  const messageId = (message as any).id;
   if (typeof messageId === 'string' && messageId.trim() !== '') {
     return `message:${messageId}`;
   }
 
-  const uuid = (message as LegacyAny).uuid;
+  const uuid = (message as any).uuid;
   if (typeof uuid === 'string' && uuid.trim() !== '') {
     return `uuid:${uuid}`;
   }
 
-  const timestamp = (message as LegacyAny).timestamp ?? (message as LegacyAny).receivedAt;
+  const timestamp = (message as any).timestamp ?? (message as any).receivedAt;
   if (typeof timestamp === 'string' && timestamp.trim() !== '') {
     return `time:${timestamp}`;
   }
@@ -203,10 +203,10 @@ function getBillingKey(message: ClaudeStreamMessage, index: number): string {
 
 function extractTimestamp(message: ClaudeStreamMessage): { timestamp?: string; timestampMs?: number } {
   const candidates = [
-    (message as LegacyAny).timestamp,
-    (message as LegacyAny).receivedAt,
-    (message as LegacyAny).sentAt,
-    (message as LegacyAny)?.message?.timestamp,
+    (message as any).timestamp,
+    (message as any).receivedAt,
+    (message as any).sentAt,
+    (message as any)?.message?.timestamp,
   ];
 
   for (const candidate of candidates) {
@@ -228,9 +228,9 @@ function extractTimestamp(message: ClaudeStreamMessage): { timestamp?: string; t
 
 function getModelName(message: ClaudeStreamMessage, engine?: string): string {
   const candidates = [
-    (message as LegacyAny).model,
-    (message as LegacyAny)?.message?.model,
-    (message as LegacyAny)?.codexMetadata?.model, // Codex 可能在 metadata 中存储模型
+    (message as any).model,
+    (message as any)?.message?.model,
+    (message as any)?.codexMetadata?.model, // Codex 可能在 metadata 中存储模型
   ];
 
   for (const candidate of candidates) {

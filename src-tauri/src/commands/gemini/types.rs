@@ -10,6 +10,15 @@ use serde_json::Value;
 // Stream Event Types (from --output-format stream-json)
 // ============================================================================
 
+/// Raw Gemini event from JSONL stream
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RawGeminiEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    #[serde(flatten)]
+    pub data: serde_json::Value,
+}
+
 /// Gemini CLI stream event - represents a single line of JSONL output
 #[derive(Debug, Clone, Serialize)]
 pub enum GeminiStreamEvent {
@@ -267,7 +276,7 @@ pub struct GeminiExecutionOptions {
     /// User prompt
     pub prompt: String,
 
-    /// Model to use (e.g., "auto-gemini-3", "pro", "flash", "gemini-2.5-pro")
+    /// Model to use (e.g., "gemini-2.5-pro", "gemini-2.5-flash")
     pub model: Option<String>,
 
     /// Approval mode: "auto_edit" or "yolo"
@@ -292,7 +301,7 @@ impl Default for GeminiExecutionOptions {
         Self {
             project_path: String::new(),
             prompt: String::new(),
-            model: Some("auto-gemini-3".to_string()),
+            model: Some("gemini-2.5-pro".to_string()),
             approval_mode: Some("auto_edit".to_string()),
             include_directories: None,
             session_id: None,
@@ -306,6 +315,32 @@ impl Default for GeminiExecutionOptions {
 // Session Types
 // ============================================================================
 
+/// Gemini session metadata
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiSession {
+    /// Session ID
+    pub id: String,
+
+    /// Project path
+    pub project_path: String,
+
+    /// Model used
+    pub model: String,
+
+    /// Creation timestamp
+    pub created_at: u64,
+
+    /// Last updated timestamp
+    pub updated_at: u64,
+
+    /// Session status
+    pub status: String,
+
+    /// First user message
+    pub first_message: Option<String>,
+}
+
 // ============================================================================
 // Process State
 // ============================================================================
@@ -315,7 +350,6 @@ use std::sync::Arc;
 use tokio::process::Child;
 use tokio::sync::Mutex;
 
-#[cfg(target_os = "windows")]
 use crate::commands::wsl_utils;
 use crate::process::JobObject;
 

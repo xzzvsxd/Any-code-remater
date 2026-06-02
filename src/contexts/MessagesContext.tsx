@@ -3,7 +3,7 @@ import type { ClaudeStreamMessage } from "@/types/claude";
 
 export interface ToolResultEntry {
   toolUseId: string;
-  content?: LegacyAny;
+  content?: any;
   isError?: boolean;
   sourceMessage?: ClaudeStreamMessage;
 }
@@ -38,7 +38,7 @@ const buildToolResultMap = (messages: ClaudeStreamMessage[]): Map<string, ToolRe
     const content = msg.message?.content;
 
     if (Array.isArray(content)) {
-      content.forEach((item: LegacyAny) => {
+      content.forEach((item: any) => {
         if (item && item.type === "tool_result" && item.tool_use_id) {
           results.set(item.tool_use_id, {
             toolUseId: item.tool_use_id,

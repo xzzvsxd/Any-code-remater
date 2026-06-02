@@ -22,3 +22,8 @@ pub fn remove_server_from_codex(id: &str) -> Result<(), String> {
 pub fn import_from_codex() -> Result<HashMap<String, Value>, String> {
     crate::codex_mcp::read_mcp_servers_map()
 }
+
+/// 将多个服务器同步到 Codex
+pub fn sync_servers_to_codex(servers: &HashMap<String, Value>) -> Result<(), String> {
+    crate::codex_mcp::set_mcp_servers_map(servers)
+}

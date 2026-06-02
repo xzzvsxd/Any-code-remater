@@ -26,7 +26,7 @@ export interface PlanModeWidgetProps {
   plan?: string;
   /** 工具执行结果 */
   result?: {
-    content?: LegacyAny;
+    content?: any;
     is_error?: boolean;
   };
 }

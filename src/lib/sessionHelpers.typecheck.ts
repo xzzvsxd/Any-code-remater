@@ -51,22 +51,3 @@ const upstreamErrorContext = getConversationContext([
 expect(upstreamErrorContext.some(line => line.includes('下一轮正常问题')), 'normal user context should remain available');
 expect(!upstreamErrorContext.some(line => line.includes('Upstream failed')), 'upstream errors must not enter AI context');
 expect(!upstreamErrorContext.some(line => line.includes('UI-only result fallback')), 'excludeFromAiContext must override execution result inclusion');
-
-const upstreamTruncatedAssistantContext = getConversationContext([
-  {
-    type: 'assistant',
-    message: {
-      role: 'assistant',
-      content: [{
-        type: 'text',
-        text: '现在我把两个问题都摸清了，处理方案明确。\n先修问题2，语� [content truncated to fit context limit]\n这段是截断后残留',
-      }],
-    },
-  },
-] as ClaudeStreamMessage[]);
-
-expect(upstreamTruncatedAssistantContext.length === 1, 'truncated upstream assistant text should keep useful prefix');
-expect(upstreamTruncatedAssistantContext[0].includes('处理方案明确'), 'useful prefix before upstream truncation marker should remain');
-expect(!upstreamTruncatedAssistantContext[0].includes('[content truncated to fit context limit]'), 'upstream truncation marker must not pollute next AI context');
-expect(!upstreamTruncatedAssistantContext[0].includes('这段是截断后残留'), 'text after upstream truncation marker must be discarded');
-expect(!upstreamTruncatedAssistantContext[0].endsWith('�'), 'dangling replacement char before marker should be trimmed');

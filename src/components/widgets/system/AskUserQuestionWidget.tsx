@@ -42,7 +42,7 @@ export interface AskUserQuestionWidgetProps {
   answers?: Record<string, string | string[]>;
   /** 工具执行结果 */
   result?: {
-    content?: LegacyAny;
+    content?: any;
     is_error?: boolean;
   };
 }

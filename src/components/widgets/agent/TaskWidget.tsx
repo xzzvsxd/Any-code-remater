@@ -15,7 +15,7 @@ export interface TaskWidgetProps {
   /** 任务提示词 */
   prompt?: string;
   /** 工具结果 */
-  result?: LegacyAny;
+  result?: any;
   /** 子代理类型 */
   subagentType?: string;
 }

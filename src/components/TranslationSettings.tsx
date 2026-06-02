@@ -10,7 +10,6 @@ import { api, type TranslationConfig, type TranslationCacheStats } from '@/lib/a
 import { translationMiddleware } from '@/lib/translationMiddleware';
 import { Loader2, RefreshCw, Settings, Languages, Database, AlertTriangle } from 'lucide-react';
 import { useTranslation } from '@/hooks/useTranslation';
-import { useStableCallback } from "@/hooks/useStableCallback";
 
 interface TranslationSettingsProps {
   onClose?: () => void;
@@ -28,7 +27,11 @@ export const TranslationSettings: React.FC<TranslationSettingsProps> = ({ onClos
   const [success, setSuccess] = useState<string | null>(null);
 
   // 加载初始数据
-  const loadData = useStableCallback(async () => {
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
     try {
       setLoading(true);
       setError(null);
@@ -46,11 +49,7 @@ export const TranslationSettings: React.FC<TranslationSettingsProps> = ({ onClos
     } finally {
       setLoading(false);
     }
-  });
-useEffect(() => {
-    loadData();
-  }, [loadData]);
-
+  };
 
   const handleSave = async () => {
     if (!config) return;
@@ -116,7 +115,7 @@ useEffect(() => {
     }
   };
 
-  const handleConfigChange = (key: keyof TranslationConfig, value: LegacyAny) => {
+  const handleConfigChange = (key: keyof TranslationConfig, value: any) => {
     if (!config) return;
     setConfig({ ...config, [key]: value });
   };

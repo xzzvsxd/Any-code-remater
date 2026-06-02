@@ -2,7 +2,7 @@
  * HooksEditor component for managing Claude Code hooks configuration
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Plus, 
@@ -52,7 +52,6 @@ import { cn } from '@/lib/utils';
 import { HooksManager } from '@/lib/hooksManager';
 import { api } from '@/lib/api';
 import { useTranslation } from '@/hooks/useTranslation';
-import { useStableCallback } from "@/hooks/useStableCallback";
 import {
   HooksConfiguration,
   HookEvent,
@@ -168,10 +167,7 @@ export const HooksEditor: React.FC<HooksEditorProps> = ({
   // All events use the same HookMatcher[] format according to Claude Code docs
   // PreToolUse/PostToolUse typically use matcher for tool names
   // Other events can use matcher for event-specific conditions (e.g., Stop matcher can be for stop reasons)
-  const allEvents = useMemo(
-    () => ['PreToolUse', 'PostToolUse', 'Notification', 'UserPromptSubmit', 'Stop', 'SubagentStop', 'PreCompact', 'SessionStart', 'SessionEnd'] as const,
-    []
-  );
+  const allEvents = ['PreToolUse', 'PostToolUse', 'Notification', 'UserPromptSubmit', 'Stop', 'SubagentStop', 'PreCompact', 'SessionStart', 'SessionEnd'] as const;
   
   // Convert hooks to editable format with IDs - all events use EditableHookMatcher[]
   const [editableHooks, setEditableHooks] = useState<EditableHooksState>({
@@ -250,7 +246,7 @@ export const HooksEditor: React.FC<HooksEditorProps> = ({
     }
 
     setEditableHooks(result);
-  }, [allEvents, hooks]);
+  }, [hooks]);
 
   // Track changes when editable hooks change (but don't save automatically)
   useEffect(() => {
@@ -284,7 +280,7 @@ export const HooksEditor: React.FC<HooksEditorProps> = ({
       
       onChange(hasUnsavedChanges, getHooks);
     }
-  }, [hasUnsavedChanges, editableHooks, onChange, allEvents]);
+  }, [hasUnsavedChanges, editableHooks, onChange]);
 
   // Save function to be called explicitly
   const handleSave = async () => {
@@ -375,7 +371,7 @@ export const HooksEditor: React.FC<HooksEditorProps> = ({
     setShowTemplateDialog(false);
   };
 
-  const validateHooks = useStableCallback(async () => {
+  const validateHooks = async () => {
     if (!hooks) {
       setValidationErrors([]);
       setValidationWarnings([]);
@@ -385,11 +381,11 @@ export const HooksEditor: React.FC<HooksEditorProps> = ({
     const result = await HooksManager.validateConfig(hooks);
     setValidationErrors(result.errors.map(e => e.message));
     setValidationWarnings(result.warnings.map(w => `${w.message} in command: ${(w.command || '').substring(0, 50)}...`));
-  });
+  };
 
   useEffect(() => {
     validateHooks();
-  }, [hooks, validateHooks]);
+  }, [hooks]);
 
   const addCommand = (event: HookEvent, matcherId: string) => {
     const newCommand: EditableHookCommand = {

@@ -48,8 +48,8 @@ export const AIMessage: React.FC<AIMessageProps> = ({
   } = getRenderableAiContent(message);
 
   // Detect engine type for avatar styling
-  const isCodexMessage = (message as LegacyAny).engine === 'codex';
-  const isGeminiMessage = (message as LegacyAny).geminiMetadata?.provider === 'gemini' || (message as LegacyAny).engine === 'gemini';
+  const isCodexMessage = (message as any).engine === 'codex';
+  const isGeminiMessage = (message as any).geminiMetadata?.provider === 'gemini' || (message as any).engine === 'gemini';
 
   // 打字机效果只在流式输出时启用
   // isStreaming=true 表示：当前是最后一条消息 && 会话正在进行中
@@ -80,7 +80,7 @@ export const AIMessage: React.FC<AIMessageProps> = ({
   const Icon = isGeminiMessage ? GeminiIcon : isCodexMessage ? CodexIcon : ClaudeIcon;
 
   // 构建 tooltip 内容
-  const formattedTime = formatTimestamp((message as LegacyAny).receivedAt ?? (message as LegacyAny).timestamp);
+  const formattedTime = formatTimestamp((message as any).receivedAt ?? (message as any).timestamp);
   const tooltipParts: string[] = [];
   if (formattedTime) tooltipParts.push(formattedTime);
   if (tokenStats) tooltipParts.push(tokenStats);

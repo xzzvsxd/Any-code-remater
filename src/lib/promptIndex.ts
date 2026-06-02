@@ -48,8 +48,8 @@ export function isTrackedUserPrompt(message: ClaudeStreamMessage | unknown): boo
   const candidate = message as ClaudeStreamMessage | undefined;
   if (candidate?.type !== 'user') return false;
 
-  if ((candidate as LegacyAny).isSidechain === true) return false;
-  if ((candidate as LegacyAny).parent_tool_use_id != null) return false;
+  if ((candidate as any).isSidechain === true) return false;
+  if ((candidate as any).parent_tool_use_id != null) return false;
 
   const { text, hasTextContent, hasToolResult } = extractTrackedPromptText(candidate);
 

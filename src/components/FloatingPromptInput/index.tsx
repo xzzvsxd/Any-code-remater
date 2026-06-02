@@ -24,7 +24,6 @@ import { InputArea } from "./InputArea";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { ControlBar } from "./ControlBar";
 import { ExpandedModal } from "./ExpandedModal";
-import { useStableCallback } from "@/hooks/useStableCallback";
 
 // Re-export types for external use
 export type { FloatingPromptInputRef, FloatingPromptInputProps, ThinkingMode, ModelType, ExecutionStatusInfo } from "./types";
@@ -68,10 +67,6 @@ const FloatingPromptInputInner = (
     if (!modelStr) return null;
 
     const lowerModel = modelStr.toLowerCase();
-    if (lowerModel === "default") return "default";
-    if (lowerModel === "best") return "best";
-    if (lowerModel === "opusplan") return "opusplan";
-    if (lowerModel === "haiku" || lowerModel.includes("haiku")) return "haiku";
     if (lowerModel.includes("opus") && lowerModel.includes("1m")) return "opus1m";
     if (lowerModel.includes("opus")) return "opus";
     if (lowerModel.includes("sonnet") && lowerModel.includes("1m")) return "sonnet1m";
@@ -104,9 +99,6 @@ const FloatingPromptInputInner = (
     selectedModel: getInitialModel(),
     executionEngineConfig: externalEngineConfig || initialState.executionEngineConfig,
   });
-  const lastExternalEngineConfigJsonRef = useRef<string | null>(
-    externalEngineConfig ? JSON.stringify(externalEngineConfig) : null
-  );
 
   // 草稿持久化 Hook - 确保输入内容在页面切换后不丢失
   const { saveDraft, clearDraft } = useDraftPersistence({
@@ -130,13 +122,13 @@ const FloatingPromptInputInner = (
   }, []);
 
   // Initialize thinking mode from settings.json (source of truth)
-  // Prefer current CLAUDE_CODE_EFFORT_LEVEL, with legacy env fallback.
+  // Claude 4.6: Read CLAUDE_CODE_THINKING_EFFORT from settings.json env
   useEffect(() => {
     const initThinkingMode = async () => {
       try {
         const settings = await api.getClaudeSettings();
-        const effort = settings?.env?.CLAUDE_CODE_EFFORT_LEVEL ?? settings?.env?.CLAUDE_CODE_THINKING_EFFORT;
-        if (effort && ['low', 'medium', 'high', 'xhigh', 'max'].includes(effort)) {
+        const effort = settings?.env?.CLAUDE_CODE_THINKING_EFFORT;
+        if (effort && ['low', 'medium', 'high', 'max'].includes(effort)) {
           dispatch({ type: "SET_THINKING_MODE", payload: { mode: 'adaptive', effort: effort as ThinkingEffort } });
           localStorage.setItem('thinking_mode', 'adaptive');
           localStorage.setItem('thinking_effort', effort);
@@ -173,18 +165,10 @@ const FloatingPromptInputInner = (
 
   // Sync external config changes
   useEffect(() => {
-    if (!externalEngineConfig) return;
-
-    const externalJson = JSON.stringify(externalEngineConfig);
-    if (externalJson === lastExternalEngineConfigJsonRef.current) {
-      return;
-    }
-
-    lastExternalEngineConfigJsonRef.current = externalJson;
-    if (externalJson !== JSON.stringify(state.executionEngineConfig)) {
+    if (externalEngineConfig && externalEngineConfig.engine !== state.executionEngineConfig.engine) {
       dispatch({ type: "SET_EXECUTION_ENGINE_CONFIG", payload: externalEngineConfig });
     }
-  }, [externalEngineConfig, state.executionEngineConfig]);
+  }, [externalEngineConfig]);
 
   // Persist execution engine config
   useEffect(() => {
@@ -399,17 +383,8 @@ const FloatingPromptInputInner = (
                              envVars.ANTHROPIC_DEFAULT_OPUS_MODEL;
 
           if (customModel && typeof customModel === 'string') {
-            // Check if it's a built-in Claude Code model ID/alias.
-            const isBuiltInModel = [
-              'default',
-              'best',
-              'sonnet',
-              'opus',
-              'sonnet1m',
-              'opus1m',
-              'haiku',
-              'opusplan',
-            ].includes(customModel.toLowerCase());
+            // Check if it's a built-in model ID (sonnet, opus, sonnet1m)
+            const isBuiltInModel = ['sonnet', 'opus', 'sonnet1m', 'opus1m'].includes(customModel.toLowerCase());
 
             if (!isBuiltInModel) {
               // This is a custom model - add it to the list
@@ -444,10 +419,7 @@ const FloatingPromptInputInner = (
   }));
 
   // Toggle thinking mode - cycle through: off → high → max → low → medium → off
-  const EFFORT_CYCLE = useMemo<(ThinkingEffort | 'off')[]>(
-    () => ['off', 'high', 'xhigh', 'max', 'low', 'medium'],
-    []
-  );
+  const EFFORT_CYCLE: (ThinkingEffort | 'off')[] = ['off', 'high', 'max', 'low', 'medium'];
 
   const handleToggleThinkingMode = useCallback(async () => {
     const currentMode = state.selectedThinkingMode;
@@ -486,7 +458,7 @@ const FloatingPromptInputInner = (
         // Ignore localStorage errors
       }
     }
-  }, [state.selectedThinkingMode, state.selectedThinkingEffort, EFFORT_CYCLE]);
+  }, [state.selectedThinkingMode, state.selectedThinkingEffort]);
 
   // Focus management
   useEffect(() => {
@@ -498,7 +470,7 @@ const FloatingPromptInputInner = (
   }, [state.isExpanded]);
 
   // Auto-resize textarea
-  const adjustTextareaHeight = useStableCallback((textarea: HTMLTextAreaElement | null) => {
+  const adjustTextareaHeight = (textarea: HTMLTextAreaElement | null) => {
     if (!textarea) return;
     textarea.style.height = 'auto';
     const maxHeight = state.isExpanded ? 600 : 300;
@@ -507,12 +479,12 @@ const FloatingPromptInputInner = (
     if (textarea.scrollHeight > maxHeight) {
       textarea.scrollTop = textarea.scrollHeight;
     }
-  });
+  };
 
   useEffect(() => {
     const textarea = state.isExpanded ? expandedTextareaRef.current : textareaRef.current;
     adjustTextareaHeight(textarea);
-  }, [state.prompt, state.isExpanded, adjustTextareaHeight]);
+  }, [state.prompt, state.isExpanded]);
 
   // Tab key listener - 🆕 只在没有建议时切换 thinking mode
   useEffect(() => {
@@ -629,7 +601,7 @@ const FloatingPromptInputInner = (
       // 4. compositionend 后的冷却期（某些输入法需要较长时间）
       const timeSinceCompositionEnd = Date.now() - compositionEndTimeRef.current;
       const inCooldown = timeSinceCompositionEnd < 200; // 200ms 冷却期（增加以兼容更多输入法）
-      const isIMEProcessing = e.nativeEvent.keyCode === 229 || (e.nativeEvent as LegacyAny).which === 229;
+      const isIMEProcessing = e.nativeEvent.keyCode === 229 || (e.nativeEvent as any).which === 229;
 
       if (!isComposing && !e.nativeEvent.isComposing && !isIMEProcessing && !inCooldown) {
         e.preventDefault();

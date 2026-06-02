@@ -13,7 +13,7 @@ import { checkSyntaxHighlightSupport } from "@/lib/syntaxHighlightCompat";
 interface CodeBlockRendererProps {
   language: string;
   code: string;
-  syntaxTheme: LegacyAny;
+  syntaxTheme: any;
 }
 
 /**
@@ -36,8 +36,8 @@ const PlainTextCodeBlock: React.FC<PlainTextCodeBlockProps> = ({
     copyState === 'success' ? '已复制!' : copyState === 'error' ? '复制失败' : '复制';
 
   return (
-    <div className="command-surface my-3 overflow-hidden">
-      <div className="flex items-center justify-between border-b border-[var(--surface-hairline-soft)] px-3 py-1.5 bg-[var(--surface-panel-muted)]">
+    <div className="my-3 rounded-lg overflow-hidden bg-muted/20 border border-border/50">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-muted/30">
         <span className="text-xs font-mono text-muted-foreground">
           {language} (Plain Text - 浏览器不支持语法高亮)
         </span>
@@ -45,8 +45,8 @@ const PlainTextCodeBlock: React.FC<PlainTextCodeBlockProps> = ({
           onClick={onCopy}
           className={cn(
             "text-xs px-2 py-0.5 rounded-md transition-colors",
-            "bg-[var(--surface-panel)] hover:bg-accent",
-            copyState === 'success' && "text-success bg-success/10",
+            "bg-background/50 hover:bg-background hover:shadow-sm",
+            copyState === 'success' && "text-emerald-600 bg-emerald-500/10",
             copyState === 'error' && "text-destructive bg-destructive/10"
           )}
         >
@@ -113,8 +113,8 @@ const CodeBlockRenderer: React.FC<CodeBlockRendererProps> = ({ language, code, s
 
   // 渲染语法高亮代码块
   return (
-    <div className="command-surface relative group my-3 overflow-hidden">
-      <div className="flex items-center justify-between border-b border-[var(--surface-hairline-soft)] px-3 py-1.5 bg-[var(--surface-panel-muted)] backdrop-blur-sm">
+    <div className="relative group my-3 rounded-lg overflow-hidden bg-muted/20">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-muted/30 backdrop-blur-sm">
         <div className="flex items-center gap-2">
           <span className="text-xs font-mono text-muted-foreground opacity-70">
             {language}
@@ -124,8 +124,8 @@ const CodeBlockRenderer: React.FC<CodeBlockRendererProps> = ({ language, code, s
           onClick={handleCopy}
           className={cn(
             "text-xs px-2 py-0.5 rounded-md transition-all duration-200 opacity-0 group-hover:opacity-100",
-            "bg-[var(--surface-panel)] hover:bg-accent",
-            copyState === 'success' && "text-success bg-success/10",
+            "bg-background/50 hover:bg-background hover:shadow-sm",
+            copyState === 'success' && "text-emerald-600 bg-emerald-500/10",
             copyState === 'error' && "text-destructive bg-destructive/10"
           )}
         >
@@ -142,9 +142,9 @@ const CodeBlockRenderer: React.FC<CodeBlockRendererProps> = ({ language, code, s
           wrapLines={true}
           customStyle={{
             margin: 0,
-            padding: '0.9rem',
+            padding: '0.75rem',
             background: 'transparent',
-            lineHeight: '1.55',
+            lineHeight: '1.5',
             fontSize: '0.8rem',
           }}
           lineNumberStyle={{
@@ -227,7 +227,7 @@ const MessageContentComponent: React.FC<MessageContentProps> = ({
     <div
       className={cn(
         "prose prose-sm dark:prose-invert max-w-none break-words",
-        "prose-headings:font-semibold prose-headings:tracking-normal",
+        "prose-headings:font-semibold prose-headings:tracking-tight",
         "prose-p:leading-relaxed prose-p:text-foreground/90",
         "prose-a:text-primary prose-a:no-underline prose-a:border-b prose-a:border-primary/30 hover:prose-a:border-primary prose-a:transition-colors",
         "prose-blockquote:border-l-4 prose-blockquote:border-primary/20 prose-blockquote:bg-muted/30 prose-blockquote:py-1 prose-blockquote:px-4 prose-blockquote:rounded-r-lg prose-blockquote:not-italic",
@@ -268,7 +268,7 @@ const MessageContentComponent: React.FC<MessageContentProps> = ({
           remarkPlugins={[remarkGfm]}
           components={{
             // 代码块渲染
-            code(props: LegacyAny) {
+            code(props: any) {
               const { inline, className, children, ...rest } = props;
               const match = /language-(\w+)/.exec(className || '');
               const language = match ? match[1] : '';
@@ -293,8 +293,8 @@ const MessageContentComponent: React.FC<MessageContentProps> = ({
               return (
                 <ErrorBoundary
                   fallback={() => (
-                    <div className="command-surface my-3 overflow-hidden">
-                      <div className="flex items-center justify-between border-b border-[var(--surface-hairline-soft)] px-3 py-1.5 bg-[var(--surface-panel-muted)]">
+                    <div className="my-3 rounded-lg overflow-hidden bg-muted/20 border border-border/50">
+                      <div className="flex items-center justify-between px-3 py-1.5 bg-muted/30">
                         <span className="text-xs font-mono text-muted-foreground">{language} (Plain Text)</span>
                       </div>
                       <pre className="p-3 text-xs font-mono overflow-auto text-foreground/80 whitespace-pre-wrap break-words" style={{ overflowWrap: 'anywhere' }}>
@@ -348,7 +348,7 @@ const MessageContentComponent: React.FC<MessageContentProps> = ({
 
           th({ node, children, ...props }) {
             return (
-              <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-normal" {...props}>
+              <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider" {...props}>
                 {children}
               </th>
             );

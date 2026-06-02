@@ -26,10 +26,10 @@ export interface ExtendedClaudeStreamMessage {
   type?: string;
   message?: {
     usage?: RawTokenUsage;
-    [key: string]: LegacyAny;
+    [key: string]: any;
   };
   usage?: RawTokenUsage;
-  [key: string]: LegacyAny;
+  [key: string]: any;
 }
 
 /**
@@ -158,8 +158,8 @@ export function normalizeRawUsage(rawUsage: RawTokenUsage | null | undefined): S
     cache_creation_tokens = rawUsage.cache_write_tokens;
   }
   // 优先级2：如果没有总和字段，才从cache_creation对象计算
-  else if ((rawUsage as LegacyAny).cache_creation) {
-    const cacheCreation = (rawUsage as LegacyAny).cache_creation;
+  else if ((rawUsage as any).cache_creation) {
+    const cacheCreation = (rawUsage as any).cache_creation;
     if (cacheCreation.ephemeral_5m_input_tokens) {
       cache_creation_tokens += cacheCreation.ephemeral_5m_input_tokens;
     }
@@ -212,7 +212,7 @@ export function extractMessageTokens(message: ClaudeStreamMessage | ExtendedClau
   // 尝试从不同位置获取usage数据（基于代码分析的优先级）
   const primaryUsage = (message as ExtendedClaudeStreamMessage).message?.usage; // 优先级1：message.usage (主要使用)
   const secondaryUsage = message.usage; // 优先级2：顶层usage
-  const codexUsage = (message as LegacyAny).codexMetadata?.usage; // 优先级3：Codex metadata usage
+  const codexUsage = (message as any).codexMetadata?.usage; // 优先级3：Codex metadata usage
   const rawUsage: RawTokenUsage = primaryUsage || secondaryUsage || codexUsage || {};
 
   // 委托给核心标准化函数

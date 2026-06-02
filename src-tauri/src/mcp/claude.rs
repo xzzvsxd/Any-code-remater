@@ -39,3 +39,8 @@ pub fn import_from_claude() -> Result<HashMap<String, Value>, String> {
     // 验证会在同步时进行
     Ok(servers)
 }
+
+/// 将多个服务器同步到 Claude
+pub fn sync_servers_to_claude(servers: &HashMap<String, Value>) -> Result<(), String> {
+    crate::claude_mcp::set_mcp_servers_map(servers)
+}

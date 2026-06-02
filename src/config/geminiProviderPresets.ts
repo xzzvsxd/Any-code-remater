@@ -48,7 +48,7 @@ export interface GeminiProviderConfig {
  */
 export interface CurrentGeminiConfig {
   env: Record<string, string>;  // ~/.gemini/.env 内容
-  settings: Record<string, LegacyAny>;  // ~/.gemini/settings.json 内容
+  settings: Record<string, any>;  // ~/.gemini/settings.json 内容
   apiKey?: string;  // 从 env 中提取的 API Key
   baseUrl?: string;  // 从 env 中提取的 Base URL
   model?: string;  // 从 env 中提取的模型
@@ -61,7 +61,7 @@ export interface CurrentGeminiConfig {
 export function generateThirdPartyEnv(
   apiKey: string,
   baseUrl: string,
-  model = "auto-gemini-3"
+  model = "gemini-3-pro-preview"
 ): Record<string, string> {
   return {
     GEMINI_API_KEY: apiKey || "",
@@ -88,7 +88,7 @@ export function extractBaseUrlFromEnv(env: Record<string, string>): string {
  * 从环境变量中提取模型
  */
 export function extractModelFromEnv(env: Record<string, string>): string {
-  return env.GEMINI_MODEL || "auto-gemini-3";
+  return env.GEMINI_MODEL || "gemini-3-pro-preview";
 }
 
 /**
@@ -111,9 +111,9 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     websiteUrl: "",
     env: {
       GOOGLE_GEMINI_BASE_URL: "",
-      GEMINI_MODEL: "auto-gemini-3",
+      GEMINI_MODEL: "gemini-3-pro-preview",
     },
-    model: "auto-gemini-3",
+    model: "gemini-3-pro-preview",
     description: "provider.geminiPresets.customDesc",
     category: "custom",
     isCustomTemplate: true,

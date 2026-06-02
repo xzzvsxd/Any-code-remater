@@ -4,7 +4,7 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Workbench design system
+ * 🎨 MODERN DESIGN SYSTEM - Material 3 Inspired
  *
  * This file now serves as the main entry point for styles,
  * importing modularized CSS files for better maintainability.
@@ -14,6 +14,19 @@
 @import "./styles/typography.css";
 @import "./styles/animations.css";
 @import "./styles/components.css";
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+html,
+body {
+  overscroll-behavior: none;
+}
 
 /* ========================================
    🍎 macOS 兼容性修复

@@ -64,7 +64,7 @@ export default function CodexProviderForm({
   // Codex 特有字段
   const [apiKey, setApiKey] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
-  const [modelName, setModelName] = useState('gpt-5.5');
+  const [modelName, setModelName] = useState('gpt-5-codex');
 
   // 原始配置（用于高级编辑）
   const [authJson, setAuthJson] = useState('{}');
@@ -83,7 +83,7 @@ export default function CodexProviderForm({
     if (initialData) {
       setApiKey(extractApiKeyFromAuth(initialData.auth));
       setBaseUrl(extractBaseUrlFromConfig(initialData.config));
-      setModelName(extractModelFromConfig(initialData.config) || 'gpt-5.5');
+      setModelName(extractModelFromConfig(initialData.config) || 'gpt-5-codex');
       setAuthJson(JSON.stringify(initialData.auth, null, 2));
       setConfigToml(initialData.config);
     }
@@ -100,7 +100,7 @@ export default function CodexProviderForm({
       setCategory(preset.category || 'custom');
       setApiKey(''); // 清空 API Key，用户需要填写
       setBaseUrl(extractBaseUrlFromConfig(preset.config));
-      setModelName(extractModelFromConfig(preset.config) || 'gpt-5.5');
+      setModelName(extractModelFromConfig(preset.config) || 'gpt-5-codex');
       setAuthJson(JSON.stringify(preset.auth, null, 2));
       setConfigToml(preset.config);
     }
@@ -171,7 +171,7 @@ export default function CodexProviderForm({
       setLoading(true);
 
       // 构建最终的 auth 和 config
-      let finalAuth: Record<string, LegacyAny>;
+      let finalAuth: Record<string, any>;
       let finalConfig: string;
 
       try {
@@ -377,7 +377,7 @@ export default function CodexProviderForm({
                 id="modelName"
                 value={modelName}
                 onChange={(e) => handleModelChange(e.target.value)}
-                placeholder="gpt-5.5"
+                placeholder="gpt-5-codex"
                 disabled={loading}
               />
               <p className="text-xs text-muted-foreground">
@@ -431,7 +431,7 @@ export default function CodexProviderForm({
                   id="configToml"
                   value={configToml}
                   onChange={(e) => setConfigToml(e.target.value)}
-                  placeholder='model_provider = "custom"&#10;model = "gpt-5.5"'
+                  placeholder='model_provider = "custom"&#10;model = "gpt-5-codex"'
                   className="font-mono text-xs h-48"
                   disabled={loading}
                 />
