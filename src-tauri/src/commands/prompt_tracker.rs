@@ -287,6 +287,211 @@ fn claude_rewind_capabilities_for_prompt(
     }
 }
 
+/// 在会话 JSONL 的行集合中，定位「第 prompt_index 个真实用户提示词」所在的行号。
+///
+/// 这是 revert（原地截断）与 branch（复制到新文件）共用的核心定位逻辑（DRY）：
+/// 跳过 summary / file-history-snapshot / sidechain / 子代理 / 仅 tool_result /
+/// 空内容 / Warmup / Skills 消息，只对「真实用户输入」计数。
+///
+/// 返回该行号（含义为：保留 lines[0..truncate_at_line]，删除该行及之后）。
+/// 找不到目标时返回 Err（绝不返回 0 以免误清空）。
+fn find_truncate_line(lines: &[&str], prompt_index: usize) -> Result<usize> {
+    let mut user_message_count = 0;
+
+    for (line_index, line) in lines.iter().enumerate() {
+        let msg = match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+
+        let msg_type = msg.get("type").and_then(|t| t.as_str());
+
+        if msg_type == Some("summary") || msg_type == Some("file-history-snapshot") {
+            continue;
+        }
+        if msg_type != Some("user") {
+            continue;
+        }
+
+        let is_sidechain = msg
+            .get("isSidechain")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if is_sidechain {
+            continue;
+        }
+
+        let has_parent_tool_use_id = msg
+            .get("parent_tool_use_id")
+            .map(|value| !value.is_null())
+            .unwrap_or(false);
+        if has_parent_tool_use_id {
+            continue;
+        }
+
+        // 提取文本内容（支持字符串与数组两种格式）
+        let content_value = msg.get("message").and_then(|m| m.get("content"));
+        let mut extracted_text = String::new();
+        let mut has_text_content = false;
+        let mut has_tool_result = false;
+
+        if let Some(content) = content_value {
+            if let Some(text) = content.as_str() {
+                extracted_text = text.to_string();
+                has_text_content = !text.trim().is_empty();
+            } else if let Some(arr) = content.as_array() {
+                for item in arr {
+                    if let Some(item_type) = item.get("type").and_then(|t| t.as_str()) {
+                        if item_type == "text" {
+                            if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                                extracted_text.push_str(text);
+                                has_text_content = true;
+                            }
+                        } else if item_type == "tool_result" {
+                            has_tool_result = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if has_tool_result && !has_text_content {
+            continue;
+        }
+        if !has_text_content {
+            continue;
+        }
+
+        let is_warmup = extracted_text.contains("Warmup");
+        let is_skill_message = extracted_text.contains("<command-name>")
+            || extracted_text.contains("Launching skill:")
+            || extracted_text.contains("skill is running");
+        if is_warmup || is_skill_message {
+            continue;
+        }
+
+        // 真实用户消息
+        if user_message_count == prompt_index {
+            return Ok(line_index);
+        }
+        user_message_count += 1;
+    }
+
+    if user_message_count == 0 {
+        Err(anyhow::anyhow!(
+            "Prompt #{} not found in session (no user messages found)",
+            prompt_index
+        ))
+    } else {
+        Err(anyhow::anyhow!(
+            "Prompt #{} not found in session (only {} user messages found)",
+            prompt_index,
+            user_message_count
+        ))
+    }
+}
+
+/// 从某条用户提示词分叉出一个新的 Claude 会话（真分支）。
+///
+/// 与 revert 的区别：revert 原地截断销毁后续历史；branch **保留原会话不动**，
+/// 把原会话到 prompt_index 之前的历史复制成一个新 session_id 的文件，
+/// 使两条对话路径都能独立 resume / 切换。
+///
+/// 返回新生成的 session_id（新文件已写入同一 project 目录，会被会话列表自动扫描到）。
+#[tauri::command]
+pub async fn branch_session_at_prompt(
+    session_id: String,
+    project_id: String,
+    prompt_index: usize,
+) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        branch_session_at_prompt_blocking(&session_id, &project_id, prompt_index)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("branch_session_at_prompt task failed: {}", e))?
+}
+
+fn branch_session_at_prompt_blocking(
+    session_id: &str,
+    project_id: &str,
+    prompt_index: usize,
+) -> Result<String> {
+    let claude_dir = get_claude_dir().context("Failed to get claude dir")?;
+    let project_dir = claude_dir.join("projects").join(project_id);
+    let session_path = project_dir.join(format!("{}.jsonl", session_id));
+
+    if !session_path.exists() {
+        return Err(anyhow::anyhow!(
+            "Source session file not found: {}",
+            session_path.display()
+        ));
+    }
+
+    let content = fs::read_to_string(&session_path).context("Failed to read session file")?;
+    let lines: Vec<&str> = content.lines().collect();
+
+    // 复用与 revert 相同的定位逻辑：第 prompt_index 个真实用户提示词所在行即分叉点。
+    // 分支包含 lines[0..truncate_at_line]（即该提示词之前的全部历史）。
+    let truncate_at_line = find_truncate_line(&lines, prompt_index)?;
+
+    let new_session_id = uuid::Uuid::new_v4().to_string();
+
+    // 改写每行的 sessionId 为新 ID，使新文件成为自洽的会话，最贴近 Claude CLI 原生格式，
+    // 让 `claude --resume <new_session_id>` 能正确续接。保留 uuid/parentUuid 消息链不变。
+    let mut out_lines: Vec<String> = Vec::with_capacity(truncate_at_line);
+    for line in lines.iter().take(truncate_at_line) {
+        match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(mut value) => {
+                if value.get("sessionId").is_some() {
+                    value["sessionId"] = serde_json::Value::String(new_session_id.clone());
+                }
+                out_lines.push(serde_json::to_string(&value).unwrap_or_else(|_| line.to_string()));
+            }
+            // 非 JSON 行（理论上不应出现）原样保留
+            Err(_) => out_lines.push(line.to_string()),
+        }
+    }
+
+    let new_session_path = project_dir.join(format!("{}.jsonl", new_session_id));
+    let new_content = if out_lines.is_empty() {
+        String::new()
+    } else {
+        out_lines.join("\n") + "\n"
+    };
+    fs::write(&new_session_path, new_content)
+        .context("Failed to write branched session file")?;
+
+    // 复制并过滤 git 记录：只保留分叉点之前（index < prompt_index）的记录。
+    let mut records = load_git_records(session_id, project_id).unwrap_or_default();
+    records.retain(|record_index, _| keep_git_record_before_rewind(*record_index, prompt_index));
+    if !records.is_empty() {
+        if let Err(e) = save_git_records(&new_session_id, project_id, &records) {
+            log::warn!("[Branch] Failed to copy git records to branch: {}", e);
+        }
+    }
+
+    // 复制 todo（若存在），让新分支保留任务上下文。
+    let todos_dir = claude_dir.join("todos");
+    let todo_src = todos_dir.join(format!("{}.json", session_id));
+    if todo_src.exists() {
+        let todo_dst = todos_dir.join(format!("{}.json", new_session_id));
+        if let Err(e) = fs::copy(&todo_src, &todo_dst) {
+            log::warn!("[Branch] Failed to copy todo data to branch: {}", e);
+        }
+    }
+
+    log::info!(
+        "[Branch] Forked session {} at prompt #{} -> new session {} ({} lines)",
+        session_id,
+        prompt_index,
+        new_session_id,
+        truncate_at_line
+    );
+
+    Ok(new_session_id)
+}
+
 /// Truncate session JSONL file to before a specific prompt
 /// 🆕 Now supports multiple files (main session + agent files)
 fn truncate_session_to_prompt(

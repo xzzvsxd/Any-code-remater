@@ -108,8 +108,9 @@ use commands::storage::{init_database, AgentDb};
 
 use commands::clipboard::{read_from_clipboard, save_clipboard_image, write_to_clipboard};
 use commands::prompt_tracker::{
-    check_rewind_capabilities, get_prompt_list, get_prompt_list_with_capabilities,
-    get_unified_prompt_list, mark_prompt_completed, record_prompt_sent, revert_to_prompt,
+    branch_session_at_prompt, check_rewind_capabilities, get_prompt_list,
+    get_prompt_list_with_capabilities, get_unified_prompt_list, mark_prompt_completed,
+    record_prompt_sent, revert_to_prompt,
 };
 use commands::provider::{
     add_provider_config, clear_provider_config, delete_provider_config,
@@ -170,6 +171,7 @@ use commands::codex::{
     resume_codex,
     resume_last_codex,
     revert_codex_to_prompt,
+    branch_codex_at_prompt,
     set_codex_mode_config,
     set_codex_multi_agent_config,
     set_custom_codex_path,
@@ -219,6 +221,7 @@ use commands::gemini::{
     record_gemini_prompt_sent,
     reorder_gemini_provider_configs,
     revert_gemini_to_prompt,
+    branch_gemini_at_prompt,
     save_gemini_system_prompt,
     set_gemini_wsl_mode_config,
     switch_gemini_provider,
@@ -504,6 +507,7 @@ fn main() {
             record_prompt_sent,
             mark_prompt_completed,
             revert_to_prompt,
+            branch_session_at_prompt,
             get_prompt_list,
             get_prompt_list_with_capabilities,
             get_unified_prompt_list,
@@ -550,6 +554,7 @@ fn main() {
             record_codex_prompt_sent,
             record_codex_prompt_completed,
             revert_codex_to_prompt,
+            branch_codex_at_prompt,
             // Codex custom path
             validate_codex_path_cmd,
             set_custom_codex_path,
@@ -604,6 +609,7 @@ fn main() {
             record_gemini_prompt_sent,
             record_gemini_prompt_completed,
             revert_gemini_to_prompt,
+            branch_gemini_at_prompt,
             // Gemini Provider Commands
             get_gemini_provider_presets,
             get_current_gemini_provider_config,

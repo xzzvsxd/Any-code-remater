@@ -41,7 +41,7 @@ import { AskUserQuestionDialog } from '@/components/dialogs/AskUserQuestionDialo
 import { codexConverter } from '@/lib/codexConverter';
 import { convertGeminiSessionDetailToClaudeMessages } from '@/lib/geminiConverter';
 import { formatClaudeModelLabel, resolveClaudeContinuationModel } from '@/lib/claudeModelSelection';
-import { buildPromptIndexByMessage, getPromptIndexForDisplayableMessage } from '@/lib/promptIndex';
+import { buildPromptIndexByMessage, getPromptIndexForDisplayableMessage, getBranchPromptIndexForDisplayableMessage } from '@/lib/promptIndex';
 import { loadUiOnlySessionMessages, mergeUiOnlySessionMessages } from '@/lib/uiOnlySessionEvents';
 import { prepareRecentProjects } from '@/lib/recentProjects';
 import { SessionHeader } from "./session/SessionHeader";
@@ -1082,7 +1082,56 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     }
   }, [effectiveSession, projectPath, claudeSettings?.hideWarmupMessages, executionEngineConfig.engine]);
 
-  // Cleanup event listeners and track mount state
+  // 🌿 计算某条消息（任意类型）可用的分支 promptIndex；-1 表示不可分支
+  const getBranchPromptIndexForMessage = useCallback((displayableIndex: number): number => {
+    return getBranchPromptIndexForDisplayableMessage(
+      messages,
+      displayableMessages,
+      displayableIndex,
+    );
+  }, [messages, displayableMessages]);
+
+  // 🌿 从某条消息分叉出一个新会话（真分支）：原会话保留，新会话在新 tab 打开
+  const handleBranch = useCallback(async (promptIndex: number) => {
+    if (!effectiveSession || promptIndex < 0) return;
+
+    const sessionEngine = effectiveSession.engine || executionEngineConfig.engine || 'claude';
+    try {
+      let newSessionId: string;
+      if (sessionEngine === 'codex') {
+        newSessionId = await api.branchCodexAtPrompt(effectiveSession.id, projectPath, promptIndex);
+      } else if (sessionEngine === 'gemini') {
+        newSessionId = await api.branchGeminiAtPrompt(effectiveSession.id, projectPath, promptIndex);
+      } else {
+        newSessionId = await api.branchSessionAtPrompt(
+          effectiveSession.id,
+          effectiveSession.project_id,
+          promptIndex,
+        );
+      }
+
+      // 构造新分支会话对象，复用现有「打开会话到新 tab」的全局事件机制
+      const branchedSession: Session = {
+        ...effectiveSession,
+        id: newSessionId,
+        engine: sessionEngine as 'claude' | 'codex' | 'gemini',
+      };
+
+      // 在新 tab 打开分支会话（原会话 tab 保留）。
+      // 直接传 Session 对象打开，不依赖侧边栏列表刷新；列表会在下次切换项目时自然扫描到新文件。
+      window.dispatchEvent(new CustomEvent('claude-session-selected', {
+        detail: { session: branchedSession },
+      }));
+      window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: { message: '已创建分支，在新标签打开', type: 'success' },
+      }));
+    } catch (error) {
+      console.error('[Branch] Failed to branch session:', error);
+      window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: { message: `创建分支失败：${error instanceof Error ? error.message : String(error)}`, type: 'error' },
+      }));
+    }
+  }, [effectiveSession, projectPath, executionEngineConfig.engine]);
   // ⚠️ IMPORTANT: No dependencies! Only cleanup on real unmount
   // Adding dependencies like effectiveSession would cause cleanup to run
   // when session ID is extracted, clearing active listeners
@@ -1113,6 +1162,8 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       onLinkDetected={handleLinkDetected}
       onRevert={handleRevert}
       getPromptIndexForMessage={getPromptIndexForMessage}
+      onBranch={handleBranch}
+      getBranchPromptIndexForMessage={getBranchPromptIndexForMessage}
     >
       <SessionMessages
         ref={sessionMessagesRef}

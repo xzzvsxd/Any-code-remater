@@ -44,7 +44,7 @@ pub use session::{cancel_gemini, check_gemini_installed, execute_gemini};
 pub use git_ops::{
     check_gemini_rewind_capabilities, get_gemini_prompt_list,
     get_gemini_prompt_list_with_capabilities, record_gemini_prompt_completed,
-    record_gemini_prompt_sent, revert_gemini_to_prompt,
+    record_gemini_prompt_sent, revert_gemini_to_prompt, branch_gemini_at_prompt,
 };
 
 // Re-export Gemini Provider commands

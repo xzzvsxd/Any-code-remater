@@ -574,6 +574,131 @@ pub fn truncate_codex_session_to_prompt(
     Ok(())
 }
 
+/// 从某条提示词分叉出一个新的 Codex 会话（真分支）。
+/// 原会话不变，新会话写入同目录的新文件（首行 session_meta.payload.id 改为新 id，
+/// Codex 靠首行 id 而非文件名定位会话）。返回新 session_id。
+#[tauri::command]
+pub async fn branch_codex_at_prompt(
+    session_id: String,
+    project_path: String,
+    prompt_index: usize,
+) -> Result<String, String> {
+    let _ = &project_path; // 入参对齐 revert 签名；定位靠 session_id 扫描，无需 project_path
+    tokio::task::spawn_blocking(move || branch_codex_blocking(&session_id, prompt_index))
+        .await
+        .map_err(|e| format!("branch_codex_at_prompt task failed: {}", e))?
+}
+
+fn branch_codex_blocking(session_id: &str, prompt_index: usize) -> Result<String, String> {
+    let sessions_dir = get_codex_sessions_dir()?;
+    let session_file = find_session_file(&sessions_dir, session_id)
+        .ok_or_else(|| format!("Session file not found for: {}", session_id))?;
+
+    let content = fs::read_to_string(&session_file)
+        .map_err(|e| format!("Failed to read session file: {}", e))?;
+    let lines: Vec<&str> = content.lines().collect();
+
+    // 用与 truncate_codex_session_to_prompt 相同的口径定位第 prompt_index 个用户提示词。
+    let mut user_message_count = 0;
+    let mut truncate_at_line = 0;
+    let mut found_target = false;
+
+    for (idx, line) in lines.iter().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Ok(event) = serde_json::from_str::<serde_json::Value>(line) {
+            if event["type"].as_str() == Some("response_item")
+                && event["payload"]["role"].as_str() == Some("user")
+            {
+                let mut prompt_text: Option<String> = None;
+                if let Some(content) = event["payload"]["content"].as_array() {
+                    for item in content {
+                        if item["type"].as_str() == Some("input_text") {
+                            if let Some(text) = item["text"].as_str() {
+                                if !text.contains("<environment_context>")
+                                    && !text.contains("# AGENTS.md instructions")
+                                    && !text.trim().is_empty()
+                                {
+                                    prompt_text = Some(text.to_string());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                if prompt_text.is_none() {
+                    continue;
+                }
+                if user_message_count == prompt_index {
+                    truncate_at_line = idx;
+                    found_target = true;
+                    break;
+                }
+                user_message_count += 1;
+            }
+        }
+    }
+
+    if !found_target {
+        return Err(format!("Prompt #{} not found in session", prompt_index));
+    }
+
+    let new_session_id = uuid::Uuid::new_v4().to_string();
+
+    // 改写首行 session_meta 的 payload.id 为新 id，其余行原样保留。
+    let mut out_lines: Vec<String> = Vec::with_capacity(truncate_at_line);
+    for (idx, line) in lines.iter().take(truncate_at_line).enumerate() {
+        if idx == 0 {
+            if let Ok(mut meta) = serde_json::from_str::<serde_json::Value>(line) {
+                if meta["type"].as_str() == Some("session_meta") {
+                    meta["payload"]["id"] = serde_json::Value::String(new_session_id.clone());
+                    out_lines.push(meta.to_string());
+                    continue;
+                }
+            }
+        }
+        out_lines.push(line.to_string());
+    }
+
+    // 新文件名沿用 Codex 的 rollout 前缀习惯（定位实际靠首行 id，不依赖文件名）。
+    let parent = session_file
+        .parent()
+        .ok_or_else(|| "Session file has no parent directory".to_string())?;
+    let new_file = parent.join(format!("rollout-branch-{}.jsonl", new_session_id));
+    let new_content = if out_lines.is_empty() {
+        String::new()
+    } else {
+        out_lines.join("\n") + "\n"
+    };
+    fs::write(&new_file, new_content)
+        .map_err(|e| format!("Failed to write branched session: {}", e))?;
+
+    // 复制并过滤 git 记录到新 session。
+    let mut records = load_codex_git_records(session_id).unwrap_or(CodexGitRecords {
+        session_id: session_id.to_string(),
+        project_path: String::new(),
+        records: Vec::new(),
+    });
+    records.session_id = new_session_id.clone();
+    records
+        .records
+        .retain(|r| keep_codex_git_record_before_rewind(r.prompt_index, prompt_index));
+    if let Err(e) = save_codex_git_records(&new_session_id, &records) {
+        log::warn!("[Codex Branch] Failed to copy git records: {}", e);
+    }
+
+    log::info!(
+        "[Codex Branch] Forked session {} at prompt #{} -> {} ({} lines)",
+        session_id,
+        prompt_index,
+        new_session_id,
+        truncate_at_line
+    );
+
+    Ok(new_session_id)
+}
+
 // ============================================================================
 // Prompt Recording (for rewind tracking)
 // ============================================================================

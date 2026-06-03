@@ -124,3 +124,46 @@ export function getPromptIndexForDisplayableMessage(
   const actualIndex = messages.findIndex((message) => message === displayableMessage);
   return getPromptIndexForMessageInList(messages, actualIndex);
 }
+
+/**
+ * 计算「从某条消息分支」时应使用的 promptIndex。
+ *
+ * 与 revert 的 getPromptIndexForMessageInList 不同：分支允许从 **任意** 消息发起
+ * （用户消息、助手最终回复、中断消息），而不仅是 tracked user prompt。
+ *
+ * 规则：从目标消息位置向前（含自身）回溯，找到最近的一条 tracked user prompt，
+ * 返回其 promptIndex —— 即「该消息所属那一轮对话的用户提示词序号」。
+ * 分支语义为「在该提示词之前分叉」，因此新分支会包含到「该轮完整问答」为止的历史。
+ *
+ * 找不到（该消息之前没有任何真实用户提示词）时返回 -1，调用方据此隐藏分支按钮。
+ */
+export function getBranchPromptIndexForMessageInList(
+  messages: Array<ClaudeStreamMessage | unknown>,
+  actualIndex: number,
+): number {
+  if (actualIndex < 0 || actualIndex >= messages.length) return -1;
+
+  // 向前回溯（含自身）找最近的 tracked user prompt
+  for (let i = actualIndex; i >= 0; i--) {
+    if (isTrackedUserPrompt(messages[i])) {
+      return getPromptIndexForMessageInList(messages, i);
+    }
+  }
+  return -1;
+}
+
+/**
+ * displayableMessages 视图版本：先用对象引用找回完整 messages 中的真实位置，
+ * 再计算分支 promptIndex。供消息组件直接按渲染顺序取用。
+ */
+export function getBranchPromptIndexForDisplayableMessage(
+  messages: Array<ClaudeStreamMessage | unknown>,
+  displayableMessages: Array<ClaudeStreamMessage | unknown>,
+  displayableIndex: number,
+): number {
+  const displayableMessage = displayableMessages[displayableIndex];
+  if (!displayableMessage) return -1;
+
+  const actualIndex = messages.findIndex((message) => message === displayableMessage);
+  return getBranchPromptIndexForMessageInList(messages, actualIndex);
+}

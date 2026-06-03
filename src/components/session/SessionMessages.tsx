@@ -2,6 +2,7 @@ import React, { useImperativeHandle, forwardRef, useEffect, useRef } from "react
 import { motion, AnimatePresence } from "framer-motion";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { StreamMessageV2 } from "@/components/message";
+import { MessageBranchButton } from "@/components/message/MessageBranchButton";
 import type { MessageGroup } from "@/lib/subagentGrouping";
 import { useSession } from "@/contexts/SessionContext";
 import { CliProcessingIndicator } from "./CliProcessingIndicator";
@@ -108,7 +109,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
   onCancel
 }, ref) => {
   // ✅ 从 SessionContext 获取配置和回调，避免 Props Drilling
-  const { settings, sessionId, projectId, projectPath, onLinkDetected, onRevert, getPromptIndexForMessage } = useSession();
+  const { settings, sessionId, projectId, projectPath, onLinkDetected, onRevert, getPromptIndexForMessage, onBranch, getBranchPromptIndexForMessage } = useSession();
   /**
    * ✅ OPTIMIZED: Virtual list configuration for improved performance
    */
@@ -328,6 +329,21 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
               ? getPromptIndexForMessage(originalIndex)
               : undefined;
 
+            // 计算该消息组的分支锚点：任意类型消息都尝试回溯到所属轮次的 user prompt。
+            // normal 用 message.index；subagent/aggregated 用其起始 index。
+            const branchAnchorIndex =
+              messageGroup.type === 'normal'
+                ? messageGroup.index
+                : messageGroup.type === 'subagent'
+                  ? (messageGroup.group as any)?.startIndex
+                  : messageGroup.type === 'aggregated'
+                    ? (messageGroup as any).index
+                    : undefined;
+            const branchPromptIndex =
+              branchAnchorIndex !== undefined && getBranchPromptIndexForMessage
+                ? getBranchPromptIndexForMessage(branchAnchorIndex)
+                : -1;
+
             const isStreaming = virtualItem.index === messageGroups.length - 1 && isLoading;
 
             return (
@@ -345,18 +361,30 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
                   top: virtualItem.start,
                 }}
               >
-                {/* ✅ 架构优化: StreamMessageV2 现在从 SessionContext 获取数据 */}
-                <StreamMessageV2
-                  messageGroup={messageGroup}
-                  onLinkDetected={onLinkDetected}
-                  claudeSettings={settings}
-                  isStreaming={isStreaming}
-                  promptIndex={promptIndex}
-                  sessionId={sessionId ?? undefined}
-                  projectId={projectId ?? undefined}
-                  projectPath={projectPath}
-                  onRevert={onRevert}
-                />
+                {/* group 容器：hover 时在右上角显示分支按钮，不打断现有消息渲染 */}
+                <div className="relative group/msg">
+                  {/* ✅ 架构优化: StreamMessageV2 现在从 SessionContext 获取数据 */}
+                  <StreamMessageV2
+                    messageGroup={messageGroup}
+                    onLinkDetected={onLinkDetected}
+                    claudeSettings={settings}
+                    isStreaming={isStreaming}
+                    promptIndex={promptIndex}
+                    sessionId={sessionId ?? undefined}
+                    projectId={projectId ?? undefined}
+                    projectPath={projectPath}
+                    onRevert={onRevert}
+                  />
+                  {/* 流式输出中的最后一条不显示分支按钮，避免对未完成内容分支 */}
+                  {!isStreaming && branchPromptIndex >= 0 && (
+                    <div className="absolute top-1 right-1 z-10 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+                      <MessageBranchButton
+                        branchPromptIndex={branchPromptIndex}
+                        onBranch={onBranch}
+                      />
+                    </div>
+                  )}
+                </div>
               </MeasurableItem>
             );
           })}

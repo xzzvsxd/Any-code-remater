@@ -39,6 +39,10 @@ interface SessionContextValue {
   onLinkDetected?: (url: string) => void;
   onRevert?: (promptIndex: number, mode: RewindMode) => void;
   getPromptIndexForMessage?: (index: number) => number;
+  /** 从某条消息分支出新会话（消息级分支）。index 为完整 messages 数组中的位置。 */
+  onBranch?: (promptIndex: number) => void;
+  /** 计算某条消息（任意类型）可用的分支 promptIndex；返回 -1 表示不可分支。 */
+  getBranchPromptIndexForMessage?: (index: number) => number;
 }
 
 const SessionContext = React.createContext<SessionContextValue | undefined>(undefined);
@@ -52,6 +56,8 @@ interface SessionProviderProps {
   onLinkDetected?: (url: string) => void;
   onRevert?: (promptIndex: number, mode: RewindMode) => void;
   getPromptIndexForMessage?: (index: number) => number;
+  onBranch?: (promptIndex: number) => void;
+  getBranchPromptIndexForMessage?: (index: number) => number;
   children: React.ReactNode;
 }
 
@@ -64,6 +70,8 @@ export const SessionProvider: React.FC<SessionProviderProps> = ({
   onLinkDetected,
   onRevert,
   getPromptIndexForMessage,
+  onBranch,
+  getBranchPromptIndexForMessage,
   children,
 }) => {
   // ✅ 性能优化: 使用 useMemo 缓存 context 值
@@ -78,6 +86,8 @@ export const SessionProvider: React.FC<SessionProviderProps> = ({
       onLinkDetected,
       onRevert,
       getPromptIndexForMessage,
+      onBranch,
+      getBranchPromptIndexForMessage,
     }),
     [
       session,
@@ -88,6 +98,8 @@ export const SessionProvider: React.FC<SessionProviderProps> = ({
       onLinkDetected,
       onRevert,
       getPromptIndexForMessage,
+      onBranch,
+      getBranchPromptIndexForMessage,
     ]
   );
 

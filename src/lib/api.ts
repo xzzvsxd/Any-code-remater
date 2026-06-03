@@ -2958,6 +2958,22 @@ export const api = {
   },
 
   /**
+   * 从某条提示词分叉出一个新的 Claude 会话（真分支）。
+   * 原会话保持不变，返回新生成的 session_id。
+   */
+  async branchSessionAtPrompt(
+    sessionId: string,
+    projectId: string,
+    promptIndex: number
+  ): Promise<string> {
+    return invoke<string>("branch_session_at_prompt", {
+      sessionId,
+      projectId,
+      promptIndex,
+    });
+  },
+
+  /**
    * Get list of all prompts for a session
    * Extracts all prompts from .jsonl (single source of truth)
    */
@@ -3760,6 +3776,21 @@ export const api = {
     }
   },
 
+  /**
+   * 从某条提示词分叉出一个新的 Codex 会话（真分支）。原会话不变，返回新 session_id。
+   */
+  async branchCodexAtPrompt(
+    sessionId: string,
+    projectPath: string,
+    promptIndex: number
+  ): Promise<string> {
+    return invoke<string>("branch_codex_at_prompt", {
+      sessionId,
+      projectPath,
+      promptIndex,
+    });
+  },
+
   // ============================================================================
   // Gemini Rewind Commands
   // ============================================================================
@@ -3902,6 +3933,23 @@ export const api = {
       console.error("Failed to revert Gemini to prompt:", error);
       throw error;
     }
+  },
+
+  /**
+   * 从某条提示词分叉出一个新的 Gemini 会话（真分支）。原会话不变，返回新 session_id。
+   */
+  async branchGeminiAtPrompt(
+    sessionId: string,
+    projectPath: string,
+    promptIndex: number
+  ): Promise<string> {
+    const result = await invoke<string>("branch_gemini_at_prompt", {
+      sessionId,
+      projectPath,
+      promptIndex,
+    });
+    geminiSessionsCache.delete(normalizeCachePath(projectPath));
+    return result;
   },
 
   // ============================================================================

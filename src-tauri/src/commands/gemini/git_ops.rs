@@ -703,6 +703,104 @@ pub fn truncate_gemini_session_to_prompt(
     Ok(())
 }
 
+/// 从某条提示词分叉出一个新的 Gemini 会话（真分支）。
+/// 原会话不变；新会话写入同目录的新文件（文件名含新 session_id 前缀、内部 sessionId 改为新 id，
+/// 以便 find_gemini_session_file 双重匹配）。返回新 session_id。
+#[tauri::command]
+pub async fn branch_gemini_at_prompt(
+    session_id: String,
+    project_path: String,
+    prompt_index: usize,
+) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        branch_gemini_blocking(&session_id, &project_path, prompt_index)
+    })
+    .await
+    .map_err(|e| format!("branch_gemini_at_prompt task failed: {}", e))?
+}
+
+fn branch_gemini_blocking(
+    session_id: &str,
+    project_path: &str,
+    prompt_index: usize,
+) -> Result<String, String> {
+    let sessions_dir = get_gemini_sessions_dir(project_path)?;
+    let session_file = find_gemini_session_file(&sessions_dir, session_id)?;
+
+    let content = fs::read_to_string(&session_file)
+        .map_err(|e| format!("Failed to read session file: {}", e))?;
+    let mut session_data: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse session JSON: {}", e))?;
+
+    let messages = session_data
+        .get("messages")
+        .and_then(|m| m.as_array())
+        .ok_or_else(|| "No messages array found in session".to_string())?;
+
+    // 用与 truncate_gemini_session_to_prompt 相同的口径定位第 prompt_index 个用户提示词。
+    let mut user_prompt_count = 0;
+    let mut truncate_at_index = messages.len();
+    let mut found_target = false;
+    for (idx, message) in messages.iter().enumerate() {
+        if gemini_prompt_text_from_message(message).is_none() {
+            continue;
+        }
+        if user_prompt_count == prompt_index {
+            truncate_at_index = idx;
+            found_target = true;
+            break;
+        }
+        user_prompt_count += 1;
+    }
+
+    if !found_target {
+        return Err(format!(
+            "Prompt #{} not found in session (only {} user prompts found)",
+            prompt_index, user_prompt_count
+        ));
+    }
+
+    let new_session_id = uuid::Uuid::new_v4().to_string();
+
+    // 截断 messages 到分叉点之前，并改写内部 sessionId 为新 id。
+    let truncated: Vec<serde_json::Value> =
+        messages.iter().take(truncate_at_index).cloned().collect();
+    session_data["messages"] = serde_json::Value::Array(truncated);
+    if session_data.get("sessionId").is_some() {
+        session_data["sessionId"] = serde_json::Value::String(new_session_id.clone());
+    }
+
+    // 新文件名需包含新 session_id 前 8 字符，使 find_gemini_session_file 的文件名预筛能命中。
+    let prefix = if new_session_id.len() >= 8 {
+        &new_session_id[..8]
+    } else {
+        &new_session_id
+    };
+    let new_file = sessions_dir.join(format!("branch-{}.json", prefix));
+    let new_content = serde_json::to_string_pretty(&session_data)
+        .map_err(|e| format!("Failed to serialize branched session: {}", e))?;
+    fs::write(&new_file, new_content)
+        .map_err(|e| format!("Failed to write branched session: {}", e))?;
+
+    // 复制并过滤 git 记录到新 session。
+    let mut records = load_gemini_git_records(session_id).unwrap_or_default();
+    records.session_id = new_session_id.clone();
+    records.records.retain(|r| r.prompt_index < prompt_index);
+    if let Err(e) = save_gemini_git_records(&new_session_id, &records) {
+        log::warn!("[Gemini Branch] Failed to copy git records: {}", e);
+    }
+
+    log::info!(
+        "[Gemini Branch] Forked session {} at prompt #{} -> {} ({} messages)",
+        session_id,
+        prompt_index,
+        new_session_id,
+        truncate_at_index
+    );
+
+    Ok(new_session_id)
+}
+
 // ============================================================================
 // Revert Operations
 // ============================================================================
