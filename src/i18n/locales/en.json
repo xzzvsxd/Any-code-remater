@@ -778,7 +778,8 @@
     "expand": "Expand",
     "revertToMessage": "Revert to this message",
     "cacheCreate": "Create {{count}}",
-    "cacheRead": "Cache {{count}}"
+    "cacheRead": "Cache {{count}}",
+    "branchFromHere": "Branch from here"
   },
   "imagePreview": {
     "zoomOut": "Zoom Out (-)",
@@ -1075,6 +1076,8 @@
     "openWithDefault": "Open with system default app",
     "closeFull": "Close (ESC)",
     "userAnswered": "User has answered questions",
+    "waitingAnswer": "Waiting for your answer",
+    "answerQuestions": "Answer questions",
     "claudeAsking": "Claude is asking user",
     "noPlanContent": "(No plan content)",
     "executed": "Executed",

@@ -778,7 +778,8 @@
     "expand": "展开",
     "revertToMessage": "撤回到此消息",
     "cacheCreate": "创建{{count}}",
-    "cacheRead": "缓存{{count}}"
+    "cacheRead": "缓存{{count}}",
+    "branchFromHere": "从这里分支"
   },
   "imagePreview": {
     "zoomOut": "缩小 (-)",
@@ -1075,6 +1076,8 @@
     "openWithDefault": "用系统默认应用打开",
     "closeFull": "关闭 (ESC)",
     "userAnswered": "用户已回答问题",
+    "waitingAnswer": "等待你的回答",
+    "answerQuestions": "回答问题",
     "claudeAsking": "Claude 正在询问用户",
     "noPlanContent": "（无计划内容）",
     "executed": "已执行",

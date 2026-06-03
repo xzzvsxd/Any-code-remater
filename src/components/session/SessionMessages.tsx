@@ -377,7 +377,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
                   />
                   {/* 流式输出中的最后一条不显示分支按钮，避免对未完成内容分支 */}
                   {!isStreaming && branchPromptIndex >= 0 && (
-                    <div className="absolute top-1 right-1 z-10 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+                    <div className="absolute top-1 right-1 z-20 opacity-80 hover:opacity-100 group-hover/msg:opacity-100 transition-opacity">
                       <MessageBranchButton
                         branchPromptIndex={branchPromptIndex}
                         onBranch={onBranch}

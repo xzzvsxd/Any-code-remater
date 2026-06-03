@@ -775,7 +775,8 @@
     "expand": "展開",
     "revertToMessage": "撤回到此訊息",
     "cacheCreate": "建立{{count}}",
-    "cacheRead": "快取{{count}}"
+    "cacheRead": "快取{{count}}",
+    "branchFromHere": "從這裡分支"
   },
   "imagePreview": {
     "zoomOut": "縮小 (-)",
@@ -1068,6 +1069,8 @@
     "openWithDefault": "用系統預設應用開啟",
     "closeFull": "關閉 (ESC)",
     "userAnswered": "使用者已回答問題",
+    "waitingAnswer": "等待你的回答",
+    "answerQuestions": "回答問題",
     "claudeAsking": "Claude 正在詢問使用者",
     "noPlanContent": "（無計畫內容）",
     "executed": "已執行",

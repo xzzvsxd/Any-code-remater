@@ -240,7 +240,7 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
                       : "text-blue-500"
                 )}
               >
-                {hasAnswers ? t('widget.userAnswered') : '等待你的回答'}
+                {hasAnswers ? t('widget.userAnswered') : t('widget.waitingAnswer')}
               </span>
               {safeQuestions.length > 0 && (
                 <span className="text-xs text-muted-foreground">
@@ -257,7 +257,7 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
                 onClick={handleAnswerNow}
               >
                 <MessageCircle className="h-3.5 w-3.5" />
-                回答问题
+                {t('widget.answerQuestions')}
               </Button>
             )}
             <Button
@@ -403,8 +403,10 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
             </div>
           )}
 
-          {/* 错误信息 */}
-          {isError && result?.content && (
+          {/* 错误信息：仅在无法再回答时显示真正的错误内容。
+              避免把工具占位结果（如未回答时返回的 "Answer questions?"）当作错误文本展示，
+              那种情况下应引导用户去点「回答问题」按钮，而非显示一行裸英文。 */}
+          {isError && result?.content && !canAnswerQuestion && (
             <div className="p-2 rounded bg-destructive/10 text-xs text-destructive">
               {typeof result.content === "string"
                 ? result.content

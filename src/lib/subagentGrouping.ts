@@ -91,20 +91,35 @@ export function extractTaskToolDetails(message: ClaudeStreamMessage): Map<string
  * 检查消息是否是子代理消息
  */
 export function isSubagentMessage(message: ClaudeStreamMessage): boolean {
-  // 检查是否有 parent_tool_use_id
-  const hasParent = !!(message as any).parent_tool_use_id;
-  
-  // 检查是否标记为侧链
-  const isSidechain = !!(message as any).isSidechain;
-  
-  return hasParent || isSidechain;
+  return !!getParentToolUseId(message) || getSidechainFlag(message);
 }
 
 /**
- * 获取消息的 parent_tool_use_id
+ * 读取 isSidechain 标志，兼容顶层与 message 嵌套层。
+ */
+function getSidechainFlag(message: ClaudeStreamMessage): boolean {
+  const m = message as any;
+  return m?.isSidechain === true || m?.message?.isSidechain === true;
+}
+
+/**
+ * 获取消息的 parent_tool_use_id。
+ *
+ * 实时流式与历史加载两条路径下该字段可能出现在不同层级/命名：
+ * - 历史加载（session_history.rs）注入在顶层 parent_tool_use_id；
+ * - CLI 实时输出可能在顶层、嵌套在 message 内、或用 camelCase。
+ * 做多层级 + 双命名兼容查找，避免结构差异导致子代理消息归组失败、
+ * 掉回普通消息混入主对话。
  */
 export function getParentToolUseId(message: ClaudeStreamMessage): string | null {
-  return (message as any).parent_tool_use_id || null;
+  const m = message as any;
+  return (
+    m?.parent_tool_use_id ||
+    m?.parentToolUseId ||
+    m?.message?.parent_tool_use_id ||
+    m?.message?.parentToolUseId ||
+    null
+  );
 }
 
 /**
