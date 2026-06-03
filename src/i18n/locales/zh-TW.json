@@ -711,6 +711,8 @@
     "scrollToBottom": "捲動到底部",
     "startExecutingPlan": "請開始執行上述計畫。",
     "queuedPrompts": "佇列中的提示詞 ({{count}})",
+    "sendNow": "立即傳送",
+    "sendNextPriority": "提到佇列首優先執行",
     "fileSaved": "檔案已儲存",
     "saveFailed": "儲存失敗",
     "export": "匯出",

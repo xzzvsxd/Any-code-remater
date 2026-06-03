@@ -32,6 +32,7 @@ use commands::claude::{
     execute_claude_code,
     find_claude_md_files,
     get_available_tools,
+    get_claude_capabilities,
     get_claude_execution_config,
     get_claude_path,
     get_claude_permission_config,
@@ -379,6 +380,8 @@ fn main() {
             get_hooks_config,
             update_hooks_config,
             validate_hook_command,
+            // CLI 能力检测
+            get_claude_capabilities,
             // 权限管理命令
             get_claude_execution_config,
             update_claude_execution_config,

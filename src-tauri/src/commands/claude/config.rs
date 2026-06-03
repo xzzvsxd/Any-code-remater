@@ -14,7 +14,7 @@ use tokio::sync::OnceCell;
 use super::super::wsl_utils;
 use super::paths::{get_claude_dir, get_codex_dir};
 use super::platform;
-use super::{ClaudeMdFile, ClaudeSettings, ClaudeVersionStatus};
+use super::{ClaudeCapabilities, ClaudeMdFile, ClaudeSettings, ClaudeVersionStatus};
 use crate::commands::permission_config::{
     ClaudeExecutionConfig, ClaudePermissionConfig, PermissionMode, ALL_TOOLS, DEVELOPMENT_TOOLS,
     SAFE_TOOLS,
@@ -300,6 +300,71 @@ pub async fn check_claude_version(app: AppHandle) -> Result<ClaudeVersionStatus,
             })
         }
     }
+}
+
+/// Detects Claude Code CLI capabilities by inspecting `claude --help`.
+///
+/// 关键能力：是否支持 `--input-format stream-json`（realtime streaming input），
+/// 用于决定是否启用持久化流式会话（随时插话 / 问题与计划的真硬阻塞）。
+/// 若不支持，则问题/计划只能以「开新一轮」的方式继续（干净断开，不傻等）。
+#[tauri::command]
+pub async fn get_claude_capabilities(app: AppHandle) -> Result<ClaudeCapabilities, String> {
+    log::info!("Detecting Claude Code capabilities");
+
+    let version_status = check_claude_version(app.clone()).await.ok();
+    let version = version_status.and_then(|s| s.version);
+
+    let claude_path = match crate::claude_binary::find_claude_binary(&app) {
+        Ok(path) => path,
+        Err(e) => {
+            log::warn!("Cannot detect capabilities, binary not found: {}", e);
+            return Ok(ClaudeCapabilities {
+                supports_stream_json_input: false,
+                version,
+            });
+        }
+    };
+
+    // sidecar 模式无法可靠探测 --help，保守地认为不支持流式输入。
+    if claude_path == "claude-code" {
+        return Ok(ClaudeCapabilities {
+            supports_stream_json_input: false,
+            version,
+        });
+    }
+
+    let mut cmd = std::process::Command::new(&claude_path);
+    cmd.arg("--help");
+
+    #[cfg(target_os = "windows")]
+    {
+        platform::apply_no_window(&mut cmd);
+    }
+
+    let supports_stream_json_input = match cmd.output() {
+        Ok(output) => {
+            let help = String::from_utf8_lossy(&output.stdout);
+            // 同时出现 --input-format 与 stream-json 才判定支持
+            help.contains("--input-format") && help.contains("stream-json")
+        }
+        Err(e) => {
+            log::warn!(
+                "Failed to run `claude --help` for capability detection: {}",
+                e
+            );
+            false
+        }
+    };
+
+    log::info!(
+        "Claude capabilities: supports_stream_json_input={}",
+        supports_stream_json_input
+    );
+
+    Ok(ClaudeCapabilities {
+        supports_stream_json_input,
+        version,
+    })
 }
 
 /// Saves the CLAUDE.md system prompt file

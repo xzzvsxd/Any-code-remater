@@ -20,6 +20,7 @@ pub use self::config::{
     clear_custom_claude_path,
     find_claude_md_files,
     get_available_tools,
+    get_claude_capabilities,
     get_claude_execution_config,
     get_claude_path,
     get_claude_permission_config,

@@ -714,6 +714,8 @@
     "scrollToBottom": "滚动到底部",
     "startExecutingPlan": "请开始执行上述计划。",
     "queuedPrompts": "队列中的提示词 ({{count}})",
+    "sendNow": "立即发送",
+    "sendNextPriority": "提到队首优先执行",
     "fileSaved": "文件已保存",
     "saveFailed": "保存失败",
     "export": "导出",

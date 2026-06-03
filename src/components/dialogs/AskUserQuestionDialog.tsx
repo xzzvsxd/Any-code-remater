@@ -33,6 +33,8 @@ export interface AskUserQuestionDialogProps {
   onClose: () => void;
   /** 提交答案 */
   onSubmit: (answers: UserAnswers) => boolean | void;
+  /** CLI 不支持流式输入时为 true：回答将作为「新一轮」继续，而非插入当前轮 */
+  continuesAsNewTurn?: boolean;
 }
 
 /**
@@ -43,6 +45,7 @@ export function AskUserQuestionDialog({
   questions,
   onClose,
   onSubmit,
+  continuesAsNewTurn = false,
 }: AskUserQuestionDialogProps) {
   // 用户选择的答案
   const [selectedAnswers, setSelectedAnswers] = useState<UserAnswers>({});
@@ -155,7 +158,9 @@ export function AskUserQuestionDialog({
             <div className="min-w-0">
               <DialogTitle className="text-base leading-tight">Claude 正在询问你</DialogTitle>
               <DialogDescription className="text-xs mt-0.5">
-                选择答案后提交，Claude 将据此继续
+                {continuesAsNewTurn
+                  ? "本轮对话已结束，提交答案后将作为新一轮继续"
+                  : "选择答案后提交，Claude 将据此继续"}
               </DialogDescription>
             </div>
           </div>

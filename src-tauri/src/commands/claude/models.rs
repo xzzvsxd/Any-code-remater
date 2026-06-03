@@ -80,6 +80,16 @@ pub struct ClaudeVersionStatus {
     pub output: String,
 }
 
+/// Represents detected Claude Code CLI capabilities
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeCapabilities {
+    /// Whether the CLI supports `--input-format stream-json` (realtime streaming input).
+    /// 决定能否做持久化流式会话（随时插话 / 真硬阻塞）。
+    pub supports_stream_json_input: bool,
+    /// The version string if available
+    pub version: Option<String>,
+}
+
 /// Represents a CLAUDE.md file found in the project
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClaudeMdFile {

@@ -7,7 +7,8 @@ import {
   X,
   List,
   GripVertical,
-  Pencil
+  Pencil,
+  ArrowUp
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SortableList, SortableDragHandle } from "@/components/ui/sortable-list";
@@ -248,10 +249,13 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   const [showPromptNavigator, setShowPromptNavigator] = useState(false);
 
   // Settings state to avoid repeated loading in StreamMessage components
-  const [claudeSettings, setClaudeSettings] = useState<{ 
+  const [claudeSettings, setClaudeSettings] = useState<{
     showSystemInitialization?: boolean;
     hideWarmupMessages?: boolean;
   }>({});
+
+  // CLI 能力：是否支持 --input-format stream-json（决定交互模型：流式硬阻塞 vs 干净断开）
+  const [supportsStreamJsonInput, setSupportsStreamJsonInput] = useState(false);
 
   // ✅ Refactored: Use custom Hook for session cost calculation
   const { stats: costStats, formatCost } = useSessionCostCalculation(messages, executionEngineConfig.engine);
@@ -733,10 +737,23 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     loadSettings();
   }, []);
 
-  // Report streaming state changes
+  // 检测 CLI 能力（仅 Claude 引擎相关）：决定问题/计划的交互模型
   useEffect(() => {
-    onStreamingChange?.(isLoading, cancelSessionId || claudeSessionId);
-  }, [isLoading, cancelSessionId, claudeSessionId, onStreamingChange]);
+    let cancelled = false;
+    const loadCapabilities = async () => {
+      try {
+        const caps = await api.getClaudeCapabilities();
+        if (!cancelled) setSupportsStreamJsonInput(caps.supports_stream_json_input);
+      } catch (error) {
+        console.error("Failed to detect Claude capabilities:", error);
+        if (!cancelled) setSupportsStreamJsonInput(false);
+      }
+    };
+    loadCapabilities();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // 🔧 FIX: When a tab becomes active (visible), re-verify session running state
   // Listeners persist across tab switches (DO NOT clean up on tab switch).
@@ -1351,6 +1368,28 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
                             variant="ghost"
                             size="icon"
                             className="h-5 w-5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                            title={isLoading ? t('session.sendNextPriority') : t('session.sendNow')}
+                            onClick={() => {
+                              if (!isLoading) {
+                                // 空闲：直接移除并立即发送
+                                setQueuedPrompts(prev => prev.filter(p => p.id !== queuedPrompt.id));
+                                handleSendPromptWithScroll(queuedPrompt.prompt, queuedPrompt.model);
+                              } else {
+                                // 运行中：置顶到队首，当前轮一结束就最先执行
+                                setQueuedPrompts(prev => {
+                                  const target = prev.find(p => p.id === queuedPrompt.id);
+                                  if (!target) return prev;
+                                  return [target, ...prev.filter(p => p.id !== queuedPrompt.id)];
+                                });
+                              }
+                            }}
+                          >
+                            <ArrowUp className="h-3 w-3" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-5 w-5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
                             title={t('buttons.edit')}
                             onClick={() => {
                               // 取回到输入框编辑：append（不覆盖现有内容）后从队列移除，避免重复发送
@@ -1429,6 +1468,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
           onClose={closeApprovalDialog}
           onApprove={approvePlan}
           onReject={rejectPlan}
+          continuesAsNewTurn={!supportsStreamJsonInput}
         />
 
         {/* 🆕 User Question Dialog - AskUserQuestion 自动触发 */}
@@ -1437,6 +1477,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
           questions={pendingQuestion?.questions || []}
           onClose={closeQuestionDialog}
           onSubmit={submitAnswers}
+          continuesAsNewTurn={!supportsStreamJsonInput}
         />
       </div>
 

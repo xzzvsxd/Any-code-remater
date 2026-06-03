@@ -34,6 +34,8 @@ export interface PlanApprovalDialogProps {
   onApprove: () => void;
   /** 拒绝计划 - 保持 Plan 模式继续规划 */
   onReject: () => void;
+  /** CLI 不支持流式输入时为 true：批准将作为「新一轮」继续，而非插入当前轮 */
+  continuesAsNewTurn?: boolean;
 }
 
 /**
@@ -45,6 +47,7 @@ export function PlanApprovalDialog({
   onClose,
   onApprove,
   onReject,
+  continuesAsNewTurn = false,
 }: PlanApprovalDialogProps) {
   const handleApprove = () => {
     onApprove();
@@ -82,7 +85,9 @@ export function PlanApprovalDialog({
             <div>
               <DialogTitle className="text-lg">计划已完成</DialogTitle>
               <DialogDescription>
-                Claude 已完成规划，请审批以下计划
+                {continuesAsNewTurn
+                  ? "Claude 已完成规划。本轮对话已结束，批准后将作为新一轮开始执行"
+                  : "Claude 已完成规划，请审批以下计划"}
               </DialogDescription>
             </div>
           </div>

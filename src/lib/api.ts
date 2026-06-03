@@ -200,6 +200,16 @@ export interface ClaudeVersionStatus {
 }
 
 /**
+ * 检测到的 Claude Code CLI 能力
+ */
+export interface ClaudeCapabilities {
+  /** 是否支持 `--input-format stream-json`（realtime streaming input） */
+  supports_stream_json_input: boolean;
+  /** 版本号（若可得） */
+  version?: string | null;
+}
+
+/**
  * Represents a CLAUDE.md file found in the project
  */
 export interface ClaudeMdFile {
@@ -998,6 +1008,21 @@ export const api = {
     } catch (error) {
       console.error("Failed to check Claude version:", error);
       throw error;
+    }
+  },
+
+  /**
+   * 检测 Claude Code CLI 能力（是否支持 --input-format stream-json 等）
+   * 用于决定交互模型：支持则可做持久化流式/硬阻塞，不支持则问题/计划走「干净断开」。
+   * @returns Promise resolving to the capability flags
+   */
+  async getClaudeCapabilities(): Promise<ClaudeCapabilities> {
+    try {
+      return await invoke<ClaudeCapabilities>("get_claude_capabilities");
+    } catch (error) {
+      console.error("Failed to detect Claude capabilities:", error);
+      // 探测失败时保守降级为「不支持流式输入」
+      return { supports_stream_json_input: false, version: null };
     }
   },
 

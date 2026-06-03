@@ -714,6 +714,8 @@
     "scrollToBottom": "Scroll to bottom",
     "startExecutingPlan": "Please start executing the above plan.",
     "queuedPrompts": "Queued Prompts ({{count}})",
+    "sendNow": "Send now",
+    "sendNextPriority": "Move to front of queue",
     "fileSaved": "File saved",
     "saveFailed": "Save failed",
     "export": "Export",
