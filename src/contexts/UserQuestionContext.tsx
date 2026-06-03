@@ -64,8 +64,9 @@ interface UserQuestionContextValue {
   /** 是否显示问答对话框 */
   showQuestionDialog: boolean;
 
-  /** 触发问答对话框（当检测到 AskUserQuestion 工具调用时）；toolId 为工具调用唯一 ID，优先用作去重键 */
-  triggerQuestionDialog: (questions: Question[], toolId?: string) => void;
+  /** 触发问答对话框（当检测到 AskUserQuestion 工具调用时）；toolId 为工具调用唯一 ID，优先用作去重键。
+   *  auto=true 表示「自动弹出」，同一问题仅允许自动弹一次；用户手动点击触发（auto=false/省略）则始终放行。 */
+  triggerQuestionDialog: (questions: Question[], toolId?: string, auto?: boolean) => void;
   /** 提交答案 - 格式化并发送给 Claude */
   submitAnswers: (answers: UserAnswers) => boolean;
   /** 关闭问答对话框 */
@@ -123,13 +124,19 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
   // 发送消息的回调引用
   const sendMessageCallbackRef = useRef<((message: string) => void) | null>(null);
 
+  // 「已自动弹出过」的问题去重集合。
+  // 关键：用 ref 而非组件内 state，使其与 widget 生命周期解耦——
+  // 列表滚动导致 widget 卸载/重挂载时，该记录仍存活于 Provider（会话级单例），
+  // 从而保证同一问题「只自动弹一次」，滚回来不再自动弹（用户可手动点按钮再弹）。
+  const autoTriggeredIdsRef = useRef<Set<string>>(new Set());
+
   // 检查问题是否已回答
   const isQuestionAnswered = useCallback((questionId: string): boolean => {
     return answeredQuestionIds.has(questionId);
   }, [answeredQuestionIds]);
 
   // 触发问答对话框
-  const triggerQuestionDialog = useCallback((questions: Question[], toolId?: string) => {
+  const triggerQuestionDialog = useCallback((questions: Question[], toolId?: string, auto: boolean = false) => {
     const safeQuestions = normalizeQuestions(questions);
     const questionId = resolveDedupeKey(safeQuestions, toolId);
 
@@ -137,6 +144,16 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
     if (answeredQuestionIds.has(questionId)) {
       return;
     }
+
+    // 自动弹出仅允许首次：同一问题自动弹过一次后，用户若未答而继续往下，
+    // 之后即使滚回该 widget 也不再自动弹，只能手动点「回答问题」按钮触发。
+    if (auto) {
+      if (autoTriggeredIdsRef.current.has(questionId)) {
+        return;
+      }
+      autoTriggeredIdsRef.current.add(questionId);
+    }
+
     setPendingQuestion({
       questions: safeQuestions,
       questionId,

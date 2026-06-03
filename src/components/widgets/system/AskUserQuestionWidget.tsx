@@ -10,7 +10,7 @@
  * - 🆕 自动触发交互式对话框（未回答时）
  */
 
-import React, { useState, useMemo, useEffect, useRef } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { HelpCircle, CheckCircle, MessageCircle, ChevronDown, ChevronUp, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -63,7 +63,6 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
 
   // 折叠状态：已回答时默认折叠，未回答时默认展开
   const [isCollapsed, setIsCollapsed] = useState(hasAnswers);
-  const hasTriggered = useRef(false);
 
   const toggleCollapse = () => {
     setIsCollapsed(!isCollapsed);
@@ -84,19 +83,14 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
   const answered = questionId && isQuestionAnswered ? isQuestionAnswered(questionId) : false;
   const canAnswerQuestion = safeQuestions.length > 0 && !hasAnswers && !answered;
 
-  // 🆕 自动触发问答对话框（仅在有问题且未回答时）
-  // 即使 AskUserQuestion 的后端工具参数校验失败（例如 questions 被传成 string），
-  // 只要前端能从 input 中恢复出问题，也继续弹出对话框让用户回答。
+  // 🆕 自动触发问答对话框（仅在有问题且未回答时）。
+  // 「只自动弹一次」由 Context 的 autoTriggeredIds 统一去重（与 widget 生命周期解耦），
+  // 因此 widget 卸载/重挂载（列表滚动）也不会重复自动弹——这里只负责按需发起请求。
   useEffect(() => {
-    if (
-      canAnswerQuestion &&
-      triggerQuestionDialog &&
-      !hasTriggered.current
-    ) {
-      hasTriggered.current = true;
+    if (canAnswerQuestion && triggerQuestionDialog) {
       // 延迟触发，确保 UI 已渲染
       const timer = setTimeout(() => {
-        triggerQuestionDialog(safeQuestions, toolId);
+        triggerQuestionDialog(safeQuestions, toolId, true);
       }, 500);
       return () => clearTimeout(timer);
     }
@@ -107,7 +101,8 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
     if (!triggerQuestionDialog || !canAnswerQuestion) {
       return;
     }
-    triggerQuestionDialog(safeQuestions, toolId);
+    // 手动点击：始终放行（auto=false），即便此前已自动弹过。
+    triggerQuestionDialog(safeQuestions, toolId, false);
   };
 
   // 解析answers - 可能在result.content中以字符串格式存储
@@ -196,10 +191,15 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
             : "border-blue-500/20 bg-blue-500/5"
       )}
     >
-      {/* 头部：可点击折叠/展开 */}
+      {/* 头部：待回答时整行点击=触发回答对话框（标题区与操作融为一体）；已回答时整行点击=折叠/展开 */}
       <div
-        className="px-4 py-3 flex items-start gap-3 cursor-pointer hover:bg-background/30 transition-colors"
-        onClick={toggleCollapse}
+        className={cn(
+          "px-4 py-3 flex items-start gap-3 transition-colors",
+          canAnswerQuestion && triggerQuestionDialog
+            ? "cursor-pointer hover:bg-blue-500/10"
+            : "cursor-pointer hover:bg-background/30"
+        )}
+        onClick={canAnswerQuestion && triggerQuestionDialog ? handleAnswerNow : toggleCollapse}
       >
         {/* 图标 */}
         <div className="mt-0.5">
@@ -249,14 +249,14 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
               )}
             </div>
 
-            {/* 折叠按钮 */}
+            {/* 回答问题：主色实心按钮，作为头部可点击区的强引导（与标题区融为一体） */}
             {canAnswerQuestion && triggerQuestionDialog && (
               <Button
-                variant="outline"
                 size="sm"
-                className="h-7 px-2 text-xs"
+                className="h-7 px-2.5 text-xs gap-1 bg-blue-600 hover:bg-blue-700 text-white"
                 onClick={handleAnswerNow}
               >
+                <MessageCircle className="h-3.5 w-3.5" />
                 回答问题
               </Button>
             )}
