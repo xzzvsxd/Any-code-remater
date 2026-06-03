@@ -18,6 +18,7 @@ import { api } from "@/lib/api";
 import { getEnabledProviders } from "@/lib/promptEnhancementService";
 import { inputReducer, initialState } from "./reducer";
 import { getDefaultModel } from "./defaultModelStorage";
+import { resolveSelectedModelName } from "./resolveModelName";
 
 // Import sub-components
 import { InputArea } from "./InputArea";
@@ -530,13 +531,8 @@ const FloatingPromptInputInner = (
       }
 
       // When custom model is selected, pass the actual model name instead of "custom"
-      let modelToSend = state.selectedModel;
-      if (state.selectedModel === 'custom') {
-        const customModelConfig = availableModels.find(m => m.id === 'custom');
-        if (customModelConfig) {
-          modelToSend = customModelConfig.name as ModelType;
-        }
-      }
+      // 与上下文窗口计算共用同一解析（resolveModelName），避免逻辑重复扩散。
+      const modelToSend = resolveSelectedModelName(state.selectedModel, availableModels) as ModelType;
 
       onSend(finalPrompt, modelToSend, undefined);
       dispatch({ type: "RESET_INPUT" });

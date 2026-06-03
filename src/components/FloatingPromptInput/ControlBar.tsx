@@ -19,6 +19,7 @@ import { PlanModeToggle } from "./PlanModeToggle";
 import { SessionToolbar } from "@/components/SessionToolbar";
 import { ContextWindowIndicator } from "@/components/widgets/ContextWindowIndicator";
 import { ModelType, ModelConfig, ThinkingEffort, type ExecutionStatusInfo } from "./types";
+import { resolveSelectedModelName } from "./resolveModelName";
 import type { CodexRateLimits } from "@/types/codex";
 
 interface ControlBarProps {
@@ -97,25 +98,14 @@ export const ControlBar: React.FC<ControlBarProps> = ({
   const isCancellingExecution = executionStatus?.isCancelling === true;
 
   // 解析 Claude 引擎下用于上下文窗口计算的真实模型名。
-  // selectedModel 是 UI 下拉别名（sonnet/opus/opus1m/custom）。当选中自定义模型时，
-  // 'custom' 字面量会丢失真实模型 ID（如 claude-opus-4-8[1m]），导致窗口被误判为 200K。
-  // 这里回查 availableModels 取出真实名称，与 handleSendPrompt 的 custom 解析保持一致（DRY）。
-  const resolveClaudeContextModel = (): string => {
-    if (selectedModel === 'custom') {
-      const customModelConfig = availableModels.find(m => m.id === 'custom');
-      if (customModelConfig?.name) {
-        return customModelConfig.name;
-      }
-    }
-    return selectedModel;
-  };
-
+  // custom 模型的 'custom' 字面量会丢失真实模型 ID（如 claude-opus-4-8[1m]），
+  // 导致窗口被误判为 200K；统一经 resolveSelectedModelName 还原（与发送路径同源，DRY）。
   const contextWindowModel =
     executionEngineConfig.engine === 'codex'
       ? (session?.model || executionEngineConfig.codexModel)
       : executionEngineConfig.engine === 'gemini'
         ? (executionEngineConfig.geminiModel || session?.model)
-        : resolveClaudeContextModel();
+        : resolveSelectedModelName(selectedModel, availableModels);
 
   // Extract latest Codex rate limits from messages
   const codexRateLimits = useMemo<CodexRateLimits | null>(() => {
