@@ -568,6 +568,62 @@ pub async fn get_claude_session_output(
     }
 }
 
+/// 向「持久化流式会话」的常驻进程写入一条新的 user 消息（随时插话 / 问题与计划的硬阻塞回应）。
+///
+/// 仅当该 session 是以流式模式（`--input-format stream-json`）启动、且 stdin 仍打开时有效。
+/// 返回 Ok(true) 表示已写入；Ok(false) 表示该会话不存在或非流式（调用方应降级为开新一轮）。
+#[tauri::command]
+pub async fn send_stream_message(
+    registry: tauri::State<'_, crate::process::ProcessRegistryState>,
+    session_id: String,
+    message: String,
+) -> Result<bool, String> {
+    use tokio::io::AsyncWriteExt;
+
+    let stdin_arc = match registry.0.get_stream_stdin_by_session(&session_id)? {
+        Some(arc) => arc,
+        None => {
+            log::info!(
+                "send_stream_message: no streaming session for {}, caller should fall back",
+                session_id
+            );
+            return Ok(false);
+        }
+    };
+
+    // 构造 stream-json user 消息包络（实测格式，见 spike）
+    let envelope = serde_json::json!({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [{ "type": "text", "text": message }]
+        }
+    });
+    let mut line = serde_json::to_string(&envelope).map_err(|e| e.to_string())?;
+    line.push('\n');
+
+    let mut guard = stdin_arc.lock().await;
+    let stdin = match guard.as_mut() {
+        Some(s) => s,
+        None => {
+            log::warn!("send_stream_message: stdin already closed for {}", session_id);
+            return Ok(false);
+        }
+    };
+
+    stdin
+        .write_all(line.as_bytes())
+        .await
+        .map_err(|e| format!("Failed to write stream message: {}", e))?;
+    stdin
+        .flush()
+        .await
+        .map_err(|e| format!("Failed to flush stream message: {}", e))?;
+
+    log::info!("send_stream_message: wrote {} bytes to session {}", line.len(), session_id);
+    Ok(true)
+}
+
 /// Helper function to check if prompt is a slash command
 /// Slash commands start with '/' and are typically short (like /help, /compact, /clear)
 fn is_slash_command(prompt: &str) -> bool {

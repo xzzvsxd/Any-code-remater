@@ -51,6 +51,8 @@ use commands::claude::{
     list_running_claude_sessions,
     load_session_history,
     open_new_session,
+    // 持久化流式会话：随时插话
+    send_stream_message,
     read_claude_md_file,
     reset_claude_execution_config,
     restore_project,
@@ -375,6 +377,7 @@ fn main() {
             cancel_claude_execution,
             list_running_claude_sessions,
             get_claude_session_output,
+            send_stream_message,
             list_directory_contents,
             search_files,
             get_hooks_config,

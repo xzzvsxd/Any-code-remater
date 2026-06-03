@@ -188,6 +188,17 @@ pub fn build_execution_args(config: &ClaudeExecutionConfig, model: &str) -> Vec<
     args
 }
 
+/// 构建「持久化流式会话」的执行参数。
+/// 在普通参数基础上追加 `--input-format stream-json`，使进程常驻、stdin 保持打开，
+/// 可随时写入新的 stream-json user 消息（随时插话 / 真硬阻塞）。
+/// 仅在 CLI 能力支持时使用；不改动 one-shot 路径的 build_execution_args。
+pub fn build_streaming_execution_args(config: &ClaudeExecutionConfig, model: &str) -> Vec<String> {
+    let mut args = build_execution_args(config, model);
+    args.push("--input-format".to_string());
+    args.push("stream-json".to_string());
+    args
+}
+
 /// 预设权限配置
 impl ClaudePermissionConfig {
     /// 开发模式 - 允许所有常用开发工具

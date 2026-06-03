@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tokio::process::Child;
+use tokio::process::{Child, ChildStdin};
 
 /// Type of process being tracked
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +30,9 @@ pub struct ProcessHandle {
     pub info: ProcessInfo,
     pub child: Arc<Mutex<Option<Child>>>,
     pub live_output: Arc<Mutex<String>>,
+    /// 持久化流式会话的 stdin 写入端（仅流式模式下存在）。
+    /// 用于"随时插话"：向常驻进程写入新的 stream-json user 消息，而不重启进程。
+    pub stream_stdin: Arc<tokio::sync::Mutex<Option<ChildStdin>>>,
     #[cfg(windows)]
     pub job_object: Option<Arc<JobObject>>, // Job object for automatic cleanup on Windows
 }
@@ -177,6 +180,7 @@ impl ProcessRegistry {
             info: process_info,
             child: Arc::new(Mutex::new(None)),
             live_output: Arc::new(Mutex::new(String::new())),
+            stream_stdin: Arc::new(tokio::sync::Mutex::new(None)),
             job_object,
         };
 
@@ -213,6 +217,7 @@ impl ProcessRegistry {
             info: process_info,
             child: Arc::new(Mutex::new(None)),
             live_output: Arc::new(Mutex::new(String::new())),
+            stream_stdin: Arc::new(tokio::sync::Mutex::new(None)),
         };
 
         processes.insert(run_id, process_handle);
@@ -261,6 +266,7 @@ impl ProcessRegistry {
             info: process_info,
             child: Arc::new(Mutex::new(Some(child))),
             live_output: Arc::new(Mutex::new(String::new())),
+            stream_stdin: Arc::new(tokio::sync::Mutex::new(None)),
             #[cfg(windows)]
             job_object,
         };
@@ -622,6 +628,43 @@ impl ProcessRegistry {
             live_output.push('\n');
         }
         Ok(())
+    }
+
+    /// 保存某进程的 stdin 写入端（持久化流式会话用）。
+    /// 传入已包在 Arc<tokio::Mutex> 中的 stdin，便于 spawn 处与 registry 共享同一句柄。
+    pub fn set_stream_stdin(
+        &self,
+        run_id: i64,
+        stdin: ChildStdin,
+    ) -> Result<(), String> {
+        let processes = self.processes.lock().map_err(|e| e.to_string())?;
+        if let Some(handle) = processes.get(&run_id) {
+            // 用 try_lock 即可：此时尚无并发写入
+            if let Ok(mut guard) = handle.stream_stdin.try_lock() {
+                *guard = Some(stdin);
+                Ok(())
+            } else {
+                Err("stream_stdin is locked".to_string())
+            }
+        } else {
+            Err(format!("Process {} not found in registry", run_id))
+        }
+    }
+
+    /// 按 session_id 取出 stdin 写入端的 Arc 克隆（不持有 std Mutex 跨 await）。
+    /// 返回 None 表示该会话不存在或非流式（无常驻 stdin）。
+    pub fn get_stream_stdin_by_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<Arc<tokio::sync::Mutex<Option<ChildStdin>>>>, String> {
+        let processes = self.processes.lock().map_err(|e| e.to_string())?;
+        Ok(processes
+            .values()
+            .find(|handle| match &handle.info.process_type {
+                ProcessType::ClaudeSession { session_id: sid } => sid == session_id,
+                _ => false,
+            })
+            .map(|handle| handle.stream_stdin.clone()))
     }
 
     /// Get live output for a process
