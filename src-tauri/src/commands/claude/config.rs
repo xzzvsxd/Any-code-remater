@@ -343,7 +343,14 @@ pub async fn get_claude_capabilities(app: AppHandle) -> Result<ClaudeCapabilitie
 
     let supports_stream_json_input = match cmd.output() {
         Ok(output) => {
-            let help = String::from_utf8_lossy(&output.stdout);
+            // Different Claude CLI builds have printed help to stdout, stderr, or both.
+            // Treat them as one stream so capability detection does not false-negative
+            // merely because the help text moved channels.
+            let help = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
             // 同时出现 --input-format 与 stream-json 才判定支持
             help.contains("--input-format") && help.contains("stream-json")
         }

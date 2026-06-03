@@ -412,7 +412,48 @@ jobs:
         run: bun run build
 
       - name: Build Tauri application
-        run: bun run tauri build ${{ matrix.platform.tauri-args }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p ci-logs
+          {
+            echo "=== macOS build diagnostics ==="
+            echo "runner.os=${{ runner.os }}"
+            echo "platform.name=${{ matrix.platform.name }}"
+            echo "platform.os=${{ matrix.platform.os }}"
+            echo "rust_target=${{ matrix.platform.rust-target }}"
+            echo "tauri_args=${{ matrix.platform.tauri-args }}"
+            echo
+            sw_vers || true
+            uname -a || true
+            sysctl -n machdep.cpu.brand_string 2>/dev/null || true
+            echo
+            rustc -Vv || true
+            cargo -V || true
+            rustup show || true
+            echo
+            bun --version || true
+          } | tee "ci-logs/macos-env-${{ matrix.platform.name }}.log"
+
+          LOG="ci-logs/tauri-build-${{ matrix.platform.name }}.log"
+
+          run_tauri_build() {
+            set +e
+            bun run tauri build ${{ matrix.platform.tauri-args }} 2>&1 | tee -a "$LOG"
+            local status=${PIPESTATUS[0]}
+            set -e
+            return "$status"
+          }
+
+          echo "=== First Tauri build attempt ===" | tee "$LOG"
+          if ! run_tauri_build; then
+            echo "=== First attempt failed; retrying once after clearing bundle output ===" | tee -a "$LOG"
+            rm -rf "src-tauri/target/${{ matrix.platform.rust-target }}/release/bundle" || true
+            rm -rf "src-tauri/target/release/bundle" || true
+            sleep 10
+            run_tauri_build
+          fi
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -433,6 +474,7 @@ jobs:
         with:
           name: build-logs-${{ matrix.platform.name }}
           path: |
+            ci-logs/**/*.log
             src-tauri/target/*/release/build/*/output
             src-tauri/target/release/build/*/output
           retention-days: 3
