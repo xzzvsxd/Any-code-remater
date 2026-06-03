@@ -1508,6 +1508,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
             projectPath={projectPath}
             engine={effectiveSession.engine || executionEngineConfig.engine || 'claude'}
             onSelect={handleRevert}
+            onBranch={handleBranch}
             onClose={() => setShowRevertPicker(false)}
           />
         )}

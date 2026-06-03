@@ -27,6 +27,10 @@ interface SmartAutoScrollReturn {
 }
 
 const RESUME_AUTO_SCROLL_THRESHOLD = 80;
+// 用户主动上滑解除粘底后，只有真正回到“几乎精确贴底”才恢复自动跟随。
+// 若沿用 80px 的宽松阈值，用户在底部附近小幅上滑（落在 80px 内）会被 scroll 事件
+// 立刻判定为“已回到底部”而重新粘底，与上滑解除直接对冲 —— 这正是“吸铁石”根因。
+const RESUME_AT_BOTTOM_THRESHOLD = 4;
 
 /**
  * 计算最后一条消息的内容哈希，用于检测内容变化
@@ -55,6 +59,9 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
 
   const parentRef = useRef<HTMLDivElement>(null);
   const autoScrollEnabledRef = useRef(true);
+  // 标记“用户主动上滑解除了粘底”。置位后，scroll 事件必须等用户几乎精确贴底才恢复粘底，
+  // 避免在 80px 区间内被立即拉回（吸铁石）。回到底部恢复后清除该标记。
+  const userIntentReleasedRef = useRef(false);
 
   const lastMessageHash = useMemo(
     () => getLastMessageContentHash(displayableMessages),
@@ -114,6 +121,7 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
     const releaseOnUserIntent = (movingUp: boolean) => {
       if (!movingUp) return;
       if (getDistanceFromBottom(scrollElement) <= 1) return;
+      userIntentReleasedRef.current = true;
       syncAutoScrollState(false);
     };
 
@@ -141,7 +149,14 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
      * 避免高频自动滚动期间把用户真实滚动一并吞掉。
      */
     const handleScroll = () => {
-      if (getDistanceFromBottom(scrollElement) <= RESUME_AUTO_SCROLL_THRESHOLD) {
+      const distance = getDistanceFromBottom(scrollElement);
+      // 用户主动上滑解除过粘底：必须几乎精确贴底（≤4px）才恢复，避免 80px 区间内被立即吸回。
+      // 未经主动解除（如程序滚动后的微抖）：维持 80px 宽松阈值恢复，保证正常跟随体验。
+      const resumeThreshold = userIntentReleasedRef.current
+        ? RESUME_AT_BOTTOM_THRESHOLD
+        : RESUME_AUTO_SCROLL_THRESHOLD;
+      if (distance <= resumeThreshold) {
+        userIntentReleasedRef.current = false;
         syncAutoScrollState(true);
       }
     };

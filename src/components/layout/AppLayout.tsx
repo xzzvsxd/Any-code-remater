@@ -1,5 +1,6 @@
 import React, { ReactNode, useEffect, useRef, useState } from 'react';
 import { Sidebar } from "@/components/layout/Sidebar";
+import { WorkbenchSidebar } from "@/components/layout/WorkbenchSidebar";
 import { useNavigation } from '@/contexts/NavigationContext';
 import { useUpdate } from '@/contexts/UpdateContext';
 import { message } from '@tauri-apps/plugin-dialog';
@@ -75,6 +76,15 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
           onUpdateClick={() => setShowUpdateDialog(true)}
         />
       </div>
+
+      {/* 工作台侧栏：仅在会话工作语境显示（项目浏览 / 标签管理 / 会话视图） */}
+      {(currentView === 'projects' ||
+        currentView === 'claude-tab-manager' ||
+        currentView === 'claude-code-session') && (
+        <div className="z-40 flex-shrink-0 relative">
+          <WorkbenchSidebar />
+        </div>
+      )}
 
       {/* Main Content Area */}
       <main className="flex-1 relative flex flex-col min-w-0 overflow-hidden z-10">

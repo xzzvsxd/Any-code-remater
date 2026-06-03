@@ -17,6 +17,8 @@ import { formatUnixTimestamp, formatISOTimestamp, truncateText, getFirstLine } f
 import type { Session, ClaudeMdFile } from "@/lib/api";
 import { api } from "@/lib/api";
 import { useTranslation } from '@/hooks/useTranslation';
+import { listen } from '@tauri-apps/api/event';
+import { Search, X } from 'lucide-react';
 
 interface SessionListProps {
   /**
@@ -111,6 +113,28 @@ export const SessionList: React.FC<SessionListProps> = ({
   // Session filter state
   const [sessionFilter, setSessionFilter] = useState<SessionFilter>('all');
 
+  // 🔍 跨会话内容搜索：流式命中 session_id 集合
+  const [searchKeyword, setSearchKeyword] = useState('');
+  const [searchHitIds, setSearchHitIds] = useState<Set<string>>(new Set());
+  const [isSearching, setIsSearching] = useState(false);
+  const searchSeqRef = React.useRef(0); // 递增序号生成 searchId，隔离多次搜索（不依赖 Date/Math.random）
+  const activeSearchIdRef = React.useRef<string>('');
+
+  // 🔧 过滤掉空白无用的会话（没有 first_message 或 id 为空的）
+  // 使用共享的会话验证函数，确保与项目计数逻辑一致
+  const validSessions = React.useMemo(() => filterValidSessions(sessions), [sessions]);
+
+  const searchSessions = React.useMemo(
+    () =>
+      validSessions.map((s) => ({
+        id: s.id,
+        engine: s.engine,
+        project_id: s.project_id,
+        project_path: s.project_path,
+      })),
+    [validSessions]
+  );
+
   // Load CLAUDE.md files on mount
   useEffect(() => {
     if (onEditClaudeFile && projectPath) {
@@ -123,6 +147,90 @@ export const SessionList: React.FC<SessionListProps> = ({
     setSelectedSessions(new Set());
     setIsSelectionMode(false);
   }, [sessionFilter]);
+
+  // 🔍 跨会话内容流式搜索：关键词变化时 debounce 触发，命中流式 append 到 searchHitIds
+  useEffect(() => {
+    const keyword = searchKeyword.trim();
+
+    if (!keyword) {
+      // 清空搜索：作废进行中的搜索结果
+      activeSearchIdRef.current = '';
+      setSearchHitIds(new Set());
+      setIsSearching(false);
+      return;
+    }
+
+    let cancelled = false;
+    let unlistenHit: (() => void) | undefined;
+    let unlistenDone: (() => void) | undefined;
+    const applyUnlistenHit = (unlisten: () => void) => {
+      if (cancelled) {
+        unlisten();
+      } else {
+        unlistenHit = unlisten;
+      }
+    };
+    const applyUnlistenDone = (unlisten: () => void) => {
+      if (cancelled) {
+        unlisten();
+      } else {
+        unlistenDone = unlisten;
+      }
+    };
+
+    const debounce = setTimeout(async () => {
+      searchSeqRef.current += 1;
+      const searchId = `s${searchSeqRef.current}`;
+      activeSearchIdRef.current = searchId;
+      setSearchHitIds(new Set());
+      setIsSearching(true);
+
+      // 只在当前 searchId 仍是活跃搜索时才接收结果，避免旧搜索串入
+      const hitListener = await listen<{ session_id: string }>(
+        `session-search-hit:${searchId}`,
+        (evt) => {
+          if (cancelled || activeSearchIdRef.current !== searchId) return;
+          setSearchHitIds((prev) => {
+            const next = new Set(prev);
+            next.add(evt.payload.session_id);
+            return next;
+          });
+        }
+      );
+      applyUnlistenHit(hitListener);
+      const doneListener = await listen<{ scanned: number }>(
+        `session-search-done:${searchId}`,
+        () => {
+          if (cancelled || activeSearchIdRef.current !== searchId) return;
+          setIsSearching(false);
+        }
+      );
+      applyUnlistenDone(doneListener);
+
+      if (cancelled || activeSearchIdRef.current !== searchId) {
+        return;
+      }
+
+      try {
+        // 传当前项目下经基础过滤的会话清单给后端并行搜索内容
+        await api.searchSessionsContent(
+          searchId,
+          keyword,
+          searchSessions
+        );
+      } catch (err) {
+        console.error('[SessionSearch] failed:', err);
+        if (!cancelled) setIsSearching(false);
+      }
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(debounce);
+      unlistenHit?.();
+      unlistenDone?.();
+    };
+  }, [searchKeyword, searchSessions]);
 
   const loadClaudeMdFiles = async () => {
     try {
@@ -151,10 +259,6 @@ export const SessionList: React.FC<SessionListProps> = ({
     }
   };
 
-  // 🔧 过滤掉空白无用的会话（没有 first_message 或 id 为空的）
-  // 使用共享的会话验证函数，确保与项目计数逻辑一致
-  const validSessions = filterValidSessions(sessions);
-
   // 🆕 根据筛选器过滤会话类型
   const filteredSessions = validSessions.filter(session => {
     if (sessionFilter === 'all') return true;
@@ -177,8 +281,20 @@ export const SessionList: React.FC<SessionListProps> = ({
     return true;
   });
 
+  // 🔍 搜索激活时（关键词非空），仅保留内容命中的会话；命中集合流式增长 → 列表实时 append。
+  // 同时兜底匹配标题/首条消息，让常见的标题匹配立即可见（无需等后端内容扫描）。
+  const isSearchActive = searchKeyword.trim().length > 0;
+  const searchLower = searchKeyword.trim().toLowerCase();
+  const searchedSessions = isSearchActive
+    ? filteredSessions.filter(
+        (s) =>
+          searchHitIds.has(s.id) ||
+          (s.first_message || '').toLowerCase().includes(searchLower)
+      )
+    : filteredSessions;
+
   // 🔧 按活跃度排序：优先使用最后一条消息时间，其次第一条消息时间，最后使用创建时间
-  const sortedSessions = [...filteredSessions].sort((a, b) => {
+  const sortedSessions = [...searchedSessions].sort((a, b) => {
     // 获取会话 A 的最后活跃时间
     const timeA = a.last_message_timestamp
       ? new Date(a.last_message_timestamp).getTime()
@@ -408,6 +524,38 @@ export const SessionList: React.FC<SessionListProps> = ({
         </TabsList>
       </Tabs>
 
+      {/* 🔍 跨会话内容搜索框：流式搜索所有会话内容，命中实时 append */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+        <input
+          type="text"
+          value={searchKeyword}
+          onChange={(e) => {
+            setSearchKeyword(e.target.value);
+            setCurrentPage(1);
+          }}
+          placeholder={t('sessionList.searchPlaceholder')}
+          className="w-full h-10 pl-9 pr-9 rounded-2xl border border-border/70 bg-muted/30 text-sm outline-none focus:border-primary/50 focus:bg-background transition-colors"
+        />
+        {isSearching && (
+          <Loader2 className="absolute right-9 top-1/2 -translate-y-1/2 h-4 w-4 text-primary animate-spin" />
+        )}
+        {searchKeyword && (
+          <button
+            type="button"
+            onClick={() => { setSearchKeyword(''); setCurrentPage(1); }}
+            className="absolute right-3 top-1/2 -translate-y-1/2 h-5 w-5 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+      {isSearchActive && (
+        <div className="text-xs text-muted-foreground px-1">
+          {t('sessionList.searchHint', { count: sortedSessions.length })}
+          {isSearching && ` · ${t('sessionList.searching')}`}
+        </div>
+      )}
       {/* 🎯 新布局：批量管理会话 + 新建会话按钮在同一行 */}
       <div className="flex items-center justify-between gap-3 rounded-2xl border border-border/70 bg-muted/30 p-3">
         {/* 左侧：批量管理会话 */}

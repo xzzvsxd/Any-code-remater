@@ -185,6 +185,28 @@ pub fn extract_session_model<P: AsRef<Path>>(jsonl_path: P) -> Option<String> {
     last_model
 }
 
+fn sort_messages_chronologically_preserving_missing_timestamps(messages: Vec<Value>) -> Vec<Value> {
+    let mut last_timestamp: Option<String> = None;
+    let mut indexed: Vec<(usize, String, Value)> = Vec::with_capacity(messages.len());
+
+    for (index, message) in messages.into_iter().enumerate() {
+        let timestamp = message
+            .get("timestamp")
+            .and_then(|t| t.as_str())
+            .filter(|t| !t.is_empty())
+            .map(|t| {
+                last_timestamp = Some(t.to_string());
+                t.to_string()
+            })
+            .or_else(|| last_timestamp.clone())
+            .unwrap_or_default();
+        indexed.push((index, timestamp, message));
+    }
+
+    indexed.sort_by(|(ia, tsa, _), (ib, tsb, _)| tsa.cmp(tsb).then_with(|| ia.cmp(ib)));
+    indexed.into_iter().map(|(_, _, message)| message).collect()
+}
+
 /// Loads the JSONL history for a specific session
 /// Also loads subagent messages from agent-*.jsonl files and merges them
 pub fn load_session_history(session_id: &str, project_id: &str) -> Result<Vec<Value>, String> {
@@ -306,12 +328,13 @@ pub fn load_session_history(session_id: &str, project_id: &str) -> Result<Vec<Va
         }
     }
 
-    // Step 3: Sort messages by timestamp to maintain chronological order
-    messages.sort_by(|a, b| {
-        let ts_a = a.get("timestamp").and_then(|t| t.as_str()).unwrap_or("");
-        let ts_b = b.get("timestamp").and_then(|t| t.as_str()).unwrap_or("");
-        ts_a.cmp(ts_b)
-    });
+    // Step 3: Sort messages by timestamp to maintain chronological order.
+    //
+    // jsonl 的物理行序本身是正确写入顺序；子代理消息（Step 2）append 到末尾后
+    // 需要按 timestamp 插回主时间线。但缺失 timestamp 的历史消息不能用空串排序，
+    // 否则会被整体甩到顶部。这里给缺失 timestamp 的消息继承“前一条有时间消息”
+    // 的排序键，并用原始行号兜底，既保持总排序稳定，也避免旧消息错位。
+    let mut messages = sort_messages_chronologically_preserving_missing_timestamps(messages);
 
     // Add timestamps to historical messages that don't have them
     let messages_count = messages.len();
@@ -353,7 +376,18 @@ pub fn load_session_history(session_id: &str, project_id: &str) -> Result<Vec<Va
 
 #[cfg(test)]
 mod tests {
-    use super::{is_auto_compaction_instruction, is_slash_command_message};
+    use super::{
+        is_auto_compaction_instruction, is_slash_command_message,
+        sort_messages_chronologically_preserving_missing_timestamps,
+    };
+    use serde_json::{json, Value};
+
+    fn ids(messages: &[Value]) -> Vec<&str> {
+        messages
+            .iter()
+            .map(|m| m.get("id").and_then(|id| id.as_str()).unwrap())
+            .collect()
+    }
 
     #[test]
     fn detects_slash_command_messages() {
@@ -375,5 +409,35 @@ mod tests {
         assert!(!is_auto_compaction_instruction(
             "Please summarize this bug report for me."
         ));
+    }
+
+    #[test]
+    fn history_sort_preserves_missing_timestamp_order() {
+        let messages = vec![
+            json!({ "id": "user-1", "type": "user", "timestamp": "2026-01-01T00:00:00Z" }),
+            json!({ "id": "assistant-1", "type": "assistant" }),
+            json!({ "id": "user-2", "type": "user" }),
+            json!({ "id": "assistant-2", "type": "assistant", "timestamp": "2026-01-01T00:01:00Z" }),
+        ];
+
+        let sorted = sort_messages_chronologically_preserving_missing_timestamps(messages);
+
+        assert_eq!(
+            ids(&sorted),
+            vec!["user-1", "assistant-1", "user-2", "assistant-2"]
+        );
+    }
+
+    #[test]
+    fn history_sort_inserts_late_loaded_subagent_by_timestamp() {
+        let messages = vec![
+            json!({ "id": "user-1", "type": "user", "timestamp": "2026-01-01T00:00:00Z" }),
+            json!({ "id": "assistant-1", "type": "assistant", "timestamp": "2026-01-01T00:02:00Z" }),
+            json!({ "id": "subagent", "type": "assistant", "timestamp": "2026-01-01T00:01:00Z" }),
+        ];
+
+        let sorted = sort_messages_chronologically_preserving_missing_timestamps(messages);
+
+        assert_eq!(ids(&sorted), vec!["user-1", "subagent", "assistant-1"]);
     }
 }

@@ -107,6 +107,7 @@ use commands::mcp::{
 use commands::storage::{init_database, AgentDb};
 
 use commands::clipboard::{read_from_clipboard, save_clipboard_image, write_to_clipboard};
+use commands::session_search::search_sessions_content;
 use commands::prompt_tracker::{
     branch_session_at_prompt, check_rewind_capabilities, get_prompt_list,
     get_prompt_list_with_capabilities, get_unified_prompt_list, mark_prompt_completed,
@@ -508,6 +509,7 @@ fn main() {
             mark_prompt_completed,
             revert_to_prompt,
             branch_session_at_prompt,
+            search_sessions_content,
             get_prompt_list,
             get_prompt_list_with_capabilities,
             get_unified_prompt_list,

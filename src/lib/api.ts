@@ -2974,6 +2974,20 @@ export const api = {
   },
 
   /**
+   * 跨会话内容并行流式搜索。后端逐个命中后通过事件 emit，前端 listen 流式 append：
+   * - session-search-hit:{searchId}  → { session_id, match_count }
+   * - session-search-done:{searchId} → { scanned }
+   * sessions 为前端已加载的会话清单（含 id/engine/project 信息）。
+   */
+  async searchSessionsContent(
+    searchId: string,
+    keyword: string,
+    sessions: Array<{ id: string; engine?: string; project_id?: string; project_path?: string }>
+  ): Promise<void> {
+    return invoke("search_sessions_content", { searchId, keyword, sessions });
+  },
+
+  /**
    * Get list of all prompts for a session
    * Extracts all prompts from .jsonl (single source of truth)
    */

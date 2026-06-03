@@ -7,9 +7,10 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Clock, ArrowLeft, MessageSquare, X, Terminal, FolderGit2, AlertCircle } from 'lucide-react';
+import { Clock, ArrowLeft, MessageSquare, X, Terminal, FolderGit2, AlertCircle, GitBranch } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
+import { useTranslation } from '@/hooks/useTranslation';
 import type { RewindMode, RewindCapabilities } from '@/lib/api';
 
 interface PromptEntry {
@@ -46,6 +47,8 @@ interface RevertPromptPickerProps {
   engine?: 'claude' | 'codex' | 'gemini';
   /** 选择回调 */
   onSelect: (promptIndex: number, mode: RewindMode) => void;
+  /** 🌿 从该提示词分支出新会话（可选） */
+  onBranch?: (promptIndex: number) => void;
   /** 关闭回调 */
   onClose: () => void;
   /** 可选的样式类名 */
@@ -69,9 +72,11 @@ export const RevertPromptPicker: React.FC<RevertPromptPickerProps> = ({
   projectPath = '',
   engine = 'claude',
   onSelect,
+  onBranch,
   onClose,
   className,
 }) => {
+  const { t } = useTranslation();
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [selectedMode, setSelectedMode] = useState<RewindMode>('both');
   const [prompts, setPrompts] = useState<PromptEntry[]>([]);
@@ -410,6 +415,23 @@ export const RevertPromptPicker: React.FC<RevertPromptPickerProps> = ({
                     {prompt.loading && (
                       <div className="mt-2 text-xs text-gray-400 dark:text-gray-500">
                         加载撤回能力...
+                      </div>
+                    )}
+
+                    {/* 🌿 分支：从该提示词分叉新会话（原会话保留） */}
+                    {onBranch && (
+                      <div className="mt-2">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onBranch(prompt.index);
+                            onClose();
+                          }}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors"
+                        >
+                          <GitBranch className="w-3 h-3" />
+                          {t('message.branchFromHere')}
+                        </button>
                       </div>
                     )}
                   </div>

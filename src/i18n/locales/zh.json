@@ -1180,6 +1180,18 @@
     "deleteRowFailed": "删除行失败",
     "insertRowFailed": "插入行失败"
   },
+  "workbench": {
+    "title": "工作台",
+    "collapse": "收起侧栏",
+    "expand": "展开侧栏",
+    "openTabs": "打开的标签",
+    "noTabs": "暂无打开的标签",
+    "projects": "项目",
+    "noSessions": "该项目暂无会话",
+    "loadingSessions": "加载会话中…",
+    "showAllSessions": "展开全部 {{count}} 个会话",
+    "collapseSessions": "收起会话"
+  },
   "sessionList": {
     "deleting": "删除中...",
     "deleteSelected": "删除选中 ({{count}})",
@@ -1191,6 +1203,9 @@
     "all": "全部",
     "selectedCount": "已选择 {{count}} 个会话",
     "batchManage": "批量管理会话",
+    "searchPlaceholder": "搜索所有会话内容（如：吸铁石）…",
+    "searchHint": "找到 {{count}} 个匹配会话",
+    "searching": "搜索中…",
     "selectSession": "选择会话 {{name}}",
     "sessionAriaLabel": "会话: {{name}}，时间: {{time}}",
     "sessionIdLabel": "会话 ID: {{id}}",

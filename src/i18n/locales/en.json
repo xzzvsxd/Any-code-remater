@@ -1148,6 +1148,18 @@
     "deleteRowFailed": "Failed to delete row",
     "insertRowFailed": "Failed to insert row"
   },
+  "workbench": {
+    "title": "Workbench",
+    "collapse": "Collapse sidebar",
+    "expand": "Expand sidebar",
+    "openTabs": "Open Tabs",
+    "noTabs": "No open tabs",
+    "projects": "Projects",
+    "noSessions": "No sessions in this project",
+    "loadingSessions": "Loading sessions…",
+    "showAllSessions": "Show all {{count}} sessions",
+    "collapseSessions": "Collapse sessions"
+  },
   "sessionList": {
     "deleting": "Deleting...",
     "deleteSelected": "Delete selected ({{count}})",
@@ -1159,6 +1171,9 @@
     "all": "All",
     "selectedCount": "{{count}} sessions selected",
     "batchManage": "Batch manage sessions",
+    "searchPlaceholder": "Search all session content…",
+    "searchHint": "Found {{count}} matching sessions",
+    "searching": "Searching…",
     "selectSession": "Select session {{name}}",
     "sessionAriaLabel": "Session: {{name}}, Time: {{time}}",
     "sessionIdLabel": "Session ID: {{id}}",

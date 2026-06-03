@@ -329,18 +329,22 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
               ? getPromptIndexForMessage(originalIndex)
               : undefined;
 
-            // 计算该消息组的分支锚点：任意类型消息都尝试回溯到所属轮次的 user prompt。
-            // normal 用 message.index；subagent/aggregated 用其起始 index。
+            // 分支锚点：仅对「用户消息 / 助手最终回复 / 中断消息」允许分支。
+            // 聚合的工具/思考过程、子代理入口卡片不是对话节点，不显示分支按钮。
+            const branchableMessage = messageGroup.type === 'normal' ? messageGroup.message : null;
+            const isInterruption =
+              branchableMessage?.type === 'system' &&
+              (branchableMessage?.subtype === 'execution-cancelled' ||
+                branchableMessage?.subtype === 'execution-error');
+            const isFinalAssistantReply =
+              branchableMessage?.type === 'assistant';
+            const canBranchThisGroup =
+              branchableMessage?.type === 'user' || isFinalAssistantReply || isInterruption;
+
             const branchAnchorIndex =
-              messageGroup.type === 'normal'
-                ? messageGroup.index
-                : messageGroup.type === 'subagent'
-                  ? (messageGroup.group as any)?.startIndex
-                  : messageGroup.type === 'aggregated'
-                    ? (messageGroup as any).index
-                    : undefined;
+              messageGroup.type === 'normal' ? messageGroup.index : undefined;
             const branchPromptIndex =
-              branchAnchorIndex !== undefined && getBranchPromptIndexForMessage
+              canBranchThisGroup && branchAnchorIndex !== undefined && getBranchPromptIndexForMessage
                 ? getBranchPromptIndexForMessage(branchAnchorIndex)
                 : -1;
 
@@ -375,9 +379,9 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
                     projectPath={projectPath}
                     onRevert={onRevert}
                   />
-                  {/* 流式输出中的最后一条不显示分支按钮，避免对未完成内容分支 */}
+                  {/* 分支按钮：仅可分支节点显示，且像复制按钮一样 hover 才浮现 */}
                   {!isStreaming && branchPromptIndex >= 0 && (
-                    <div className="absolute top-1 right-1 z-20 opacity-80 hover:opacity-100 group-hover/msg:opacity-100 transition-opacity">
+                    <div className="absolute top-1 right-1 z-20 opacity-0 group-hover/msg:opacity-100 transition-opacity">
                       <MessageBranchButton
                         branchPromptIndex={branchPromptIndex}
                         onBranch={onBranch}

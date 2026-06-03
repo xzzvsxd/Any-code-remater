@@ -1169,6 +1169,18 @@
     "deleteRowFailed": "刪除行失敗",
     "insertRowFailed": "插入行失敗"
   },
+  "workbench": {
+    "title": "工作台",
+    "collapse": "收起側欄",
+    "expand": "展開側欄",
+    "openTabs": "開啟的標籤",
+    "noTabs": "暫無開啟的標籤",
+    "projects": "專案",
+    "noSessions": "此專案暫無對話",
+    "loadingSessions": "載入對話中…",
+    "showAllSessions": "展開全部 {{count}} 個對話",
+    "collapseSessions": "收起對話"
+  },
   "sessionList": {
     "deleting": "刪除中...",
     "deleteSelected": "刪除選中 ({{count}})",
@@ -1180,6 +1192,9 @@
     "all": "全部",
     "selectedCount": "已選擇 {{count}} 個對話",
     "batchManage": "批次管理對話",
+    "searchPlaceholder": "搜尋所有對話內容（如：吸鐵石）…",
+    "searchHint": "找到 {{count}} 個符合的對話",
+    "searching": "搜尋中…",
     "selectSession": "選擇對話 {{name}}",
     "sessionAriaLabel": "對話: {{name}}，時間: {{time}}",
     "sessionIdLabel": "對話 ID: {{id}}",
