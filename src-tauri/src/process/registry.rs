@@ -387,9 +387,23 @@ impl ProcessRegistry {
 
         #[cfg(unix)]
         {
+            // 优先走「安全的按进程组终止」。仅在其成功时直接返回；
+            // 若被安全校验拒绝（pid 非自身进程组组长）或失败，则不再直接返回，
+            // 而是继续往下回退到「只杀直接 child 句柄」——既避免误杀其它软件，又不漏杀本进程。
             match self.kill_process_by_pid(run_id, pid) {
-                Ok(success) => return Ok(success),
-                Err(e) => return Err(e),
+                Ok(true) => return Ok(true),
+                Ok(false) => {
+                    warn!(
+                        "Safe process-group kill refused or failed for process {} (PID: {}); falling back to direct child kill only",
+                        run_id, pid
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "Safe process-group kill errored for process {} (PID: {}): {}; falling back to direct child kill only",
+                        run_id, pid, e
+                    );
+                }
             }
         }
 
