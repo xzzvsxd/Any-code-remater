@@ -74,6 +74,10 @@ pub fn resolve_cmd_wrapper(cmd_path: &str) -> Option<(String, String)> {
 /// # Returns
 /// * `Ok(())` if the process was successfully killed
 /// * `Err(String)` with error description if the operation failed
+///
+/// 注：当前 Windows 下无调用方（取消回退已改为拒绝裸 taskkill /T、只杀直接 child），
+/// 保留实现以备将来需要，故 allow 未使用警告。
+#[allow(dead_code)]
 pub fn kill_process_tree_impl(pid: u32) -> Result<(), String> {
     log::info!("Attempting to kill process tree for PID {} on Windows", pid);
 

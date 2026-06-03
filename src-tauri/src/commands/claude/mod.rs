@@ -49,7 +49,11 @@ pub use self::config::{
 pub use self::hooks::{get_hooks_config, update_hooks_config, validate_hook_command};
 use self::project_store::ProjectStore;
 pub use file_ops::{list_directory_contents, search_files};
-pub use platform::{apply_no_window_async, kill_process_tree};
+// kill_process_tree 在 Windows 下不再被 Codex/Gemini 回退使用（改为拒绝裸 taskkill、只杀直接 child），
+// 仅 Unix 路径调用；在 Windows 编译时允许其重导出未被使用，避免警告噪音。
+pub use platform::apply_no_window_async;
+#[cfg_attr(windows, allow(unused_imports))]
+pub use platform::kill_process_tree;
 // Agent functionality removed
 
 #[tauri::command]

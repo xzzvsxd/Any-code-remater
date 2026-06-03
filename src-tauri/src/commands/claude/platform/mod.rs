@@ -55,6 +55,10 @@ pub fn apply_no_window_async(_cmd: &mut tokio::process::Command) {
 ///
 /// On Windows, uses taskkill with /T flag.
 /// On Unix, sends SIGKILL to the process.
+///
+/// 注：Windows 下已无调用方（Codex/Gemini 回退改为拒绝裸 taskkill、只杀直接 child），
+/// 仅 Unix 路径使用；保留 Windows 实现以备将来需要，故条件性 allow 未使用警告。
+#[cfg_attr(windows, allow(dead_code))]
 pub fn kill_process_tree(pid: u32) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {

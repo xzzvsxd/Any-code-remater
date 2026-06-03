@@ -424,12 +424,22 @@ impl GeminiProcessHandle {
         }
 
         if !terminated_via_job {
+            // Windows：没有 JobObject 身份时，拒绝裸 taskkill /F /T /PID。
+            // taskkill /T 会按进程树杀，若 self.pid 已被 OS 复用，会误杀无关进程树。
+            // 与 Claude registry 的策略对齐：无身份校验则只杀直接 child 句柄。
             #[cfg(target_os = "windows")]
-            if self.wsl_spec.is_some() {
-                log::warn!(
-                    "[Gemini] Refusing unsafe Windows taskkill fallback for WSL host PID {}",
-                    self.pid
-                );
+            {
+                if self.wsl_spec.is_some() {
+                    log::warn!(
+                        "[Gemini] Refusing unsafe Windows taskkill fallback for WSL host PID {}",
+                        self.pid
+                    );
+                } else {
+                    log::warn!(
+                        "[Gemini] No JobObject for PID {}; refusing unsafe taskkill /T, killing direct child only",
+                        self.pid
+                    );
+                }
                 if let Err(e2) = self.child.kill().await {
                     log::error!(
                         "[Gemini] Fallback child.kill failed for PID {}: {}",
@@ -440,6 +450,9 @@ impl GeminiProcessHandle {
                 return;
             }
 
+            // Unix：进程在独立进程组中，kill_process_group 内部已校验 pid==pgid（组长身份），
+            // 不会误杀其它进程组，安全。
+            #[cfg(not(target_os = "windows"))]
             if let Err(e) = crate::commands::claude::kill_process_tree(self.pid) {
                 log::warn!(
                     "[Gemini] Failed to terminate process tree for PID {}: {}",
