@@ -1229,6 +1229,22 @@ export const api = {
   },
 
   /**
+   * 启动持久化流式 Claude 会话（进程常驻、stdin 保持打开，支持随时插话）。
+   * 仅在 CLI 支持 --input-format stream-json 时使用。
+   */
+  async executeClaudeStreaming(projectPath: string, prompt: string, model: string, planMode?: boolean, maxThinkingTokens?: number, tabId?: string): Promise<void> {
+    return invoke("execute_claude_streaming", { projectPath, prompt, model, planMode, maxThinkingTokens, tabId });
+  },
+
+  /**
+   * 向持久化流式会话写入一条新消息（随时插话 / 问题与计划的硬阻塞回应）。
+   * @returns true 已写入；false 该会话非流式或不存在（调用方应降级为开新一轮）
+   */
+  async sendStreamMessage(sessionId: string, message: string): Promise<boolean> {
+    return invoke<boolean>("send_stream_message", { sessionId, message });
+  },
+
+  /**
    * Continues an existing Claude Code conversation with streaming output
    * @param planMode - Enable Plan Mode for read-only research and planning
    * @param tabId - Unique identifier for the tab, used to filter global events

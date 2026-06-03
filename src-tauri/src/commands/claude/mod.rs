@@ -7,9 +7,11 @@ mod paths;
 mod platform;
 mod project_store;
 mod session_history;
+mod streaming;
 
 pub use models::*;
 pub use paths::*;
+pub use self::streaming::execute_claude_streaming;
 // Export platform utilities for process window hiding
 pub use self::cli_runner::{
     cancel_claude_execution, continue_claude_code, execute_claude_code, get_claude_session_output,

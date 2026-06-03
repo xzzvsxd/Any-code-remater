@@ -183,6 +183,16 @@ fn create_system_command(
     create_windows_command(claude_path, args, project_path, model)
 }
 
+/// 供持久化流式会话使用的命令构建（与 one-shot 同样 piped stdin/stdout/stderr）。
+pub(super) fn create_streaming_command(
+    claude_path: &str,
+    args: Vec<String>,
+    project_path: &str,
+    model: Option<&str>,
+) -> Result<Command, String> {
+    create_windows_command(claude_path, args, project_path, model)
+}
+
 /// Create a Windows command
 /// 注意：stdout/stderr 会被 piped，stdin 也会被 piped 以支持通过管道传递 prompt
 fn create_windows_command(
