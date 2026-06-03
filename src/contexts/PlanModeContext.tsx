@@ -27,7 +27,9 @@ interface PlanModeContextValue {
   togglePlanMode: () => void;
   pendingApproval: PendingPlanApproval | null;
   showApprovalDialog: boolean;
-  triggerPlanApproval: (plan: string, toolId?: string) => void;
+  /** 触发计划审批对话框；toolId 优先用作去重键。
+   *  auto=true 表示「自动弹出」，同一计划仅允许自动弹一次；用户手动点击触发（auto=false/省略）则始终放行。 */
+  triggerPlanApproval: (plan: string, toolId?: string, auto?: boolean) => void;
   approvePlan: () => void;
   rejectPlan: () => void;
   closeApprovalDialog: () => void;
@@ -106,6 +108,11 @@ export function PlanModeProvider({
   const sendPromptCallbackRef = useRef<((prompt: string) => void) | null>(null);
   const storageKeyRef = useRef<string | undefined>(storageKey);
 
+  // 「已自动弹出过」的计划去重集合。
+  // 用 ref 而非 state，使其与 widget 生命周期解耦——列表滚动导致 widget 卸载/重挂载时记录仍存活，
+  // 从而保证同一计划「只自动弹一次」，滚回来不再自动弹（用户可手动点按钮再弹）。
+  const autoTriggeredPlanIdsRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     if (storageKeyRef.current === storageKey) {
       return;
@@ -146,11 +153,20 @@ export function PlanModeProvider({
 
   const isPlanRejected = useCallback((planId: string) => rejectedPlanIds.has(planId), [rejectedPlanIds]);
 
-  const triggerPlanApproval = useCallback((plan: string, toolId?: string) => {
+  const triggerPlanApproval = useCallback((plan: string, toolId?: string, auto: boolean = false) => {
     const planId = resolvePlanDedupeKey(plan, toolId);
 
     if (approvedPlanIds.has(planId) || rejectedPlanIds.has(planId)) {
       return;
+    }
+
+    // 自动弹出仅允许首次：同一计划自动弹过一次后，用户若未决策而继续往下，
+    // 之后即使滚回该 widget 也不再自动弹，只能手动点审批按钮触发。
+    if (auto) {
+      if (autoTriggeredPlanIdsRef.current.has(planId)) {
+        return;
+      }
+      autoTriggeredPlanIdsRef.current.add(planId);
     }
 
     setPendingApproval({

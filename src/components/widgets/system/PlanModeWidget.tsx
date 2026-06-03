@@ -12,7 +12,7 @@
  * - 避免重复弹窗
  */
 
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Search, LogOut, CheckCircle, AlertCircle, Play, RefreshCw, Info, Lightbulb, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -48,7 +48,6 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
   const isEnter = action === "enter";
   const isExit = action === "exit";
   const isError = result?.is_error;
-  const hasTriggered = useRef(false);
 
   // 计算去重键：优先用工具调用唯一 toolId，回退到计划内容哈希
   const planId = useMemo(() => {
@@ -57,7 +56,7 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
   }, [plan, toolId]);
 
   // 尝试获取 PlanMode Context
-  let triggerPlanApproval: ((plan: string, toolId?: string) => void) | undefined;
+  let triggerPlanApproval: ((plan: string, toolId?: string, auto?: boolean) => void) | undefined;
   let getPlanStatus: ((planId: string) => PlanStatus) | undefined;
   let planStatus: PlanStatus = 'pending';
 
@@ -78,13 +77,14 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
   const isRejected = planStatus === 'rejected';
   const hasDecision = isApproved || isRejected;
 
-  // 自动触发审批对话框（仅在 ExitPlanMode 且有计划内容且未决策时）
+  // 自动触发审批对话框（仅在 ExitPlanMode 且有计划内容且未决策时）。
+  // 「只自动弹一次」由 Context 的 autoTriggeredPlanIds 统一去重（与 widget 生命周期解耦），
+  // 因此 widget 卸载/重挂载（列表滚动）也不会重复自动弹——这里只负责按需发起请求。
   useEffect(() => {
-    if (isExit && plan && triggerPlanApproval && !hasTriggered.current && !hasDecision && !result) {
-      hasTriggered.current = true;
+    if (isExit && plan && triggerPlanApproval && !hasDecision && !result) {
       // 延迟触发，确保 UI 已渲染
       const timer = setTimeout(() => {
-        triggerPlanApproval(plan, toolId);
+        triggerPlanApproval(plan, toolId, true);
       }, 500);
       return () => clearTimeout(timer);
     }
@@ -141,10 +141,10 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
         ? t('promptInput.planRejectedDesc')
         : t('promptInput.exitPlanModeDesc');
 
-  // 手动触发审批
+  // 手动触发审批：始终放行（auto=false），即便此前已自动弹过。
   const handleTriggerApproval = () => {
     if (plan && triggerPlanApproval) {
-      triggerPlanApproval(plan, toolId);
+      triggerPlanApproval(plan, toolId, false);
     }
   };
 
@@ -155,9 +155,17 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
       ? RefreshCw
       : Icon;
 
+  // 未决策的 ExitPlanMode：整个卡片头部可点击触发审批（标题区与操作融为一体）
+  const headerClickable = isExit && !!plan && !!triggerPlanApproval && !hasDecision && !result;
+
   return (
     <div className={`rounded-lg border ${colorClass} overflow-hidden`}>
-      <div className="px-4 py-3 flex items-start gap-3">
+      <div
+        className={`px-4 py-3 flex items-start gap-3 transition-colors ${
+          headerClickable ? "cursor-pointer hover:bg-green-500/10" : ""
+        }`}
+        onClick={headerClickable ? handleTriggerApproval : undefined}
+      >
         <div className="mt-0.5">
           <div className={`h-8 w-8 rounded-full ${iconBgClass} flex items-center justify-center`}>
             <StatusIcon className={`h-4 w-4 ${iconColorClass}`} />
@@ -256,10 +264,13 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
                   <span>{t('widget.planRejectedReplanning')}</span>
                 </div>
               ) : triggerPlanApproval ? (
-                // 未决策：显示审批按钮
+                // 未决策：显示审批按钮（阻止冒泡，避免与可点击头部重复触发）
                 <Button
                   size="sm"
-                  onClick={handleTriggerApproval}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleTriggerApproval();
+                  }}
                   className="gap-2 bg-green-600 hover:bg-green-700"
                 >
                   <Play className="h-3.5 w-3.5" />
