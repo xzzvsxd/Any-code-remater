@@ -68,7 +68,6 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
       <div className="z-50 flex-shrink-0 relative">
         <WorkbenchSidebar
           onAboutClick={() => setShowAboutDialog(true)}
-          onUpdateClick={() => setShowUpdateDialog(true)}
         />
       </div>
 

@@ -22,13 +22,13 @@ import {
   FolderInput,
   Copy,
   RefreshCw,
-  RefreshCcw,
   ExternalLink,
   X,
   Files,
   Download,
   Pencil,
   GripVertical,
+  Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
@@ -71,8 +71,6 @@ import { truncateText, getFirstLine } from '@/lib/date-utils';
 interface WorkbenchSidebarProps {
   /** 打开"关于"对话框 */
   onAboutClick?: () => void;
-  /** 打开"更新"对话框 */
-  onUpdateClick?: () => void;
 }
 
 const WIDTH_KEY = 'workbench_sidebar_width';
@@ -126,9 +124,9 @@ const EngineCountBadges: React.FC<{ project: Project; isCurrent: boolean }> = ({
  * 合并了原最左侧图标导航栏：导航/设置/关于/主题等收进底部 dock。
  * 可拖拽调宽、可折叠，状态持久化到 localStorage。
  */
-export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick, onUpdateClick }) => {
+export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick }) => {
   const { t } = useTranslation();
-  const { tabs, switchToTab, createNewTab, openSessionInBackground } = useTabs();
+  const { tabs, switchToTab, createNewTab, openSessionInBackground, closeTab } = useTabs();
   const { projects, selectedProject, sessions, selectProject, deleteProject, refreshSessions } = useProject();
   const { currentView, navigateTo } = useNavigation();
 
@@ -342,6 +340,17 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
         else if (engine === 'gemini') await api.deleteGeminiSession(s.project_path, s.id);
         else await api.deleteSession(s.id, s.project_id);
         toast(t('workbench.ctx.sessionDeleted'));
+        // 会话树由「落盘列表 + 已打开标签页(openTabSessions)」合并而成：若被删会话仍有标签页打开，
+        // 仅刷新落盘列表它会被标签页重新注入树而“删不掉”。用户已确认删除，强制关闭其标签页。
+        const openTabs = tabs
+          .filter((tb) => tb.session?.id === s.id)
+          // 先关非活跃标签，最后关活跃标签：useTabs.forceCloseTab 会在关闭活跃标签时自动切换。
+          // 如果先关活跃标签、再关同会话的另一个重复标签，旧 activeTabId 闭包可能把 activeTabId
+          // 留在已删除标签上；把活跃标签放最后可避免这个边界。
+          .sort((a, b) => Number(a.isActive) - Number(b.isActive));
+        for (const tb of openTabs) {
+          await closeTab(tb.id, true);
+        }
         if (selectedProject?.id === s.project_id) await refreshSessions();
       } else if (confirm.kind === 'removeProject') {
         await deleteProject(confirm.project);
@@ -358,7 +367,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
       setBusy(false);
       setConfirm(null);
     }
-  }, [confirm, selectedProject, refreshSessions, deleteProject, t]);
+  }, [confirm, selectedProject, refreshSessions, deleteProject, tabs, closeTab, t]);
 
   // 折叠态：只留一个细把手
   if (collapsed) {
@@ -434,7 +443,6 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
         currentView={currentView}
         onNavigate={navigateTo}
         onAboutClick={onAboutClick}
-        onUpdateClick={onUpdateClick}
       />
 
       {/* 拖拽调宽把手 */}
@@ -481,7 +489,6 @@ interface NavDockProps {
   currentView: View;
   onNavigate: (view: View) => void;
   onAboutClick?: () => void;
-  onUpdateClick?: () => void;
 }
 
 /** 提示词编辑器三选一（Claude / Codex / Gemini 合并为一个入口） */
@@ -491,7 +498,7 @@ const PROMPT_EDITORS: Array<{ view: View; labelKey: string; icon: React.ElementT
   { view: 'gemini-editor', labelKey: 'sidebar.geminiPrompts', icon: Sparkles },
 ];
 
-const WorkbenchNavDock: React.FC<NavDockProps> = ({ currentView, onNavigate, onAboutClick, onUpdateClick }) => {
+const WorkbenchNavDock: React.FC<NavDockProps> = ({ currentView, onNavigate, onAboutClick }) => {
   const { t } = useTranslation();
 
   const isPromptView = currentView === 'editor' || currentView === 'codex-editor' || currentView === 'gemini-editor';
@@ -612,17 +619,12 @@ const WorkbenchNavDock: React.FC<NavDockProps> = ({ currentView, onNavigate, onA
           />
         </div>
 
-        {/* 系统行：主题 / 关于 / 更新 / 设置 */}
+        {/* 系统行：主题 / 关于 / 设置 */}
         <div className="flex items-center justify-center gap-1 px-2 py-2 mt-1 border-t border-border/40">
           <ThemeToggle size="sm" className="w-8 h-8" />
           {onAboutClick && (
             <IconButton label={t('sidebar.about')} onClick={onAboutClick}>
               <HelpCircle className="h-4 w-4" />
-            </IconButton>
-          )}
-          {onUpdateClick && (
-            <IconButton label={t('updateBadge.checkUpdate')} onClick={onUpdateClick}>
-              <RefreshCcw className="h-4 w-4" />
             </IconButton>
           )}
           <IconButton
@@ -831,17 +833,18 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
                           onContextMenu={(e) => { e.preventDefault(); setMenuFor(`sess:${session.id}`); }}
                           className={cn(
                             'group/sess relative flex items-center gap-1.5 pl-1 pr-1 py-1.5 rounded-md cursor-pointer transition-all duration-150',
-                            isRunning
-                              ? 'bg-gradient-to-r from-emerald-500/15 to-emerald-500/5 text-foreground'
-                              : isActive
-                                ? 'bg-gradient-to-r from-primary/15 to-primary/5 text-foreground'
+                            // 运行态不再铺满整行遮罩：背景以「是否选中」为准，运行状态改用旋转 loading 图标表达，两者互不打架。
+                            isActive
+                              ? 'bg-gradient-to-r from-primary/15 to-primary/5 text-foreground'
+                              : isRunning
+                                ? 'bg-amber-500/[0.06] text-foreground'
                                 : 'text-muted-foreground/90 hover:text-foreground hover:bg-muted/40'
                           )}
                         >
-                          {isRunning ? (
-                            <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-emerald-500 animate-pulse" />
-                          ) : isActive ? (
+                          {isActive ? (
                             <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-primary" />
+                          ) : isRunning ? (
+                            <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-amber-500/80" />
                           ) : null}
                           {/* 拖拽手柄：仅展开全部时可见可用 */}
                           {expandedAll && (
@@ -849,8 +852,13 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
                               <GripVertical className="h-3 w-3" />
                             </SortableDragHandle>
                           )}
-                          <span className={cn('flex items-center justify-center flex-shrink-0', isRunning && 'animate-pulse')}>
-                            <EngineDot engine={session.engine} active={isActive || isRunning} />
+                          {/* 运行中直接用旋转 loading 图标替换引擎图标，明确表达「执行中」；空闲时显示引擎图标 */}
+                          <span className="flex items-center justify-center flex-shrink-0">
+                            {isRunning ? (
+                              <Loader2 className="h-3.5 w-3.5 text-amber-500 animate-spin" />
+                            ) : (
+                              <EngineDot engine={session.engine} active={isActive} />
+                            )}
                           </span>
                           {isRenaming ? (
                             <input
