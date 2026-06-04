@@ -112,6 +112,15 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
     const scrollElement = parentRef.current;
     if (!scrollElement) return;
 
+    // 跨帧二次确认句柄：用于过滤虚拟列表测量抖动那一帧的“假性贴底”，下方 handleScroll 说明根因。
+    let resumeConfirmFrame = 0;
+    const cancelResumeConfirmation = () => {
+      if (resumeConfirmFrame) {
+        cancelAnimationFrame(resumeConfirmFrame);
+        resumeConfirmFrame = 0;
+      }
+    };
+
     /**
      * 用户主动输入（滚轮 / 触摸 / 键盘）是“离开底部”的最可靠信号。
      * 一旦检测到向上意图，立即解除粘底——向上滚动本身就是明确的“查看历史”意图，
@@ -121,6 +130,7 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
     const releaseOnUserIntent = (movingUp: boolean) => {
       if (!movingUp) return;
       if (getDistanceFromBottom(scrollElement) <= 1) return;
+      cancelResumeConfirmation();
       userIntentReleasedRef.current = true;
       syncAutoScrollState(false);
     };
@@ -149,16 +159,35 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
      * 避免高频自动滚动期间把用户真实滚动一并吞掉。
      */
     const handleScroll = () => {
-      const distance = getDistanceFromBottom(scrollElement);
       // 用户主动上滑解除过粘底：必须几乎精确贴底（≤4px）才恢复，避免 80px 区间内被立即吸回。
       // 未经主动解除（如程序滚动后的微抖）：维持 80px 宽松阈值恢复，保证正常跟随体验。
       const resumeThreshold = userIntentReleasedRef.current
         ? RESUME_AT_BOTTOM_THRESHOLD
         : RESUME_AUTO_SCROLL_THRESHOLD;
-      if (distance <= resumeThreshold) {
-        userIntentReleasedRef.current = false;
-        syncAutoScrollState(true);
+
+      const distance = getDistanceFromBottom(scrollElement);
+      if (distance > resumeThreshold) {
+        cancelResumeConfirmation();
+        return;
       }
+
+      // 向上滚动时虚拟列表会渐进测量上方消息项的真实高度，导致 totalSize / scrollHeight
+      // 在某一帧先行变化、而 scrollTop 的补偿调整尚未应用 —— 这一帧的 distance 会出现
+      // “假性贴底”（甚至为负）。isLoading 期间又常驻一个自动滚动循环，一旦此刻误判贴底
+      // 恢复粘底，就会被该循环立刻拽到底部，表现为“向上翻、一遇到刷新加载就弹到底”。
+      // 因此跨一帧二次确认：仅当连续两帧都贴底，才认定为用户真实回到底部。
+      cancelResumeConfirmation();
+      resumeConfirmFrame = requestAnimationFrame(() => {
+        resumeConfirmFrame = 0;
+        if (!scrollElement.isConnected) return;
+        const currentResumeThreshold = userIntentReleasedRef.current
+          ? RESUME_AT_BOTTOM_THRESHOLD
+          : RESUME_AUTO_SCROLL_THRESHOLD;
+        if (getDistanceFromBottom(scrollElement) <= currentResumeThreshold) {
+          userIntentReleasedRef.current = false;
+          syncAutoScrollState(true);
+        }
+      });
     };
 
     scrollElement.addEventListener('wheel', handleWheel, { passive: true });
@@ -168,6 +197,7 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
     scrollElement.addEventListener('scroll', handleScroll, { passive: true });
 
     return () => {
+      cancelResumeConfirmation();
       scrollElement.removeEventListener('wheel', handleWheel);
       scrollElement.removeEventListener('touchstart', handleTouchStart);
       scrollElement.removeEventListener('touchmove', handleTouchMove);

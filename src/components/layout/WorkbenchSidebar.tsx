@@ -191,6 +191,21 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
 
   const draggingRef = useRef(false);
 
+  // 运行中的会话集合：取自已打开标签页的 streaming 状态，供工作台树实时高亮。
+  const runningSessionIds = React.useMemo(
+    () => new Set(tabs.filter((tb) => tb.state === 'streaming' && tb.session?.id).map((tb) => tb.session!.id)),
+    [tabs],
+  );
+  // 已在标签页打开的会话（含尚未落盘的新建会话）：实时合并进项目树，
+  // 无需等待 AI 完成事件与磁盘刷新，新会话拿到 sessionId 即刻可见。
+  // 落盘前 session 无 first_message，用标签页标题兜底，避免显示成裸 id。
+  const openTabSessions = React.useMemo(
+    () => tabs
+      .filter((tb) => tb.session?.id)
+      .map((tb) => (tb.session!.first_message ? tb.session! : { ...tb.session!, first_message: tb.title })),
+    [tabs],
+  );
+
   useEffect(() => {
     try { localStorage.setItem(COLLAPSED_KEY, String(collapsed)); } catch { /* ignore */ }
   }, [collapsed]);
@@ -395,6 +410,8 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
         sessions={sessions}
         expandedProjects={expandedProjects}
         activeSessionId={tabs.find((tb) => tb.isActive)?.session?.id ?? null}
+        runningSessionIds={runningSessionIds}
+        openTabSessions={openTabSessions}
         onToggleProject={toggleProject}
         onOpenSession={openSession}
         onNewSession={onNewSession}
@@ -630,6 +647,10 @@ interface ProjectTreeProps {
   sessions: Session[];
   expandedProjects: Set<string>;
   activeSessionId: string | null;
+  /** 运行中的会话 id 集合（来自标签页 streaming 状态），用于实时高亮 */
+  runningSessionIds: Set<string>;
+  /** 已在标签页打开的会话（含未落盘的新建会话），实时合并进树 */
+  openTabSessions: Session[];
   onToggleProject: (project: Project) => void;
   onOpenSession: (session: Session) => void;
   onNewSession: () => void;
@@ -647,7 +668,8 @@ interface ProjectTreeProps {
   onRequestPurgeProject: (project: Project) => void;
 }
 const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
-  projects, selectedProjectId, sessions, expandedProjects, activeSessionId, onToggleProject, onOpenSession,
+  projects, selectedProjectId, sessions, expandedProjects, activeSessionId, runningSessionIds, openTabSessions,
+  onToggleProject, onOpenSession,
   onNewSession, onRefreshProject, onOpenInExplorer, onCopyText, onDuplicateSession, onExportSession,
   sessionTitles, onRenameSession, sessionOrder, onReorderSessions,
   onRequestDeleteSession, onRequestRemoveProject, onRequestPurgeProject,
@@ -664,6 +686,12 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
     const norm = p.path.replace(/\\/g, '/').replace(/\/+$/, '');
     return norm.split('/').pop() || norm;
   };
+
+  // 标签页会话与项目的归一化路径匹配：project_id 在虚拟项目/大小写差异下可能对不上，
+  // 故同时以归一化路径作为回退匹配键，确保新会话落到正确项目。
+  const normPath = (p?: string) => (p ? p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() : '');
+  const tabSessionBelongsTo = (s: Session, project: Project) =>
+    s.project_id === project.id || (!!s.project_path && normPath(s.project_path) === normPath(project.path));
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto py-2 px-1">
@@ -682,8 +710,17 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
       {projects.map((project) => {
         const isExpanded = expandedProjects.has(project.id);
         const isCurrent = selectedProjectId === project.id;
-        // 仅当前选中项目能拿到已加载的 sessions；其它项目展开时会触发加载并成为当前项目。
-        const rawSessions = isCurrent ? sessions : [];
+        // 仅当前选中项目能拿到已加载的（落盘）sessions；其它项目展开时会触发加载并成为当前项目。
+        const diskSessions = isCurrent ? sessions : [];
+        // 实时合并该项目下"已在标签页打开但尚未落盘/尚未刷新"的会话，
+        // 使新建会话拿到 sessionId 后立刻出现在树里，无需等 AI 完成事件。
+        const diskIds = new Set(diskSessions.map((s) => s.id));
+        const pendingTabSessions = openTabSessions.filter(
+          (s) => tabSessionBelongsTo(s, project) && !diskIds.has(s.id),
+        );
+        const rawSessions = pendingTabSessions.length > 0
+          ? [...pendingTabSessions, ...diskSessions]
+          : diskSessions;
         // 应用用户自定义排序：order key 以项目维度存储（引擎前缀固定，仅作存储键）。
         const orderKey = `proj:${project.id}`;
         const savedOrder = sessionOrder[orderKey];
@@ -780,6 +817,7 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
                       }}
                       renderItem={(session) => {
                       const isActive = activeSessionId === session.id;
+                      const isRunning = runningSessionIds.has(session.id);
                       const customTitle = sessionTitles[session.id];
                       const preview = customTitle
                         ? truncateText(customTitle, 40)
@@ -793,19 +831,27 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
                           onContextMenu={(e) => { e.preventDefault(); setMenuFor(`sess:${session.id}`); }}
                           className={cn(
                             'group/sess relative flex items-center gap-1.5 pl-1 pr-1 py-1.5 rounded-md cursor-pointer transition-all duration-150',
-                            isActive
-                              ? 'bg-gradient-to-r from-primary/15 to-primary/5 text-foreground'
-                              : 'text-muted-foreground/90 hover:text-foreground hover:bg-muted/40'
+                            isRunning
+                              ? 'bg-gradient-to-r from-emerald-500/15 to-emerald-500/5 text-foreground'
+                              : isActive
+                                ? 'bg-gradient-to-r from-primary/15 to-primary/5 text-foreground'
+                                : 'text-muted-foreground/90 hover:text-foreground hover:bg-muted/40'
                           )}
                         >
-                          {isActive && <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-primary" />}
+                          {isRunning ? (
+                            <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-emerald-500 animate-pulse" />
+                          ) : isActive ? (
+                            <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-primary" />
+                          ) : null}
                           {/* 拖拽手柄：仅展开全部时可见可用 */}
                           {expandedAll && (
                             <SortableDragHandle className="flex-shrink-0 h-4 w-3 opacity-0 group-hover/sess:opacity-100 transition-opacity">
                               <GripVertical className="h-3 w-3" />
                             </SortableDragHandle>
                           )}
-                          <EngineDot engine={session.engine} active={isActive} />
+                          <span className={cn('flex items-center justify-center flex-shrink-0', isRunning && 'animate-pulse')}>
+                            <EngineDot engine={session.engine} active={isActive || isRunning} />
+                          </span>
                           {isRenaming ? (
                             <input
                               autoFocus

@@ -207,6 +207,52 @@ fn sort_messages_chronologically_preserving_missing_timestamps(messages: Vec<Val
     indexed.into_iter().map(|(_, _, message)| message).collect()
 }
 
+/// 为历史消息补充“展示/排序时间戳”（user 写 sentAt、assistant/system/result 写 receivedAt）。
+///
+/// 关键约束：必须优先使用消息自带的真实 `timestamp`，让 user 的 sentAt 与 assistant 的
+/// receivedAt 落在**同一时钟**。否则前端排序键在 user(取真实 timestamp) 与
+/// assistant(取本函数合成的 receivedAt) 之间会混用两套时间基准，导致带 UI-only 事件触发
+/// 全量重排序时，所有用户消息被整体堆叠到会话顶部。
+///
+/// 仅当历史消息确实缺失 `timestamp`（极老的会话）时，才退回基于文件 mtime 的合成时间
+/// （按行号每条间隔 5s 倒推），此时 user/assistant 同样落在这条合成时间线上，保持一致。
+fn apply_display_timestamps_preferring_real(messages: &mut [Value], base_time: SystemTime) {
+    let messages_count = messages.len();
+    for (i, message) in messages.iter_mut().enumerate() {
+        let message_type = message
+            .get("type")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // 优先真实 timestamp；缺失时才用 mtime 合成时间（越老的消息时间越早）。
+        let timestamp_iso = message
+            .get("timestamp")
+            .and_then(|t| t.as_str())
+            .filter(|t| !t.is_empty())
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| {
+                let time_offset = (messages_count - i - 1) as u64 * 5;
+                let message_time = base_time - std::time::Duration::from_secs(time_offset);
+                DateTime::<Utc>::from(message_time).to_rfc3339()
+            });
+
+        // 仅在对应字段缺失时写入，避免覆盖实时流已设置的真实时间。
+        match message_type.as_str() {
+            "user" => {
+                if message.get("sentAt").is_none() {
+                    message["sentAt"] = Value::String(timestamp_iso);
+                }
+            }
+            _ => {
+                if message.get("receivedAt").is_none() {
+                    message["receivedAt"] = Value::String(timestamp_iso);
+                }
+            }
+        }
+    }
+}
+
 /// Loads the JSONL history for a specific session
 /// Also loads subagent messages from agent-*.jsonl files and merges them
 pub fn load_session_history(session_id: &str, project_id: &str) -> Result<Vec<Value>, String> {
@@ -336,36 +382,10 @@ pub fn load_session_history(session_id: &str, project_id: &str) -> Result<Vec<Va
     // 的排序键，并用原始行号兜底，既保持总排序稳定，也避免旧消息错位。
     let mut messages = sort_messages_chronologically_preserving_missing_timestamps(messages);
 
-    // Add timestamps to historical messages that don't have them
-    let messages_count = messages.len();
-    for (i, message) in messages.iter_mut().enumerate() {
-        let message_type = message.get("type").and_then(|t| t.as_str()).unwrap_or("");
-
-        // Calculate timestamp for this message (5 second intervals, older messages get earlier timestamps)
-        let time_offset = (messages_count - i - 1) as u64 * 5; // 5 seconds between messages
-        let message_time = base_time - std::time::Duration::from_secs(time_offset);
-        let timestamp_iso = DateTime::<Utc>::from(message_time).to_rfc3339();
-
-        // Set appropriate timestamp fields based on message type, only if they don't exist
-        match message_type {
-            "user" => {
-                if !message.get("sentAt").is_some() {
-                    message["sentAt"] = Value::String(timestamp_iso.clone());
-                }
-            }
-            "assistant" | "system" | "result" => {
-                if !message.get("receivedAt").is_some() {
-                    message["receivedAt"] = Value::String(timestamp_iso.clone());
-                }
-            }
-            _ => {
-                // For unknown types, add receivedAt
-                if !message.get("receivedAt").is_some() {
-                    message["receivedAt"] = Value::String(timestamp_iso.clone());
-                }
-            }
-        }
-    }
+    // Step 4: 为缺失展示时间戳的历史消息补充 sentAt/receivedAt。
+    // 必须优先采用消息自带的真实 timestamp，确保 user 与 assistant 落在同一时钟，
+    // 否则前端按 receivedAt||timestamp||sentAt 排序时会混用两套时间基准，把用户消息堆到顶部。
+    apply_display_timestamps_preferring_real(&mut messages, base_time);
 
     log::info!(
         "Loaded {} total messages (including subagent messages)",
@@ -377,10 +397,11 @@ pub fn load_session_history(session_id: &str, project_id: &str) -> Result<Vec<Va
 #[cfg(test)]
 mod tests {
     use super::{
-        is_auto_compaction_instruction, is_slash_command_message,
-        sort_messages_chronologically_preserving_missing_timestamps,
+        apply_display_timestamps_preferring_real, is_auto_compaction_instruction,
+        is_slash_command_message, sort_messages_chronologically_preserving_missing_timestamps,
     };
     use serde_json::{json, Value};
+    use std::time::SystemTime;
 
     fn ids(messages: &[Value]) -> Vec<&str> {
         messages
@@ -439,5 +460,96 @@ mod tests {
         let sorted = sort_messages_chronologically_preserving_missing_timestamps(messages);
 
         assert_eq!(ids(&sorted), vec!["user-1", "subagent", "assistant-1"]);
+    }
+
+    // 回归测试：真实会话每条消息都自带 timestamp。补充展示时间戳时必须直接采用真实
+    // timestamp，使 user 的 sentAt 与 assistant 的 receivedAt 落在同一时钟，否则前端
+    // 混用两套时间基准会把所有用户消息堆到会话顶部。
+    #[test]
+    fn display_timestamps_prefer_real_timestamp_same_clock() {
+        let mut messages = vec![
+            json!({ "type": "user", "timestamp": "2026-06-04T12:15:26.165Z" }),
+            json!({ "type": "assistant", "timestamp": "2026-06-04T12:15:32.270Z" }),
+            json!({ "type": "user", "timestamp": "2026-06-04T12:15:33.142Z" }),
+            json!({ "type": "assistant", "timestamp": "2026-06-04T12:15:38.243Z" }),
+        ];
+
+        apply_display_timestamps_preferring_real(&mut messages, SystemTime::now());
+
+        // user 写入 sentAt 且等于真实 timestamp
+        assert_eq!(
+            messages[0].get("sentAt").and_then(|v| v.as_str()),
+            Some("2026-06-04T12:15:26.165Z")
+        );
+        assert_eq!(
+            messages[2].get("sentAt").and_then(|v| v.as_str()),
+            Some("2026-06-04T12:15:33.142Z")
+        );
+        // assistant 写入 receivedAt 且等于真实 timestamp（与 user 同一时钟）
+        assert_eq!(
+            messages[1].get("receivedAt").and_then(|v| v.as_str()),
+            Some("2026-06-04T12:15:32.270Z")
+        );
+        assert_eq!(
+            messages[3].get("receivedAt").and_then(|v| v.as_str()),
+            Some("2026-06-04T12:15:38.243Z")
+        );
+
+        // 前端排序键 receivedAt||timestamp||sentAt 对全体严格递增，user 不会被甩到顶部。
+        let key = |m: &Value| {
+            m.get("receivedAt")
+                .or_else(|| m.get("timestamp"))
+                .or_else(|| m.get("sentAt"))
+                .and_then(|v| v.as_str())
+                .unwrap()
+                .to_string()
+        };
+        let keys: Vec<String> = messages.iter().map(key).collect();
+        let mut sorted_keys = keys.clone();
+        sorted_keys.sort();
+        assert_eq!(keys, sorted_keys, "排序键应已是升序，时间线连贯");
+    }
+
+    // 极老会话缺失 timestamp 时，退回 mtime 合成时间线，user/assistant 仍落在同一时钟。
+    #[test]
+    fn display_timestamps_fallback_keeps_user_and_assistant_consistent() {
+        let mut messages = vec![
+            json!({ "type": "user" }),
+            json!({ "type": "assistant" }),
+            json!({ "type": "user" }),
+        ];
+
+        apply_display_timestamps_preferring_real(&mut messages, SystemTime::now());
+
+        let t0 = messages[0].get("sentAt").and_then(|v| v.as_str()).unwrap();
+        let t1 = messages[1]
+            .get("receivedAt")
+            .and_then(|v| v.as_str())
+            .unwrap();
+        let t2 = messages[2].get("sentAt").and_then(|v| v.as_str()).unwrap();
+
+        // 合成时间线随行号递增（越早的消息时间越早）
+        assert!(t0 < t1, "第0条应早于第1条");
+        assert!(t1 < t2, "第1条应早于第2条");
+    }
+
+    // 已存在 sentAt/receivedAt（实时流写入）时不得被覆盖。
+    #[test]
+    fn display_timestamps_do_not_overwrite_existing() {
+        let mut messages = vec![
+            json!({ "type": "user", "timestamp": "2026-06-04T12:15:26.165Z", "sentAt": "real-sent" }),
+            json!({ "type": "assistant", "timestamp": "2026-06-04T12:15:32.270Z", "receivedAt": "real-received" }),
+        ];
+
+        apply_display_timestamps_preferring_real(&mut messages, SystemTime::now());
+
+        assert_eq!(
+            messages[0].get("sentAt").and_then(|v| v.as_str()),
+            Some("real-sent")
+        );
+        assert_eq!(
+            messages[1].get("receivedAt").and_then(|v| v.as_str()),
+            Some("real-received")
+        );
     }
 }

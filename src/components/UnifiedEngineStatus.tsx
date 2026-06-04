@@ -83,7 +83,7 @@ export const UnifiedEngineStatus: React.FC<UnifiedEngineStatusProps> = ({
     <div className={cn("flex flex-col gap-1 w-full", className)}>
       {compact ? (
         // Compact view (collapsed sidebar)
-        <div className="flex flex-col items-center gap-2">
+        <div className="flex flex-row items-center justify-center gap-3">
           {statuses.map((engine) => (
             <TooltipProvider key={engine.type}>
               <Tooltip>
