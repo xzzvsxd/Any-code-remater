@@ -84,6 +84,11 @@ interface ClaudeCodeSessionProps {
    */
   onSessionInfoChange?: (info: { sessionId: string; projectId: string; projectPath: string; engine?: 'claude' | 'codex' | 'gemini' }) => void;
   /**
+   * 当用户在「新会话」中发出首条消息时回调，用于把标签标题从「新对话」改为该消息内容。
+   * 仅在本会话此前没有任何消息时触发一次。
+   */
+  onFirstUserPrompt?: (prompt: string) => void;
+  /**
    * Whether this session is currently active (for event listener management)
    */
   isActive?: boolean;
@@ -119,6 +124,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   onProjectPathChange,
   onEngineChange,
   onSessionInfoChange,
+  onFirstUserPrompt,
   isActive = true, // 默认为活跃状态，保持向后兼容
 }) => {
   const { t } = useTranslation();
@@ -241,6 +247,9 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   // Queued prompts state
   const [queuedPrompts, setQueuedPrompts] = useState<Array<{ id: string; prompt: string; model: ModelType }>>([]);
   const lastSubmittedClaudeModelRef = useRef<ModelType | null>(null);
+  // 首条用户消息是否已用于标签自动命名（防止重复触发）。
+  // 已有会话本就有名，挂载即视为已通知，避免覆盖。
+  const firstPromptNotifiedRef = useRef(!!session);
 
   // State for revert prompt picker (defined early for useKeyboardShortcuts)
   const [showRevertPicker, setShowRevertPicker] = useState(false);
@@ -382,47 +391,9 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       isLoading
     });
 
-  // ????????????????????????????????
-  const hasScrolledToBottomRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (displayableMessages.length === 0 || !parentRef.current || userScrolled) {
-      return;
-    }
-
-    const currentSessionId = session?.id || 'new_session';
-    const isFirstTimeForSession = hasScrolledToBottomRef.current !== currentSessionId;
-    if (!isFirstTimeForSession) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      if (!parentRef.current || userScrolled) {
-        return;
-      }
-
-      parentRef.current.scrollTop = parentRef.current.scrollHeight;
-      setUserScrolled(false);
-      setShouldAutoScroll(true);
-      hasScrolledToBottomRef.current = currentSessionId;
-
-      setTimeout(() => {
-        if (!parentRef.current) {
-          return;
-        }
-
-        const distanceFromBottom =
-          parentRef.current.scrollHeight - parentRef.current.scrollTop - parentRef.current.clientHeight;
-
-        // ????????????????
-        if (distanceFromBottom <= 120) {
-          parentRef.current.scrollTop = parentRef.current.scrollHeight;
-        }
-      }, 200);
-    }, 150);
-
-    return () => clearTimeout(timer);
-  }, [displayableMessages.length, parentRef, session?.id, setShouldAutoScroll, setUserScrolled, userScrolled]);
+  // 注：首屏进入会话的"贴底"已统一交给 useSmartAutoScroll（其初始 shouldAutoScroll=true，
+  // "新消息到达" effect 会在首屏消息就位后自动贴底）。此处原有的"强制 scrollTop + 120px 二次补滚"
+  // 逻辑与 hook 多套机制并存、互相覆盖，是滚动回弹/卡顿的诱因之一，已移除。
 
   // ============================================================================
   // MESSAGE-LEVEL OPERATIONS (Fine-grained Undo/Redo)
@@ -597,6 +568,25 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     sessionMessagesRef.current?.scrollToBottom();
   }, [setShouldAutoScroll, setUserScrolled]);
 
+  // 会话切换/进入时稳定置底：每个会话在历史加载完成后强制置底一次。
+  // 仅靠 useSmartAutoScroll 的单次 performAutoScroll 无法对抗虚拟列表的渐进高度重测，
+  // 会停在"离底一点点"。这里用带 followUp 校正的 scrollToBottom，并按 session.id 去重只触发一次。
+  const initialScrolledSessionRef = useRef<string | null>(null);
+  useEffect(() => {
+    const sid = session?.id || 'new_session';
+    if (isHistoryLoading) return;
+    if (displayableMessages.length === 0) return;
+    if (initialScrolledSessionRef.current === sid) return;
+
+    initialScrolledSessionRef.current = sid;
+    setUserScrolled(false);
+    setShouldAutoScroll(true);
+    // 等一帧让 messageGroups 渲染就位，再走带 followUp 校正的置底
+    requestAnimationFrame(() => {
+      sessionMessagesRef.current?.scrollToBottom();
+    });
+  }, [session?.id, isHistoryLoading, displayableMessages.length, setShouldAutoScroll, setUserScrolled]);
+
   // ????????????????????????????
   const handleSendPromptWithScroll = useCallback((prompt: string, model: ModelType, maxThinkingTokens?: number) => {
     setUserScrolled(false);
@@ -605,12 +595,21 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       lastSubmittedClaudeModelRef.current = model;
     }
 
+    // 新会话首条消息：用该消息内容为标签命名（仅触发一次）。
+    if (!firstPromptNotifiedRef.current && messages.length === 0) {
+      const trimmed = prompt.trim();
+      if (trimmed) {
+        firstPromptNotifiedRef.current = true;
+        onFirstUserPrompt?.(trimmed);
+      }
+    }
+
     setTimeout(() => {
       handleJumpToLatest();
     }, 50);
 
     handleSendPrompt(prompt, model, maxThinkingTokens);
-  }, [executionEngineConfig.engine, handleJumpToLatest, handleSendPrompt, setUserScrolled, setShouldAutoScroll]);
+  }, [executionEngineConfig.engine, handleJumpToLatest, handleSendPrompt, setUserScrolled, setShouldAutoScroll, messages.length, onFirstUserPrompt]);
 
   const resolveAutoContinuationModel = useCallback((): ModelType => {
     return resolveClaudeContinuationModel({
@@ -989,13 +988,36 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
 
   // 🆕 撤回处理函数 - 支持三种撤回模式
   // Handle prompt navigation - scroll to specific prompt
+  // 提示词定位的时序保护：历史仍在加载时，messageGroups 不完整、虚拟列表目标 DOM 未挂载，
+  // 立即定位会落空（需点多遍）。此处把目标暂存，待加载完成的 effect 再执行。
+  const pendingPromptNavRef = useRef<number | null>(null);
+
   const handlePromptNavigation = useCallback((promptIndex: number) => {
+    setShowPromptNavigator(false);
+
+    // 历史加载中（或首屏消息尚未就位）：暂存目标，等加载完成后再定位。
+    if (isHistoryLoading || (isLoading && messages.length === 0)) {
+      pendingPromptNavRef.current = promptIndex;
+      return;
+    }
+
     if (sessionMessagesRef.current) {
       sessionMessagesRef.current.scrollToPrompt(promptIndex);
     }
-    // Close navigator after navigation
-    setShowPromptNavigator(false);
-  }, []);
+  }, [isHistoryLoading, isLoading, messages.length]);
+
+  // 历史加载完成后，若有暂存的定位目标，补执行一次定位。
+  useEffect(() => {
+    if (isHistoryLoading) return;
+    if (pendingPromptNavRef.current === null) return;
+
+    const target = pendingPromptNavRef.current;
+    pendingPromptNavRef.current = null;
+    // 等一帧让 messageGroups 渲染就位再定位
+    requestAnimationFrame(() => {
+      sessionMessagesRef.current?.scrollToPrompt(target);
+    });
+  }, [isHistoryLoading, messages.length]);
 
   const handleRevert = useCallback(async (promptIndex: number, mode: import('@/lib/api').RewindMode = 'both') => {
     if (!effectiveSession) return;
@@ -1336,12 +1358,9 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
                         onClick={() => {
                           setUserScrolled(true);
                           setShouldAutoScroll(false);
-                          if (parentRef.current) {
-                            parentRef.current.scrollTo({
-                              top: 0,
-                              behavior: 'smooth'
-                            });
-                          }
+                          // 用虚拟列表感知的 scrollToTop（带 followUp 校正），
+                          // 避免裸 scrollTo({top:0,smooth}) 在高度重测时被中断/顶飞。
+                          sessionMessagesRef.current?.scrollToTop();
                         }}
                         className="px-1.5 py-1.5 hover:bg-accent/80 rounded-none h-auto min-h-0"
                         title={t('claudeSession.scrollToTop')}

@@ -153,41 +153,19 @@ export const TabProvider: React.FC<TabProviderProps> = ({ children }) => {
     return `tab-${Date.now()}-${nextTabId.current++}`;
   }, []);
 
-  // Generate smart tab title
-  const generateTabTitle = useCallback((session?: Session, projectPath?: string) => {
-    // Helper function to extract project name from path
-    const extractProjectName = (path: string): string => {
-      if (!path) return '';
-
-      // 判断是 Windows 路径还是 Unix 路径
-      const isWindowsPath = path.includes('\\');
-      const separator = isWindowsPath ? '\\' : '/';
-
-      // 分割路径并获取最后一个片段
-      const segments = path.split(separator);
-      const projectName = segments[segments.length - 1] || '';
-
-      // 格式化项目名：移除常见前缀，替换分隔符为空格
-      const formattedName = projectName
-        .replace(/^(my-|test-|demo-)/, '')
-        .replace(/[-_]/g, ' ')
-        .trim();
-
-      // 调试日志（可在浏览器控制台查看）
-      return formattedName;
-    };
-
+  // 生成标签标题：标签语义是「会话名」而非项目名。
+  // - 已有会话：优先取首条用户消息作为标题；无则回退到短会话 ID。
+  // - 新建会话（尚无首条消息）：统一显示「新对话」，待发出首条消息后再由发送链路改名。
+  const generateTabTitle = useCallback((session?: Session, _projectPath?: string) => {
     if (session) {
-      const projectName = extractProjectName(session.project_path);
-      return projectName || '未命名会话';
+      const first = session.first_message?.trim();
+      if (first) {
+        const firstLine = first.split('\n')[0] || first;
+        return firstLine.length > 40 ? firstLine.slice(0, 37) + '...' : firstLine;
+      }
+      return session.id ? session.id.slice(0, 8) : '新对话';
     }
-
-    if (projectPath) {
-      const projectName = extractProjectName(projectPath);
-      return projectName || '新会话';
-    }
-
-    return '新会话';
+    return '新对话';
   }, []);
 
   // ✨ REFACTORED: Create new tab (simplified)

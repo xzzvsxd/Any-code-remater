@@ -58,12 +58,49 @@ pub use platform::kill_process_tree;
 
 #[tauri::command]
 pub async fn list_projects() -> Result<Vec<Project>, String> {
-    tokio::task::spawn_blocking(|| {
+    // 1) Claude 项目与本地会话（claude 计数已在 store 内填充）
+    let projects = tokio::task::spawn_blocking(|| {
         let store = ProjectStore::new()?;
         store.list_projects()
     })
     .await
-    .map_err(|e| format!("list_projects task failed: {}", e))?
+    .map_err(|e| format!("list_projects task failed: {}", e))??;
+
+    // 2) Codex：一次性加载全量会话（内部已 spawn_blocking），按归一化项目路径分桶计数
+    let codex_sessions = crate::commands::codex::session::list_codex_sessions()
+        .await
+        .unwrap_or_else(|e| {
+            log::warn!("list_projects: failed to load Codex sessions for counts: {}", e);
+            Vec::new()
+        });
+
+    // 3) 在阻塞线程内完成 codex 分桶 + Gemini 逐项目扫描，避免阻塞 async executor
+    let projects = tokio::task::spawn_blocking(move || {
+        let mut codex_counts: std::collections::HashMap<String, u32> =
+            std::collections::HashMap::new();
+        for s in codex_sessions {
+            if s.project_path.is_empty() {
+                continue;
+            }
+            let key = normalize_path_for_comparison(&s.project_path);
+            *codex_counts.entry(key).or_insert(0) += 1;
+        }
+
+        let mut projects = projects;
+        for project in projects.iter_mut() {
+            let norm = normalize_path_for_comparison(&project.path);
+            project.session_counts.codex = codex_counts.get(&norm).copied().unwrap_or(0);
+            project.session_counts.gemini =
+                crate::commands::gemini::config::list_session_files(&project.path)
+                    .map(|files| files.len() as u32)
+                    .unwrap_or(0);
+        }
+        projects
+    })
+    .await
+    .map_err(|e| format!("list_projects counts task failed: {}", e))?;
+
+    Ok(projects)
 }
 
 /// Gets sessions for a specific project

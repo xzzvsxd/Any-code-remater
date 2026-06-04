@@ -298,16 +298,24 @@ impl ProjectStore {
                     }
 
                     session_infos.sort_by(|a, b| b.1.cmp(&a.1));
-                    let sessions = session_infos
+                    let sessions: Vec<String> = session_infos
                         .into_iter()
                         .map(|(session_id, _)| session_id)
                         .collect();
+
+                    // Claude 计数 = 本地 JSONL 会话数；Codex/Gemini 在 command 层统一补齐。
+                    let claude_count = sessions.len() as u32;
 
                     all_projects.push(Project {
                         id: dir_name.to_string(),
                         path: project_path,
                         sessions,
                         created_at: latest_activity,
+                        session_counts: super::models::SessionCounts {
+                            claude: claude_count,
+                            codex: 0,
+                            gemini: 0,
+                        },
                     });
                 }
             }
@@ -756,6 +764,8 @@ impl ProjectStore {
                 project
                     .sessions
                     .retain(|session| unique_sessions.insert(session.clone()));
+                // 合并/去重会改变 Claude 会话集合，同步 claude 计数避免与 sessions 不一致。
+                project.session_counts.claude = project.sessions.len() as u32;
                 project
             })
             .collect();

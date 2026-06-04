@@ -12,6 +12,22 @@ pub struct Project {
     pub sessions: Vec<String>,
     /// Unix timestamp of the latest activity (session modification or project creation)
     pub created_at: u64,
+    /// 三引擎各自的会话数（Claude/Codex/Gemini）。
+    /// sessions 字段仅含 Claude，无法反映项目下的 Codex/Gemini 会话；
+    /// 此字段在 list_projects 的 command 层统一填充，供前端按引擎显示徽章。
+    #[serde(default)]
+    pub session_counts: SessionCounts,
+}
+
+/// 项目下按引擎统计的会话数
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SessionCounts {
+    #[serde(default)]
+    pub claude: u32,
+    #[serde(default)]
+    pub codex: u32,
+    #[serde(default)]
+    pub gemini: u32,
 }
 
 /// Represents a session with its metadata

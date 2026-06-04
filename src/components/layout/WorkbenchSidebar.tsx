@@ -91,6 +91,37 @@ const EngineDot: React.FC<{ engine?: string; active?: boolean }> = ({ engine, ac
 };
 
 /**
+ * 项目行的分引擎会话数徽章：⚡Claude 🤖Codex ✨Gemini，仅显示 count>0 的引擎。
+ * 数据来自后端统一计算的 session_counts；缺省时回退到 sessions.length（仅 Claude）。
+ */
+const EngineCountBadges: React.FC<{ project: Project; isCurrent: boolean }> = ({ project, isCurrent }) => {
+  const { t } = useTranslation();
+  const counts = project.session_counts ?? { claude: project.sessions.length, codex: 0, gemini: 0 };
+  const total = counts.claude + counts.codex + counts.gemini;
+  if (total === 0) return null;
+
+  const items: Array<{ key: string; n: number; Icon: React.ElementType; color: string }> = [
+    { key: 'claude', n: counts.claude, Icon: Zap, color: 'text-amber-500' },
+    { key: 'codex', n: counts.codex, Icon: Bot, color: 'text-green-500' },
+    { key: 'gemini', n: counts.gemini, Icon: Sparkles, color: 'text-blue-500' },
+  ].filter((it) => it.n > 0);
+
+  return (
+    <span
+      className="flex items-center gap-1 tabular-nums"
+      title={t('workbench.sessionsTotalTip', { total, claude: counts.claude, codex: counts.codex, gemini: counts.gemini })}
+    >
+      {items.map(({ key, n, Icon, color }) => (
+        <span key={key} className={cn('flex items-center gap-0.5 text-[10px]', isCurrent ? color : `${color}/70`)}>
+          <Icon className="h-3 w-3" />
+          {n}
+        </span>
+      ))}
+    </span>
+  );
+};
+
+/**
  * VS Code 式单一工作台侧栏：项目资源管理器为主体 + 底部导航 dock。
  * 合并了原最左侧图标导航栏：导航/设置/关于/主题等收进底部 dock。
  * 可拖拽调宽、可折叠，状态持久化到 localStorage。
@@ -366,6 +397,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
         activeSessionId={tabs.find((tb) => tb.isActive)?.session?.id ?? null}
         onToggleProject={toggleProject}
         onOpenSession={openSession}
+        onNewSession={onNewSession}
         onRefreshProject={(p) => selectProject(p)}
         onOpenInExplorer={openInExplorer}
         onCopyText={copyText}
@@ -447,7 +479,29 @@ const WorkbenchNavDock: React.FC<NavDockProps> = ({ currentView, onNavigate, onA
 
   const isPromptView = currentView === 'editor' || currentView === 'codex-editor' || currentView === 'gemini-editor';
 
-  const DockButton: React.FC<{
+  // 主导航项：图标 + 文字并排的网格按钮，避免纯图标靠 hover 猜功能。
+  const NavItem: React.FC<{
+    active?: boolean;
+    label: string;
+    icon: React.ElementType;
+    onClick: () => void;
+  }> = ({ active, label, icon: Icon, onClick }) => (
+    <button
+      onClick={onClick}
+      className={cn(
+        'flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs font-medium transition-all duration-150 active:scale-[0.97] min-w-0',
+        active
+          ? 'bg-primary/15 text-primary shadow-sm shadow-primary/10'
+          : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+      )}
+    >
+      <Icon className="h-4 w-4 flex-shrink-0" />
+      <span className="truncate">{label}</span>
+    </button>
+  );
+
+  // 系统类：底部紧凑图标行（主题/关于/更新/设置）。
+  const IconButton: React.FC<{
     active?: boolean;
     label: string;
     onClick: () => void;
@@ -478,53 +532,45 @@ const WorkbenchNavDock: React.FC<NavDockProps> = ({ currentView, onNavigate, onA
       <div className="px-3 pt-2.5 flex justify-center">
         <UnifiedEngineStatus compact />
       </div>
-      {/* dock 图标行 */}
+
       <TooltipProvider delayDuration={0}>
-        <div className="flex flex-wrap items-center justify-center gap-1 px-2 py-2.5">
-          <DockButton
+        {/* 主导航：2 列文字网格 */}
+        <div className="grid grid-cols-2 gap-1 px-2 pt-2.5">
+          <NavItem
             active={currentView === 'projects'}
             label={t('common.ccProjectsTitle')}
+            icon={FolderOpen}
             onClick={() => onNavigate('projects')}
-          >
-            <FolderOpen className="h-4 w-4" />
-          </DockButton>
-
-          <DockButton
+          />
+          <NavItem
             active={currentView === 'claude-tab-manager'}
             label={t('sidebar.sessionManagement')}
+            icon={Terminal}
             onClick={() => onNavigate('claude-tab-manager')}
-          >
-            <Terminal className="h-4 w-4" />
-          </DockButton>
-
-          <DockButton
+          />
+          <NavItem
             active={currentView === 'usage-dashboard'}
             label={t('sidebar.usageStats')}
+            icon={BarChart2}
             onClick={() => onNavigate('usage-dashboard')}
-          >
-            <BarChart2 className="h-4 w-4" />
-          </DockButton>
+          />
 
-          {/* 提示词三合一 */}
+          {/* 提示词三合一：下拉选择 Claude / Codex / Gemini */}
           <DropdownMenu>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    aria-label={t('sidebar.prompts')}
-                    className={cn(
-                      'h-8 w-8 rounded-lg flex items-center justify-center transition-all duration-150 active:scale-90',
-                      isPromptView
-                        ? 'bg-primary/15 text-primary shadow-sm shadow-primary/10'
-                        : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-                    )}
-                  >
-                    <FileText className="h-4 w-4" />
-                  </button>
-                </DropdownMenuTrigger>
-              </TooltipTrigger>
-              <TooltipContent side="top">{t('sidebar.prompts')}</TooltipContent>
-            </Tooltip>
+            <DropdownMenuTrigger asChild>
+              <button
+                className={cn(
+                  'flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs font-medium transition-all duration-150 active:scale-[0.97] min-w-0',
+                  isPromptView
+                    ? 'bg-primary/15 text-primary shadow-sm shadow-primary/10'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+                )}
+              >
+                <FileText className="h-4 w-4 flex-shrink-0" />
+                <span className="truncate flex-1 text-left">{t('sidebar.prompts')}</span>
+                <ChevronRight className="h-3 w-3 flex-shrink-0 opacity-50" />
+              </button>
+            </DropdownMenuTrigger>
             <DropdownMenuContent align="center" side="top">
               {PROMPT_EDITORS.map((p) => (
                 <DropdownMenuItem key={p.view} onClick={() => onNavigate(p.view)}>
@@ -535,46 +581,40 @@ const WorkbenchNavDock: React.FC<NavDockProps> = ({ currentView, onNavigate, onA
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <DockButton
+          <NavItem
             active={currentView === 'mcp'}
             label={t('sidebar.mcpTools')}
+            icon={Layers}
             onClick={() => onNavigate('mcp')}
-          >
-            <Layers className="h-4 w-4" />
-          </DockButton>
-
-          <DockButton
+          />
+          <NavItem
             active={currentView === 'claude-extensions'}
             label={t('sidebar.extensions')}
+            icon={Package}
             onClick={() => onNavigate('claude-extensions')}
-          >
-            <Package className="h-4 w-4" />
-          </DockButton>
+          />
+        </div>
 
-          {/* 分隔 */}
-          <div className="w-px h-5 bg-border/60 mx-0.5" />
-
+        {/* 系统行：主题 / 关于 / 更新 / 设置 */}
+        <div className="flex items-center justify-center gap-1 px-2 py-2 mt-1 border-t border-border/40">
           <ThemeToggle size="sm" className="w-8 h-8" />
-
           {onAboutClick && (
-            <DockButton label={t('sidebar.about')} onClick={onAboutClick}>
+            <IconButton label={t('sidebar.about')} onClick={onAboutClick}>
               <HelpCircle className="h-4 w-4" />
-            </DockButton>
+            </IconButton>
           )}
-
           {onUpdateClick && (
-            <DockButton label={t('updateBadge.checkUpdate')} onClick={onUpdateClick}>
+            <IconButton label={t('updateBadge.checkUpdate')} onClick={onUpdateClick}>
               <RefreshCcw className="h-4 w-4" />
-            </DockButton>
+            </IconButton>
           )}
-
-          <DockButton
+          <IconButton
             active={currentView === 'settings'}
             label={t('navigation.settings')}
             onClick={() => onNavigate('settings')}
           >
             <Settings className="h-4 w-4" />
-          </DockButton>
+          </IconButton>
         </div>
       </TooltipProvider>
     </div>
@@ -592,6 +632,7 @@ interface ProjectTreeProps {
   activeSessionId: string | null;
   onToggleProject: (project: Project) => void;
   onOpenSession: (session: Session) => void;
+  onNewSession: () => void;
   onRefreshProject: (project: Project) => void;
   onOpenInExplorer: (path: string) => void;
   onCopyText: (text: string, label: string) => void;
@@ -607,7 +648,7 @@ interface ProjectTreeProps {
 }
 const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
   projects, selectedProjectId, sessions, expandedProjects, activeSessionId, onToggleProject, onOpenSession,
-  onRefreshProject, onOpenInExplorer, onCopyText, onDuplicateSession, onExportSession,
+  onNewSession, onRefreshProject, onOpenInExplorer, onCopyText, onDuplicateSession, onExportSession,
   sessionTitles, onRenameSession, sessionOrder, onReorderSessions,
   onRequestDeleteSession, onRequestRemoveProject, onRequestPurgeProject,
 }) => {
@@ -628,8 +669,14 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
     <div className="flex-1 min-h-0 overflow-y-auto py-2 px-1">
       <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 flex items-center gap-1.5">
         <FolderOpen className="h-3 w-3" />
-        {t('workbench.projects')}
-        <span className="ml-auto text-muted-foreground/50 tabular-nums normal-case tracking-normal">{projects.length}</span>
+        <span className="normal-case tracking-normal text-[11px]">{t('workbench.projectsCount', { count: projects.length })}</span>
+        <button
+          onClick={onNewSession}
+          className="ml-auto h-5 w-5 rounded flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all duration-150 active:scale-90"
+          title={t('workbench.newSessionInProject')}
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
       </div>
       <div className="space-y-0.5 mt-0.5">
       {projects.map((project) => {
@@ -672,15 +719,10 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
               <FolderOpen className={cn('h-3.5 w-3.5 flex-shrink-0', isCurrent ? 'text-primary' : 'text-muted-foreground/70')} />
               <span className="flex-1 truncate text-left">{projectName(project)}</span>
 
-              {/* 会话数徽章：hover 项目行时隐藏，给 ⋯ 让位 */}
-              {project.sessions.length > 0 && (
-                <span className={cn(
-                  'text-[10px] tabular-nums px-1.5 py-0.5 rounded-full transition-colors group-hover/proj:hidden',
-                  isCurrent ? 'bg-primary/15 text-primary' : 'bg-muted/60 text-muted-foreground/60'
-                )}>
-                  {project.sessions.length}
-                </span>
-              )}
+              {/* 会话数徽章（分引擎图标）：hover 项目行时隐藏，给 ⋯ 让位 */}
+              <span className="group-hover/proj:hidden">
+                <EngineCountBadges project={project} isCurrent={isCurrent} />
+              </span>
 
               {/* ⋯ 操作菜单（hover 浮现 / 右键也可触发） */}
               <DropdownMenu open={menuFor === `proj:${project.id}`} onOpenChange={(o) => setMenuFor(o ? `proj:${project.id}` : null)}>

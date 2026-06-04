@@ -1,5 +1,5 @@
 import React, { useImperativeHandle, forwardRef, useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { StreamMessageV2 } from "@/components/message";
 import { MessageBranchButton } from "@/components/message/MessageBranchButton";
@@ -61,13 +61,13 @@ const MeasurableItem = ({ virtualItem, measureElement, isStreaming, children, ..
   }, [isStreaming]); // 添加 isStreaming 依赖
 
   return (
-    <motion.div
+    <div
       {...props}
       ref={elRef}
       data-index={virtualItem.index}
     >
       {children}
-    </motion.div>
+    </div>
   );
 };
 
@@ -75,6 +75,8 @@ export interface SessionMessagesRef {
   scrollToPrompt: (promptIndex: number) => void;
   /** 滚动到底部（使用虚拟列表的 scrollToIndex，解决消息过多时滚动不到底的问题） */
   scrollToBottom: () => void;
+  /** 滚动到顶部（虚拟列表感知 + followUp 校正，避免高度重测把滚动位置顶飞/中断） */
+  scrollToTop: () => void;
 }
 
 /**
@@ -180,13 +182,9 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
         behavior: 'auto',
       });
 
-      // Schedule rAF-based follow-up scrolls to handle the virtualizer's
-      // progressive height re-measurements. After scrollToIndex renders the
-      // target items, the virtualizer measures their actual heights which may
-      // differ from estimates, shifting the total scrollHeight.
-      // Uses requestAnimationFrame to sync with rendering cycle and checks
-      // whether we actually reached the bottom before each follow-up scroll.
-      const followUpDelays = [50, 150, 300, 500];
+      // 虚拟列表 scrollToIndex 后，目标项的真实高度会触发重测、改变总高度。
+      // 用两档 rAF 补滚动校正即可；过多档位会与 useSmartAutoScroll 的滚动互相覆盖、引发抖动。
+      const followUpDelays = [60, 200];
       followUpDelays.forEach((delay) => {
         setTimeout(() => {
           requestAnimationFrame(() => {
@@ -199,6 +197,28 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
                   behavior: 'auto',
                 });
               }
+            }
+          });
+        }, delay);
+      });
+    },
+    scrollToTop: () => {
+      if (messageGroups.length === 0) return;
+
+      // 用虚拟列表 scrollToIndex(0) 而非裸 scrollTo({top:0,smooth})：
+      // 顶部 item 真实高度与估算不符会触发高度重测、改变 totalSize，smooth 动画期间会被"顶飞/中断"。
+      // scrollToIndex 让虚拟列表先把首项渲染就位，再用 followUp 校正到真正的 top:0。
+      rowVirtualizer.scrollToIndex(0, {
+        align: 'start',
+        behavior: 'auto',
+      });
+
+      const followUpDelays = [60, 200];
+      followUpDelays.forEach((delay) => {
+        setTimeout(() => {
+          requestAnimationFrame(() => {
+            if (parentRef.current && parentRef.current.scrollTop > 1) {
+              parentRef.current.scrollTo({ top: 0, behavior: 'auto' });
             }
           });
         }, delay);
@@ -242,43 +262,38 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       // The virtualizer needs time to measure and render the target row
       // after the scroll position changes.
       let attempts = 0;
-      const maxAttempts = 10;
-      const pollInterval = 100; // ms between retries, total ~1s max wait
+      const maxAttempts = 24; // 提高重试预算至 ~2.4s，覆盖大会话加载/高度重测的慢路径
+      const pollInterval = 100; // ms between retries
 
       const tryFindAndHighlight = () => {
         attempts++;
         const element = document.getElementById(`prompt-${promptIndex}`);
 
         if (element) {
-          // Element found - use rAF to schedule scrollIntoView after
-          // the virtualizer finishes its current layout pass
-          requestAnimationFrame(() => {
-            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            // Visual feedback: brief highlight flash to help user identify target
-            try {
-              element.animate(
-                [
-                  { boxShadow: '0 0 0 3px rgba(59, 130, 246, 0.6)' },
-                  { boxShadow: '0 0 0 3px rgba(59, 130, 246, 0)' },
-                ],
-                { duration: 1500, easing: 'ease-out' }
-              );
-            } catch {
-              // Web Animations API not available - silently ignore
-            }
-          });
+          // 命中后只做高亮反馈。原先额外调用 element.scrollIntoView 会与虚拟列表的
+          // scrollToIndex 居中定位互相打架，导致二次偏移、定位到错误位置 —— 已移除。
+          // scrollToIndex(align:'center') 已把目标行居中，无需再 scrollIntoView。
+          try {
+            element.animate(
+              [
+                { boxShadow: '0 0 0 3px rgba(59, 130, 246, 0.6)' },
+                { boxShadow: '0 0 0 3px rgba(59, 130, 246, 0)' },
+              ],
+              { duration: 1500, easing: 'ease-out' }
+            );
+          } catch {
+            // Web Animations API not available - silently ignore
+          }
           return;
         }
 
         if (attempts < maxAttempts) {
-          // Re-trigger scrollToIndex every 3 attempts to nudge the virtualizer
-          // in case it hasn't rendered the target row yet
-          if (attempts % 3 === 0) {
-            rowVirtualizer.scrollToIndex(targetGroupIndex, {
-              align: 'center',
-              behavior: 'auto',
-            });
-          }
+          // 每次未命中都重新 scrollToIndex，把目标行"顶"进渲染窗口（而非每 3 次一次）。
+          // 这是大会话定位需点多遍的根因之一：目标 DOM 长期不在窗口内，轮询白白耗尽。
+          rowVirtualizer.scrollToIndex(targetGroupIndex, {
+            align: 'center',
+            behavior: 'auto',
+          });
           setTimeout(tryFindAndHighlight, pollInterval);
         } else {
           console.warn(`[Prompt Navigation] Element #prompt-${promptIndex} not found after ${maxAttempts} attempts`);
@@ -313,15 +328,14 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
           minHeight: '100px',
         }}
       >
-        <AnimatePresence>
-          {rowVirtualizer.getVirtualItems().map((virtualItem) => {
-            const messageGroup = messageGroups[virtualItem.index];
+        {rowVirtualizer.getVirtualItems().map((virtualItem) => {
+          const messageGroup = messageGroups[virtualItem.index];
 
-            // 防御性检查：确保 messageGroup 存在
-            if (!messageGroup) {
-              console.warn('[SessionMessages] messageGroup is undefined for index:', virtualItem.index);
-              return null;
-            }
+          // 防御性检查：确保 messageGroup 存在
+          if (!messageGroup) {
+            console.warn('[SessionMessages] messageGroup is undefined for index:', virtualItem.index);
+            return null;
+          }
 
             const message = messageGroup.type === 'normal' ? messageGroup.message : null;
             const originalIndex = messageGroup.type === 'normal' ? messageGroup.index : undefined;
@@ -356,10 +370,6 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
                 virtualItem={virtualItem}
                 measureElement={rowVirtualizer.measureElement}
                 isStreaming={isStreaming}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                transition={{ duration: 0.3 }}
                 className="absolute inset-x-4"
                 style={{
                   top: virtualItem.start,
@@ -392,7 +402,6 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
               </MeasurableItem>
             );
           })}
-        </AnimatePresence>
       </div>
 
       {/* CLI风格的处理状态指示器 - 显示在消息列表底部 */}

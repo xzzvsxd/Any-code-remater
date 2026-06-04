@@ -42,6 +42,16 @@ const stableHash = (value: string): string => {
   return (hash >>> 0).toString(16);
 };
 
+// 用户消息无 timestamp/receivedAt，仅靠 type+subtype 会让多条用户消息 identity 碰撞被误去重。
+// 取首段文本参与身份计算，保证不同用户消息身份唯一。
+const getIdentityFirstText = (message: ClaudeStreamMessage): string => {
+  const content = message.message?.content;
+  if (!Array.isArray(content)) return '';
+  const textPart = content.find((c: any) => c?.type === 'text');
+  const text = textPart && typeof (textPart as any).text === 'string' ? (textPart as any).text : '';
+  return text.slice(0, 120);
+};
+
 const getMessageIdentity = (message: ClaudeStreamMessage): string => {
   const explicitId = (message as any).uiEventId || (message as any).id;
   if (typeof explicitId === 'string' && explicitId.trim()) {
@@ -54,12 +64,16 @@ const getMessageIdentity = (message: ClaudeStreamMessage): string => {
     message.engine || '',
     message.timestamp || '',
     message.receivedAt || '',
+    (message as any).sentAt || '',
+    getIdentityFirstText(message),
     typeof message.result === 'string' ? message.result : JSON.stringify(message.result ?? ''),
   ].join('\u001f');
 };
 
 const getMessageTime = (message: ClaudeStreamMessage): number => {
-  const raw = message.receivedAt || message.timestamp;
+  // 用户消息只写 sentAt（见 usePromptExecution 创建逻辑），助手/系统消息用 receivedAt/timestamp。
+  // 回退链必须覆盖 sentAt，否则用户消息取不到时间戳 → NaN → 排序错位堆叠到顶部。
+  const raw = message.receivedAt || message.timestamp || (message as any).sentAt;
   if (typeof raw !== 'string') return Number.NaN;
   const parsed = Date.parse(raw);
   return Number.isFinite(parsed) ? parsed : Number.NaN;
@@ -148,10 +162,17 @@ export function mergeUiOnlySessionMessages(
     merged.push(message);
   }
 
-  return merged.sort((a, b) => {
+  // 稳定排序：两边时间相等或任一为 NaN（无有效时间戳）时，回退到原始顺序（index 次级键），
+  // 避免 comparator 返回 0 让无时间戳消息随机插队 —— 这是用户消息堆叠到顶部的另一诱因。
+  const indexOf = new Map<ClaudeStreamMessage, number>();
+  merged.forEach((message, index) => indexOf.set(message, index));
+
+  return [...merged].sort((a, b) => {
     const left = getMessageTime(a);
     const right = getMessageTime(b);
-    if (!Number.isFinite(left) || !Number.isFinite(right) || left === right) return 0;
+    if (!Number.isFinite(left) || !Number.isFinite(right) || left === right) {
+      return (indexOf.get(a) ?? 0) - (indexOf.get(b) ?? 0);
+    }
     return left - right;
   });
 }

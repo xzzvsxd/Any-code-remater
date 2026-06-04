@@ -56,36 +56,14 @@ const TabSessionWrapperComponent: React.FC<TabSessionWrapperProps> = ({
     setCleanup(cleanup);
   }, [tabId, setCleanup]);
 
-  // 🔧 NEW: Helper function to extract project name from path
-  const extractProjectName = useCallback((path: string): string => {
-    if (!path) return '';
-
-    // 判断是 Windows 路径还是 Unix 路径
-    const isWindowsPath = path.includes('\\');
-    const separator = isWindowsPath ? '\\' : '/';
-
-    // 分割路径并获取最后一个片段
-    const segments = path.split(separator);
-    const projectName = segments[segments.length - 1] || '';
-
-    // 格式化项目名：移除常见前缀，替换分隔符为空格
-    const formattedName = projectName
-      .replace(/^(my-|test-|demo-)/, '')
-      .replace(/[-_]/g, ' ')
-      .trim();
-
-    return formattedName;
-  }, []);
-
-  // 🔧 NEW: Handle project path change and update tab title
-  const handleProjectPathChange = useCallback((newPath: string) => {
-    if (newPath && newPath !== '__NEW_PROJECT__') {
-      const projectName = extractProjectName(newPath);
-      if (projectName) {
-        updateTitle(projectName);
-      }
-    }
-  }, [extractProjectName, updateTitle]);
+  // 🔧 标签标题语义为「会话名」，不再用项目名覆盖。
+  // 新会话首条消息发出后由 handleFirstUserPrompt 命名；项目路径变化不影响标题。
+  const handleFirstUserPrompt = useCallback((prompt: string) => {
+    const firstLine = (prompt.split('\n')[0] || prompt).trim();
+    if (!firstLine) return;
+    const title = firstLine.length > 40 ? firstLine.slice(0, 37) + '...' : firstLine;
+    updateTitle(title);
+  }, [updateTitle]);
 
   // 🆕 Handle engine change - 更新标签页显示的引擎类型
   const handleEngineChange = useCallback((engine: 'claude' | 'codex' | 'gemini') => {
@@ -130,9 +108,9 @@ const TabSessionWrapperComponent: React.FC<TabSessionWrapperProps> = ({
         session={effectiveSessionForChild}
         initialProjectPath={initialProjectPath}
         onStreamingChange={handleStreamingChange}
-        onProjectPathChange={handleProjectPathChange}
         onEngineChange={handleEngineChange}
         onSessionInfoChange={handleSessionInfoChange}
+        onFirstUserPrompt={handleFirstUserPrompt}
         isActive={isActive}
         planModeStorageKey={planModeStorageKey}
       />

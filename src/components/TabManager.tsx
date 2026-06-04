@@ -195,6 +195,16 @@ export const TabManager: React.FC<TabManagerProps> = ({
               />
             </div>
 
+            {/* 新会话快捷按钮：标签栏右侧常驻，一键新建 */}
+            <button
+              onClick={() => createNewTab()}
+              title={t('tabs.newSession')}
+              aria-label={t('tabs.newSession')}
+              className="h-7 w-7 rounded flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all duration-150 active:scale-90"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+
             {/* 标签页菜单 */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

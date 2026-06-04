@@ -74,6 +74,15 @@ export interface Project {
   sessions: string[];
   /** Unix timestamp when the project directory was created */
   created_at: number;
+  /**
+   * 三引擎各自的会话数（后端 list_projects 统一填充）。
+   * sessions 字段仅含 Claude；本字段反映项目下 Claude/Codex/Gemini 全量会话数，供工作台分引擎徽章使用。
+   */
+  session_counts?: {
+    claude: number;
+    codex: number;
+    gemini: number;
+  };
 }
 
 /**

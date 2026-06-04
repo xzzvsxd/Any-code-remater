@@ -48,25 +48,42 @@ export const useGlobalEvents = () => {
     };
   }, [openSessionInBackground, switchToTab, navigateTo]);
 
-  // Handle Claude Complete Event
+  // Handle AI Complete Events (三引擎统一：执行完成后自动刷新项目树/会话，无需手动"刷新会话")
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    const unlistens: Array<() => void> = [];
 
-    const setupListener = async () => {
-      try {
-        unlisten = await listen<ClaudeCompletePayload>('claude-complete', async (event) => {
-          if (isClaudeCompleteSuccess(event.payload)) {
-            scheduleProjectRefresh(Boolean(selectedProject));
-          }
-        });
-      } catch (err) {
-        console.error('Failed to setup claude-complete listener:', err);
+    const addUnlisten = (unlisten: () => void) => {
+      if (disposed) {
+        unlisten();
+      } else {
+        unlistens.push(unlisten);
       }
     };
 
-    setupListener();
+    const setupListeners = async () => {
+      try {
+        // Claude / Codex / Gemini 完成事件结构一致（boolean 或 { payload: boolean }）。
+        // 任一引擎一轮对话完成即触发刷新，覆盖"新建会话产生首条消息后落盘"的场景。
+        const events = ['claude-complete', 'codex-complete', 'gemini-complete'] as const;
+        for (const evt of events) {
+          const un = await listen<ClaudeCompletePayload>(evt, async (event) => {
+            if (isClaudeCompleteSuccess(event.payload)) {
+              scheduleProjectRefresh(Boolean(selectedProject));
+            }
+          });
+          addUnlisten(un);
+        }
+      } catch (err) {
+        console.error('Failed to setup AI complete listeners:', err);
+      }
+    };
+
+    setupListeners();
     return () => {
-      if (unlisten) unlisten();
+      disposed = true;
+      unlistens.forEach((un) => un());
+      unlistens.length = 0;
     };
   }, [selectedProject, scheduleProjectRefresh]);
 
