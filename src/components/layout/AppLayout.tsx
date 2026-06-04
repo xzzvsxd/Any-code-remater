@@ -1,7 +1,5 @@
 import React, { ReactNode, useEffect, useRef, useState } from 'react';
-import { Sidebar } from "@/components/layout/Sidebar";
 import { WorkbenchSidebar } from "@/components/layout/WorkbenchSidebar";
-import { useNavigation } from '@/contexts/NavigationContext';
 import { useUpdate } from '@/contexts/UpdateContext';
 import { message } from '@tauri-apps/plugin-dialog';
 import { UpdateDialog } from '@/components/dialogs/UpdateDialog';
@@ -12,7 +10,6 @@ interface AppLayoutProps {
 }
 
 export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
-  const { currentView, navigateTo } = useNavigation();
   const { checkUpdate, hasUpdate, updateInfo, isDismissed } = useUpdate();
   const [showUpdateDialog, setShowUpdateDialog] = useState(false);
   const [showAboutDialog, setShowAboutDialog] = useState(false);
@@ -67,24 +64,13 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
         <div className="absolute inset-0 opacity-30 dark:opacity-20 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-primary/10 via-background to-background" />
       </div>
 
-      {/* Sidebar */}
-      <div id="app-sidebar" className="z-50 flex-shrink-0">
-        <Sidebar
-          currentView={currentView}
-          onNavigate={navigateTo}
+      {/* 单一工作台侧栏（合并了原图标导航栏）：项目树为主体 + 底部导航 dock，全视图常驻 */}
+      <div className="z-50 flex-shrink-0 relative">
+        <WorkbenchSidebar
           onAboutClick={() => setShowAboutDialog(true)}
           onUpdateClick={() => setShowUpdateDialog(true)}
         />
       </div>
-
-      {/* 工作台侧栏：仅在会话工作语境显示（项目浏览 / 标签管理 / 会话视图） */}
-      {(currentView === 'projects' ||
-        currentView === 'claude-tab-manager' ||
-        currentView === 'claude-code-session') && (
-        <div className="z-40 flex-shrink-0 relative">
-          <WorkbenchSidebar />
-        </div>
-      )}
 
       {/* Main Content Area */}
       <main className="flex-1 relative flex flex-col min-w-0 overflow-hidden z-10">

@@ -412,6 +412,72 @@ pub async fn branch_session_at_prompt(
     .map_err(|e| format!("branch_session_at_prompt task failed: {}", e))?
 }
 
+/// 完整复制一个 Claude 会话（duplicate）。原会话不变，返回新 session_id。
+/// 与 branch 的区别：不截断，复制全部历史 + 全部 git 记录 + todo。
+#[tauri::command]
+pub async fn duplicate_claude_session(
+    session_id: String,
+    project_id: String,
+) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        duplicate_claude_session_blocking(&session_id, &project_id).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("duplicate_claude_session task failed: {}", e))?
+}
+
+fn duplicate_claude_session_blocking(session_id: &str, project_id: &str) -> Result<String> {
+    let claude_dir = get_claude_dir().context("Failed to get claude dir")?;
+    let project_dir = claude_dir.join("projects").join(project_id);
+    let session_path = project_dir.join(format!("{}.jsonl", session_id));
+
+    if !session_path.exists() {
+        return Err(anyhow::anyhow!(
+            "Source session file not found: {}",
+            session_path.display()
+        ));
+    }
+
+    let content = fs::read_to_string(&session_path).context("Failed to read session file")?;
+    let lines: Vec<&str> = content.lines().collect();
+    let new_session_id = uuid::Uuid::new_v4().to_string();
+
+    // 改写每行 sessionId 为新 ID，复制全部历史。
+    let mut out_lines: Vec<String> = Vec::with_capacity(lines.len());
+    for line in lines.iter() {
+        match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(mut value) => {
+                if value.get("sessionId").is_some() {
+                    value["sessionId"] = serde_json::Value::String(new_session_id.clone());
+                }
+                out_lines.push(serde_json::to_string(&value).unwrap_or_else(|_| line.to_string()));
+            }
+            Err(_) => out_lines.push(line.to_string()),
+        }
+    }
+
+    let new_session_path = project_dir.join(format!("{}.jsonl", new_session_id));
+    let new_content = if out_lines.is_empty() { String::new() } else { out_lines.join("\n") + "\n" };
+    fs::write(&new_session_path, new_content).context("Failed to write duplicated session file")?;
+
+    // 复制全部 git 记录
+    let records = load_git_records(session_id, project_id).unwrap_or_default();
+    if !records.is_empty() {
+        if let Err(e) = save_git_records(&new_session_id, project_id, &records) {
+            log::warn!("[Duplicate] Failed to copy git records: {}", e);
+        }
+    }
+    // 复制 todo
+    let todos_dir = claude_dir.join("todos");
+    let todo_src = todos_dir.join(format!("{}.json", session_id));
+    if todo_src.exists() {
+        let _ = fs::copy(&todo_src, todos_dir.join(format!("{}.json", new_session_id)));
+    }
+
+    log::info!("[Duplicate] Duplicated session {} -> {}", session_id, new_session_id);
+    Ok(new_session_id)
+}
+
 fn branch_session_at_prompt_blocking(
     session_id: &str,
     project_id: &str,

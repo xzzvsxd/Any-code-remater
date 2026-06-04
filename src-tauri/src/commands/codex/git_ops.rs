@@ -699,6 +699,57 @@ fn branch_codex_blocking(session_id: &str, prompt_index: usize) -> Result<String
     Ok(new_session_id)
 }
 
+/// 完整复制一个 Codex 会话（duplicate）。原会话不变，返回新 session_id。
+#[tauri::command]
+pub async fn duplicate_codex_session(session_id: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || duplicate_codex_blocking(&session_id))
+        .await
+        .map_err(|e| format!("duplicate_codex_session task failed: {}", e))?
+}
+
+fn duplicate_codex_blocking(session_id: &str) -> Result<String, String> {
+    let sessions_dir = get_codex_sessions_dir()?;
+    let session_file = find_session_file(&sessions_dir, session_id)
+        .ok_or_else(|| format!("Session file not found for: {}", session_id))?;
+    let content = fs::read_to_string(&session_file)
+        .map_err(|e| format!("Failed to read session file: {}", e))?;
+    let lines: Vec<&str> = content.lines().collect();
+    let new_session_id = uuid::Uuid::new_v4().to_string();
+
+    // 改写首行 session_meta.payload.id 为新 id，其余原样，复制全部历史。
+    let mut out_lines: Vec<String> = Vec::with_capacity(lines.len());
+    for (idx, line) in lines.iter().enumerate() {
+        if idx == 0 {
+            if let Ok(mut meta) = serde_json::from_str::<serde_json::Value>(line) {
+                if meta["type"].as_str() == Some("session_meta") {
+                    meta["payload"]["id"] = serde_json::Value::String(new_session_id.clone());
+                    out_lines.push(meta.to_string());
+                    continue;
+                }
+            }
+        }
+        out_lines.push(line.to_string());
+    }
+
+    let parent = session_file
+        .parent()
+        .ok_or_else(|| "Session file has no parent directory".to_string())?;
+    let new_file = parent.join(format!("rollout-copy-{}.jsonl", new_session_id));
+    let new_content = if out_lines.is_empty() { String::new() } else { out_lines.join("\n") + "\n" };
+    fs::write(&new_file, new_content).map_err(|e| format!("Failed to write duplicated session: {}", e))?;
+
+    let mut records = load_codex_git_records(session_id).unwrap_or(CodexGitRecords {
+        session_id: session_id.to_string(),
+        project_path: String::new(),
+        records: Vec::new(),
+    });
+    records.session_id = new_session_id.clone();
+    let _ = save_codex_git_records(&new_session_id, &records);
+
+    log::info!("[Codex Duplicate] {} -> {}", session_id, new_session_id);
+    Ok(new_session_id)
+}
+
 // ============================================================================
 // Prompt Recording (for rewind tracking)
 // ============================================================================

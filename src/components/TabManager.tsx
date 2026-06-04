@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Plus, MoreHorizontal, MessageSquare, ArrowLeft, ExternalLink } from 'lucide-react';
+import { Plus, MoreHorizontal, MessageSquare, ArrowLeft, ExternalLink, ChevronDown, ChevronRight, FolderOpen, Check, Zap, Bot, Sparkles, Loader2, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/hooks/useTranslation';
 import {
@@ -25,9 +25,11 @@ import {
 import { cn } from '@/lib/utils';
 import { TabSessionWrapper } from './TabSessionWrapper';
 import { useTabs } from '@/hooks/useTabs';
+import { useProject } from '@/contexts/ProjectContext';
 import { useSessionSync } from '@/hooks/useSessionSync'; // 🔧 NEW: 会话状态同步
 import { selectProjectPath } from '@/lib/sessionHelpers';
-import type { Session } from '@/lib/api';
+import { truncateText, getFirstLine } from '@/lib/date-utils';
+import type { Project, Session } from '@/lib/api';
 
 interface TabManagerProps {
   onBack: () => void;
@@ -59,8 +61,11 @@ export const TabManager: React.FC<TabManagerProps> = ({
     switchToTab,
     closeTab,
     updateTabStreamingStatus,
+    updateTabTitle,
+    openSessionInBackground,
     createNewTabAsWindow, // 🆕 直接创建为独立窗口
   } = useTabs();
+  const { projects, selectedProject, sessions, selectProject } = useProject();
 
   // 🔧 NEW: 启用会话状态同步
   useSessionSync();
@@ -171,7 +176,24 @@ export const TabManager: React.FC<TabManagerProps> = ({
               <span>{t('tabs.back')}</span>
             </Button>
 
-            <div className="flex-1" />
+            <div className="flex-1 min-w-0 flex justify-center">
+              <WorkspaceBreadcrumb
+                projects={projects}
+                selectedProject={selectedProject}
+                sessions={sessions}
+                activeTab={tabs.find((tb) => tb.isActive)}
+                onSelectProject={(p) => selectProject(p)}
+                onOpenSession={(s) => {
+                  const r = openSessionInBackground(s);
+                  switchToTab(r.tabId);
+                }}
+                onRenameActiveTab={(title) => {
+                  const active = tabs.find((tb) => tb.isActive);
+                  if (active) updateTabTitle(active.id, title);
+                }}
+                onNewSession={() => createNewTab()}
+              />
+            </div>
 
             {/* 标签页菜单 */}
             <DropdownMenu>
@@ -325,5 +347,151 @@ export const TabManager: React.FC<TabManagerProps> = ({
         </Dialog>
       </div>
     </TooltipProvider>
+  );
+};
+
+// ============================================================================
+// 工作区面包屑：项目 › 会话（顶栏中部）
+// ============================================================================
+const BcEngineDot: React.FC<{ engine?: string }> = ({ engine }) => {
+  const e = engine || 'claude';
+  if (e === 'codex') return <Bot className="h-3.5 w-3.5 text-green-500" />;
+  if (e === 'gemini') return <Sparkles className="h-3.5 w-3.5 text-blue-500" />;
+  return <Zap className="h-3.5 w-3.5 text-amber-500" />;
+};
+
+interface WorkspaceBreadcrumbProps {
+  projects: Project[];
+  selectedProject: Project | null;
+  sessions: Session[];
+  activeTab?: { id: string; title: string; session?: Session; engine?: 'claude' | 'codex' | 'gemini'; state?: string };
+  onSelectProject: (project: Project) => void;
+  onOpenSession: (session: Session) => void;
+  onRenameActiveTab: (title: string) => void;
+  onNewSession: () => void;
+}
+
+const WorkspaceBreadcrumb: React.FC<WorkspaceBreadcrumbProps> = ({
+  projects, selectedProject, sessions, activeTab,
+  onSelectProject, onOpenSession, onRenameActiveTab, onNewSession,
+}) => {
+  const { t } = useTranslation();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const projectName = (p: Project) => {
+    const norm = p.path.replace(/\\/g, '/').replace(/\/+$/, '');
+    return norm.split('/').pop() || norm;
+  };
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  const activeEngine = activeTab?.session?.engine ?? activeTab?.engine ?? 'claude';
+  const activeSessionId = activeTab?.session?.id ?? null;
+  const isStreaming = activeTab?.state === 'streaming';
+
+  const startRename = () => {
+    if (!activeTab) return;
+    setDraft(activeTab.title);
+    setEditing(true);
+  };
+  const commitRename = () => {
+    const v = draft.trim();
+    if (v && v !== activeTab?.title) onRenameActiveTab(v);
+    setEditing(false);
+  };
+
+  return (
+    <div className="flex items-center gap-1 max-w-[60%] text-sm">
+      {/* 项目段 */}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button className="flex items-center gap-1.5 px-2 py-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors max-w-[180px]">
+            <FolderOpen className="h-3.5 w-3.5 flex-shrink-0 text-primary/70" />
+            <span className="truncate font-medium">
+              {selectedProject ? projectName(selectedProject) : t('tabs.workspace.noProjectSelected')}
+            </span>
+            <ChevronDown className="h-3 w-3 flex-shrink-0 opacity-60" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-60 max-h-80 overflow-y-auto">
+          {projects.length === 0 ? (
+            <DropdownMenuItem disabled>{t('tabs.workspace.noProjects')}</DropdownMenuItem>
+          ) : projects.map((p) => (
+            <DropdownMenuItem key={p.id} onClick={() => onSelectProject(p)}>
+              <FolderOpen className="h-4 w-4 mr-2 text-muted-foreground" />
+              <span className="flex-1 truncate">{projectName(p)}</span>
+              {selectedProject?.id === p.id && <Check className="h-4 w-4 ml-2 text-primary" />}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground/40" />
+
+      {/* 会话段 */}
+      {!activeTab ? (
+        <button
+          onClick={onNewSession}
+          className="flex items-center gap-1.5 px-2 py-1 rounded-md text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          <span className="text-xs">{t('tabs.workspace.noActiveSession')}</span>
+        </button>
+      ) : editing ? (
+        <input
+          ref={inputRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commitRename}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitRename();
+            else if (e.key === 'Escape') setEditing(false);
+          }}
+          className="px-2 py-1 rounded-md bg-background border border-primary/50 text-sm outline-none w-[200px]"
+        />
+      ) : (
+        <div className="flex items-center">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                onDoubleClick={startRename}
+                title={t('tabs.workspace.renameHint')}
+                className="flex items-center gap-1.5 px-2 py-1 rounded-md text-foreground hover:bg-muted transition-colors max-w-[260px]"
+              >
+                <BcEngineDot engine={activeEngine} />
+                {isStreaming && <Loader2 className="h-3 w-3 text-green-500 animate-spin flex-shrink-0" />}
+                <span className="truncate font-medium">{activeTab.title}</span>
+                <ChevronDown className="h-3 w-3 flex-shrink-0 opacity-60" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-64 max-h-80 overflow-y-auto">
+              {sessions.length === 0 ? (
+                <DropdownMenuItem disabled>{t('tabs.workspace.noSessions')}</DropdownMenuItem>
+              ) : sessions.slice(0, 12).map((s) => {
+                const preview = s.first_message ? truncateText(getFirstLine(s.first_message), 36) : s.id.slice(0, 8);
+                return (
+                  <DropdownMenuItem key={s.id} onClick={() => onOpenSession(s)}>
+                    <BcEngineDot engine={s.engine} />
+                    <span className="flex-1 truncate ml-2 text-xs">{preview}</span>
+                    {activeSessionId === s.id && <Check className="h-4 w-4 ml-2 text-primary" />}
+                  </DropdownMenuItem>
+                );
+              })}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={startRename}>
+                <Pencil className="h-4 w-4 mr-2" />{t('tabs.workspace.rename')}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )}
+    </div>
   );
 };

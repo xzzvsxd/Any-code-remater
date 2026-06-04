@@ -801,6 +801,44 @@ fn branch_gemini_blocking(
     Ok(new_session_id)
 }
 
+/// 完整复制一个 Gemini 会话（duplicate）。原会话不变，返回新 session_id。
+#[tauri::command]
+pub async fn duplicate_gemini_session(
+    session_id: String,
+    project_path: String,
+) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || duplicate_gemini_blocking(&session_id, &project_path))
+        .await
+        .map_err(|e| format!("duplicate_gemini_session task failed: {}", e))?
+}
+
+fn duplicate_gemini_blocking(session_id: &str, project_path: &str) -> Result<String, String> {
+    let sessions_dir = get_gemini_sessions_dir(project_path)?;
+    let session_file = find_gemini_session_file(&sessions_dir, session_id)?;
+    let content = fs::read_to_string(&session_file)
+        .map_err(|e| format!("Failed to read session file: {}", e))?;
+    let mut session_data: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse session JSON: {}", e))?;
+
+    let new_session_id = uuid::Uuid::new_v4().to_string();
+    if session_data.get("sessionId").is_some() {
+        session_data["sessionId"] = serde_json::Value::String(new_session_id.clone());
+    }
+
+    let prefix = if new_session_id.len() >= 8 { &new_session_id[..8] } else { &new_session_id };
+    let new_file = sessions_dir.join(format!("copy-{}.json", prefix));
+    let new_content = serde_json::to_string_pretty(&session_data)
+        .map_err(|e| format!("Failed to serialize duplicated session: {}", e))?;
+    fs::write(&new_file, new_content).map_err(|e| format!("Failed to write duplicated session: {}", e))?;
+
+    let mut records = load_gemini_git_records(session_id).unwrap_or_default();
+    records.session_id = new_session_id.clone();
+    let _ = save_gemini_git_records(&new_session_id, &records);
+
+    log::info!("[Gemini Duplicate] {} -> {}", session_id, new_session_id);
+    Ok(new_session_id)
+}
+
 // ============================================================================
 // Revert Operations
 // ============================================================================

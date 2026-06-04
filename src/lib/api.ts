@@ -2147,6 +2147,11 @@ export const api = {
     }
   },
 
+  /** 写入文本到系统剪贴板（后端 write_to_clipboard 命令的前端封装） */
+  async writeToClipboard(text: string): Promise<void> {
+    return invoke<void>("write_to_clipboard", { text });
+  },
+
   // Provider Management API methods
 
   /**
@@ -2985,6 +2990,39 @@ export const api = {
     sessions: Array<{ id: string; engine?: string; project_id?: string; project_path?: string }>
   ): Promise<void> {
     return invoke("search_sessions_content", { searchId, keyword, sessions });
+  },
+
+  /**
+   * 完整复制一个会话（duplicate），按引擎分派。原会话不变，返回新 session_id。
+   */
+  async duplicateSession(
+    engine: 'claude' | 'codex' | 'gemini',
+    sessionId: string,
+    projectId: string,
+    projectPath: string
+  ): Promise<string> {
+    if (engine === 'codex') {
+      return invoke<string>("duplicate_codex_session", { sessionId });
+    }
+    if (engine === 'gemini') {
+      return invoke<string>("duplicate_gemini_session", { sessionId, projectPath });
+    }
+    return invoke<string>("duplicate_claude_session", { sessionId, projectId });
+  },
+
+  /** 读取会话元数据（自定义标题 + 排序）。 */
+  async getSessionMeta(): Promise<{ titles: Record<string, string>; order: Record<string, string[]> }> {
+    return invoke("get_session_meta");
+  },
+
+  /** 设置会话自定义标题（空串=清除）。 */
+  async setSessionTitle(sessionId: string, title: string): Promise<void> {
+    return invoke("set_session_title", { sessionId, title });
+  },
+
+  /** 设置某项目下会话的自定义顺序。 */
+  async setSessionOrder(engine: string, projectId: string, sessionIds: string[]): Promise<void> {
+    return invoke("set_session_order", { engine, projectId, sessionIds });
   },
 
   /**
