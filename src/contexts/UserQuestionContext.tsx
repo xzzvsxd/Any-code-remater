@@ -168,16 +168,23 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
   }, []);
 
   // 格式化答案为自然语言
+  // 关键：必须带上「完整问题文本」一起回传。表单提交后只有答案回灌给 Claude，
+  // 原始提问不会自动随附；若跨会话或上下文被压缩，Claude 将看不到问题，
+  // 无法把答案与问题配对（曾导致「看不到提问上下文」的反馈）。
   const formatAnswersAsMessage = useCallback((answers: UserAnswers, questions: Question[]): string => {
-    const lines: string[] = ["我的回答："];
+    const lines: string[] = ["以下是我对上述问题的回答："];
 
-    normalizeQuestions(questions).forEach((q) => {
+    normalizeQuestions(questions).forEach((q, index) => {
       const key = getQuestionKey(q);
       const answer = answers[key];
 
       if (answer) {
         const answerText = Array.isArray(answer) ? answer.join("、") : answer;
-        lines.push(`- ${q.header || "问题"}: ${answerText}`);
+        // 优先完整问题文本，回退到简称，再回退到序号占位，确保回答自包含
+        const questionText = q.question || q.header || `问题 ${index + 1}`;
+        lines.push("");
+        lines.push(`问题：${questionText}`);
+        lines.push(`回答：${answerText}`);
       }
     });
 

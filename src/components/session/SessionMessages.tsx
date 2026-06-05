@@ -14,7 +14,7 @@ import type { ExecutionStatusInfo } from "@/components/FloatingPromptInput/types
  * 使用 ResizeObserver 并在内容变化时自动通知虚拟列表重新测量。
  * 仅对正在流式输出的消息进行防抖，历史消息立即更新以防止滚动抖动。
  */
-const MeasurableItem = ({ virtualItem, measureElement, isStreaming, children, ...props }: any) => {
+const MeasurableItem = ({ virtualItem, itemKey, measureElement, isStreaming, children, ...props }: any) => {
   const elRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef(measureElement);
   
@@ -65,6 +65,7 @@ const MeasurableItem = ({ virtualItem, measureElement, isStreaming, children, ..
       {...props}
       ref={elRef}
       data-index={virtualItem.index}
+      data-item-key={itemKey}
     >
       {children}
     </div>
@@ -112,16 +113,38 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
 }, ref) => {
   // ✅ 从 SessionContext 获取配置和回调，避免 Props Drilling
   const { settings, sessionId, projectId, projectPath, onLinkDetected, onRevert, getPromptIndexForMessage, onBranch, getBranchPromptIndexForMessage } = useSession();
+
+  // 消息组的稳定身份 key：用于 useVirtualizer 的 getItemKey 与高度缓存。
+  // 关键（修复 streaming 期间对话窗口上下乱跳/一直闪）：
+  // 默认虚拟列表按「索引」缓存测量值，消息重新分组(normal↔aggregated)或重渲染时缓存易失效，
+  // 退回粗估 estimateSize → 行高在「估算值↔真实值」间反复跳变 → 整列内容平移、肉眼可见地闪。
+  // 改用基于消息身份的稳定 key，让测量缓存跨重渲染存活，从源头消除跳变。
+  const getGroupKey = (group: MessageGroup | undefined, index: number): string => {
+    if (!group) return `idx-${index}`;
+    if (group.type === 'subagent') return `sub-${group.group.id}`;
+    if (group.type === 'aggregated') return `agg-${group.index}`;
+    return `n-${group.index}`;
+  };
+
+  // 已测量行的真实高度缓存（key -> 高度）。estimateSize 优先返回缓存值，
+  // 使未在窗口内的行也能用「上次测得的真实高度」占位，而非粗估，避免重测时整列跳动。
+  const measuredHeightsRef = useRef<Map<string, number>>(new Map());
   /**
    * ✅ OPTIMIZED: Virtual list configuration for improved performance
    */
   const rowVirtualizer = useVirtualizer({
     count: messageGroups.length,
+    getItemKey: (index) => getGroupKey(messageGroups[index], index),
     getScrollElement: () => parentRef.current,
     estimateSize: (index) => {
       // ✅ Dynamic height estimation based on message group type
       const messageGroup = messageGroups[index];
       if (!messageGroup) return 200;
+
+      // 优先返回「已测得的真实高度」：避免未在窗口内的行用粗估占位，
+      // 重新进入窗口测量时高度从估算值跳到真实值，导致整列平移闪动。
+      const cached = measuredHeightsRef.current.get(getGroupKey(messageGroup, index));
+      if (cached) return cached;
 
       // For subagent groups, estimate larger height
       if (messageGroup.type === 'subagent') {
@@ -168,9 +191,22 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
     overscan: 12, // ✅ OPTIMIZED: Increased to 12 to prevent blank areas during fast scrolling
     measureElement: (element) => {
       // Ensure element is fully rendered before measurement
-      return element?.getBoundingClientRect().height ?? 200;
+      const height = (element as HTMLElement)?.getBoundingClientRect().height ?? 200;
+      // 写入高度缓存（key 来自 MeasurableItem 设置的 data-item-key），
+      // 供 estimateSize 复用真实高度，消除重测时的整列跳动。
+      const key = (element as HTMLElement)?.getAttribute?.('data-item-key');
+      if (key && height > 0) {
+        measuredHeightsRef.current.set(key, height);
+      }
+      return height;
     },
   });
+
+  // 切换会话时清空高度缓存：不同会话的消息 key 可能因 index 复用而碰撞，
+  // 旧高度会污染新会话首屏布局。会话切换不频繁，清空成本可忽略。
+  useEffect(() => {
+    measuredHeightsRef.current.clear();
+  }, [sessionId]);
 
   useImperativeHandle(ref, () => ({
     scrollToBottom: () => {
@@ -391,6 +427,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
               <MeasurableItem
                 key={virtualItem.key}
                 virtualItem={virtualItem}
+                itemKey={virtualItem.key}
                 measureElement={rowVirtualizer.measureElement}
                 isStreaming={isStreaming}
                 className="absolute inset-x-4"

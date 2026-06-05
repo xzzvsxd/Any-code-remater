@@ -205,35 +205,79 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
   const draggingRef = useRef(false);
 
   // 运行中的会话集合：取自已打开标签页的 streaming 状态，供工作台树实时高亮。
-  const runningSessionIds = React.useMemo(
-    () => new Set(tabs.filter((tb) => tb.state === 'streaming' && tb.session?.id).map((tb) => tb.session!.id)),
+  //
+  // 关键（修复 streaming 期间会话列表鬼畜/上下乱跳）：tabs 在 streaming 期间会因 lastActiveAt
+  // 等无关字段被高频更新（updateTabState 每次都刷新时间戳），若直接以 [tabs] 为依赖，
+  // 该集合与下游 openTabSessions 会反复产生新引用，导致会话树重渲染、dnd-kit 反复重测量动画。
+  // 因此改为以「稳定签名」（仅运行中会话 id 的有序列表）为依赖：内容不变则不重算、引用稳定。
+  const runningIdsSig = React.useMemo(
+    () =>
+      tabs
+        .filter((tb) => tb.state === 'streaming' && tb.session?.id)
+        .map((tb) => tb.session!.id)
+        .sort()
+        .join('|'),
     [tabs],
+  );
+  const runningSessionIds = React.useMemo(
+    () => new Set(runningIdsSig ? runningIdsSig.split('|') : []),
+    [runningIdsSig],
   );
   // 已在标签页打开的会话（含尚未落盘的新建会话）：实时合并进项目树，
   // 无需等待 AI 完成事件与磁盘刷新，新会话拿到 sessionId 即刻可见。
   // 落盘前 session 无 first_message，用标签页标题兜底，避免显示成裸 id。
+  //
+  // 同样以稳定签名为依赖（仅取真正影响渲染的字段），避免 streaming 期间 tabs 高频变化时
+  // 反复重建 session 对象引用 → 触发会话树抖动。签名不变时整段 memo 直接复用旧结果。
+  const openTabsSig = React.useMemo(
+    () =>
+      tabs
+        .filter((tb) => tb.session?.id)
+        .map((tb) => JSON.stringify([
+          tb.session!.id,
+          tb.session!.first_message ?? '',
+          tb.title,
+          tb.session!.project_id ?? '',
+          tb.session!.project_path ?? '',
+        ]))
+        .join('\n'),
+    [tabs],
+  );
   const openTabSessions = React.useMemo(
     () => tabs
       .filter((tb) => tb.session?.id)
       .map((tb) => (tb.session!.first_message ? tb.session! : { ...tb.session!, first_message: tb.title })),
-    [tabs],
+    // 依赖稳定签名而非 tabs 本身：仅当影响渲染的字段变化时才重算，消除 streaming 期间的引用抖动。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [openTabsSig],
   );
 
-  // 活跃置顶时间戳：有标签进入 streaming 时，给其所属项目打当前时间戳，供"活跃项目自动置顶"。
+  // 活跃置顶时间戳：项目「首次进入 streaming」时打一次当前时间戳，供「活跃项目自动置顶」。
   // 仅在用户未手动排序（projectOrder 为空）时参与排序；手动排序后锁定，不再被打乱。
+  //
+  // 关键（修复 streaming 期间侧栏鬼畜/上下乱跳/乱闪）：streaming 过程中 tabs 会随消息流高频变化，
+  // 若每次都用 Date.now() 重刷时间戳，会反复 setState → orderedProjects 反复重排 → 列表抖动。
+  // 因此改为「边沿触发」：仅当项目从『无运行』变『有运行』时打一次戳，运行结束后清除记录以便下次再置顶。
+  const activityStampedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    const runningProjectIds = tabs
-      .filter((tb) => tb.state === 'streaming' && tb.session?.project_id)
-      .map((tb) => tb.session!.project_id);
-    if (runningProjectIds.length === 0) return;
+    const runningNow = new Set(
+      tabs
+        .filter((tb) => tb.state === 'streaming' && tb.session?.project_id)
+        .map((tb) => tb.session!.project_id as string),
+    );
+    // 清除已停止运行的项目记录，允许其下次重新运行时再次触发置顶。
+    activityStampedRef.current.forEach((pid) => {
+      if (!runningNow.has(pid)) activityStampedRef.current.delete(pid);
+    });
+    // 仅对「新进入运行」的项目打一次戳，避免 streaming 期间反复刷新导致重排抖动。
+    const newlyRunning = [...runningNow].filter((pid) => !activityStampedRef.current.has(pid));
+    if (newlyRunning.length === 0) return;
+    newlyRunning.forEach((pid) => activityStampedRef.current.add(pid));
     setProjectActivityTs((prev) => {
       const now = Date.now();
-      let changed = false;
       const next = { ...prev };
-      runningProjectIds.forEach((pid) => {
-        if (pid) { next[pid] = now; changed = true; }
-      });
-      return changed ? next : prev;
+      newlyRunning.forEach((pid) => { next[pid] = now; });
+      return next;
     });
   }, [tabs]);
 
@@ -421,6 +465,18 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     }
   }, [t]);
 
+  // 以下回调原为传给 WorkbenchProjectTree 的内联箭头函数，每次 render 都产生新引用，
+  // 会使下方的 React.memo 完全失效。提取为 useCallback 以稳定引用，配合 memo 阻断 streaming
+  // 期间的无谓重渲染（会话树抖动根治的一环）。
+  const onRefreshProjectCb = useCallback((p: Project) => { selectProject(p); }, [selectProject]);
+  const onRequestDeleteSessionCb = useCallback((s: Session) => setConfirm({ kind: 'deleteSession', session: s }), []);
+  const onRequestRemoveProjectCb = useCallback((p: Project) => setConfirm({ kind: 'removeProject', project: p }), []);
+  const onRequestPurgeProjectCb = useCallback((p: Project) => setConfirm({ kind: 'purgeProject', project: p }), []);
+
+  // 选中会话 id：从 tabs 派生，但 streaming 期间 tabs 高频变化而选中态通常不变，
+  // 该值是 primitive，未变化时传给 React.memo 子树仍保持浅比较相等。
+  const activeSessionId = tabs.find((tb) => tb.isActive)?.session?.id ?? null;
+
   const runConfirm = useCallback(async () => {
     if (!confirm) return;
     setBusy(true);
@@ -512,14 +568,14 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
         sessionsByProject={sessionsByProject}
         sessionsLoading={sessionsLoading}
         expandedProjects={expandedProjects}
-        activeSessionId={tabs.find((tb) => tb.isActive)?.session?.id ?? null}
+        activeSessionId={activeSessionId}
         runningSessionIds={runningSessionIds}
         openTabSessions={openTabSessions}
         onToggleProject={toggleProject}
         onOpenSession={openSession}
         onNewSession={onNewSession}
         onNewSessionInProject={onNewSessionInProject}
-        onRefreshProject={(p) => selectProject(p)}
+        onRefreshProject={onRefreshProjectCb}
         onOpenInExplorer={openInExplorer}
         onCopyText={copyText}
         onDuplicateSession={duplicateSession}
@@ -529,9 +585,9 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
         sessionOrder={sessionOrder}
         onReorderSessions={reorderSessions}
         onReorderProjects={reorderProjects}
-        onRequestDeleteSession={(s) => setConfirm({ kind: 'deleteSession', session: s })}
-        onRequestRemoveProject={(p) => setConfirm({ kind: 'removeProject', project: p })}
-        onRequestPurgeProject={(p) => setConfirm({ kind: 'purgeProject', project: p })}
+        onRequestDeleteSession={onRequestDeleteSessionCb}
+        onRequestRemoveProject={onRequestRemoveProjectCb}
+        onRequestPurgeProject={onRequestPurgeProjectCb}
       />
 
       {/* 底部导航 dock：合并自原图标侧栏 */}
@@ -771,7 +827,10 @@ interface ProjectTreeProps {
   onRequestRemoveProject: (project: Project) => void;
   onRequestPurgeProject: (project: Project) => void;
 }
-const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
+// React.memo：阻断 streaming 期间父组件（WorkbenchSidebar）因 tabs 高频变化引发的整树重渲染。
+// 配合上方所有 props 已稳定引用化（useCallback/useMemo + 稳定签名），memo 才能真正生效，
+// 从而消除会话列表的鬼畜/上下乱跳/乱闪（根治抖动的最后一环）。
+const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
   projects, selectedProjectId, sessions, sessionsByProject, sessionsLoading, expandedProjects, activeSessionId, runningSessionIds, openTabSessions,
   onToggleProject, onOpenSession,
   onNewSession, onNewSessionInProject, onRefreshProject, onOpenInExplorer, onCopyText, onDuplicateSession, onExportSession,
@@ -978,18 +1037,26 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
                           onContextMenu={(e) => { e.preventDefault(); setMenuFor(`sess:${session.id}`); }}
                           className={cn(
                             'group/sess relative flex items-center gap-1.5 pl-1 pr-1 py-1.5 rounded-md cursor-pointer transition-all duration-150',
-                            // 运行态不再铺满整行遮罩：背景以「是否选中」为准，运行状态改用旋转 loading 图标表达，两者互不打架。
+                            // 选中与运行两维度正交、可叠加：背景表达「是否选中」，ring 描边表达「是否运行」。
+                            // 选中态背景加深，确保它是列表里最突出的一行（一眼看清选了哪个）。
                             isActive
-                              ? 'bg-gradient-to-r from-primary/15 to-primary/5 text-foreground'
+                              ? 'bg-gradient-to-r from-primary/25 to-primary/10 text-foreground'
                               : isRunning
-                                ? 'bg-amber-500/[0.06] text-foreground'
-                                : 'text-muted-foreground/90 hover:text-foreground hover:bg-muted/40'
+                                ? 'bg-amber-500/[0.08] text-foreground'
+                                : 'text-muted-foreground/90 hover:text-foreground hover:bg-muted/40',
+                            // 运行中 → 橙色描边，且优先级高于选中描边：这样「选中且正在运行」的会话
+                            // 在突出的选中背景之上仍保留橙色描边，不会被选中态吞掉。
+                            isRunning
+                              ? 'ring-1 ring-inset ring-amber-500/70'
+                              : isActive
+                                ? 'ring-1 ring-inset ring-primary/40'
+                                : ''
                           )}
                         >
+                          {/* 左侧竖条专表「选中」（primary）：运行状态已由橙色 ring 描边表达，
+                              此处只在选中时画 primary 竖条，进一步强化「当前选中」的视觉权重。 */}
                           {isActive ? (
                             <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-primary" />
-                          ) : isRunning ? (
-                            <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-amber-500/80" />
                           ) : null}
                           {/* 拖拽手柄：仅「最近 N 个」视图可见可用（展开全部时退化纯列表、无拖拽） */}
                           {!expandedAll && (
@@ -1114,4 +1181,5 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
       </div>
     </div>
   );
-};
+});
+WorkbenchProjectTree.displayName = 'WorkbenchProjectTree';
