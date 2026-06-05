@@ -14,7 +14,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  CI_CACHE_VERSION: v2
+  CI_CACHE_VERSION: v3
   BUN_VERSION: "1.2.23"
 
 jobs:
@@ -94,7 +94,6 @@ jobs:
         with:
           path: |
             ~/.bun
-            node_modules
           key: ${{ env.CI_CACHE_VERSION }}-${{ env.CACHE_SCOPE }}-bun-${{ steps.cache-keys.outputs.node_deps_key }}
           restore-keys: |
             ${{ env.CI_CACHE_VERSION }}-${{ env.CACHE_SCOPE }}-bun-

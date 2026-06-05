@@ -81,10 +81,9 @@ jobs:
         with:
           path: |
             ~/.bun
-            node_modules
-          key: macos-${{ matrix.rust-target }}-bun-${{ hashFiles('bun.lock', 'package-lock.json', 'package.json') }}
+          key: macos-${{ matrix.rust-target }}-bun-v2-${{ hashFiles('bun.lock', 'package-lock.json', 'package.json') }}
           restore-keys: |
-            macos-${{ matrix.rust-target }}-bun-
+            macos-${{ matrix.rust-target }}-bun-v2-
 
       - name: Install frontend dependencies
         run: bun install

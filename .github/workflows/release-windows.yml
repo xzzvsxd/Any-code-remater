@@ -61,10 +61,9 @@ jobs:
         with:
           path: |
             ~/.bun
-            node_modules
-          key: windows-bun-${{ hashFiles('bun.lock', 'package-lock.json', 'package.json') }}
+          key: windows-bun-v2-${{ hashFiles('bun.lock', 'package-lock.json', 'package.json') }}
           restore-keys: |
-            windows-bun-
+            windows-bun-v2-
 
       - name: Install frontend dependencies
         run: bun install
