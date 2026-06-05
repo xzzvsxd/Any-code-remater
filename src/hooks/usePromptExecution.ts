@@ -31,10 +31,15 @@ import { persistUiOnlySessionMessage } from '@/lib/uiOnlySessionEvents';
 // Type Definitions
 // ============================================================================
 
-interface QueuedPrompt {
+export interface QueuedPrompt {
   id: string;
   prompt: string;
   model: ModelType;
+  /**
+   * 来自上次会话、经持久化恢复且尚未确认的队列项。
+   * restored 项不会被 runNextQueuedPrompt 自动抽取发送，必须用户在队列面板逐条点「发送」确认。
+   */
+  restored?: boolean;
 }
 
 interface PendingPromptRecord {
@@ -414,7 +419,9 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           return;
         }
 
-        const queuedPromptCount = queuedPromptsRef.current.length;
+        // restored 队列项是“重启恢复、需用户手动确认”的待办，不属于本轮自动续跑队列。
+        // 不能让它们阻塞“本次执行完成”提醒，否则用户手动保留恢复项时当前对话会一直像没结束。
+        const queuedPromptCount = queuedPromptsRef.current.filter(p => !p.restored).length;
         if (queuedPromptCount > 0) {
           return;
         }
@@ -437,12 +444,16 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         });
       };
       const runNextQueuedPrompt = () => {
-        if (queuedPromptsRef.current.length === 0) {
+        // 仅自动抽取「本次会话内新加入」的队列项；跳过 restored（重启恢复且未确认）的项，
+        // 后者必须由用户在队列面板逐条点「发送」手动确认，避免重启后队列被自动抽干造成乱套。
+        const queue = queuedPromptsRef.current;
+        const nextIndex = queue.findIndex(p => !p.restored);
+        if (nextIndex === -1) {
           return;
         }
 
-        const [nextPrompt, ...remainingPrompts] = queuedPromptsRef.current;
-        setQueuedPrompts(remainingPrompts);
+        const nextPrompt = queue[nextIndex];
+        setQueuedPrompts(queue.filter((_, i) => i !== nextIndex));
 
         setTimeout(() => {
           handleSendPrompt(nextPrompt.prompt, nextPrompt.model);

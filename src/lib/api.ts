@@ -940,6 +940,21 @@ export const api = {
   },
 
   /**
+   * 按真实路径解除隐藏：重新添加曾被删除（隐藏）的项目时调用。
+   * 若该路径此前被 delete_project 隐藏过则恢复可见；无匹配返回 false（安全 no-op）。
+   * @param projectPath - 项目真实路径
+   * @returns 是否确有项目被恢复
+   */
+  async restoreProjectByPath(projectPath: string): Promise<boolean> {
+    try {
+      return await invoke<boolean>('restore_project_by_path', { projectPath });
+    } catch (error) {
+      console.error("Failed to restore project by path:", error);
+      return false;
+    }
+  },
+
+  /**
    * Lists all hidden projects
    * @returns Promise resolving to array of hidden project IDs
    */

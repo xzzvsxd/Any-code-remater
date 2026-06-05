@@ -351,6 +351,11 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         return;
       }
 
+      // 关键修复：该路径可能是"曾被删除（隐藏）的项目"。delete_project 只是把它写入 hidden 列表，
+      // listProjects 会过滤掉，导致重新添加时匹配不到真实项目、错误地建虚拟项目（读不进来、状态错乱）。
+      // 因此添加前先按路径解除隐藏；确有恢复则真实项目会重新出现在 listProjects 结果中。
+      await api.restoreProjectByPath(projectPath).catch(() => false);
+
       const latestProjects = await api.listProjects().catch(() => [] as Project[]);
       const matchedProject = findProjectByPath(latestProjects, projectPath);
       const projectToRegister = matchedProject ?? buildVirtualProject(projectPath);
@@ -404,6 +409,61 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       }
     }
   }, [loadSessionsForProject, selectedProject]);
+
+  // 会话列表实时刷新（前端轮询）：选中项目展开后，页面可见且窗口聚焦时每 3s 刷新一次会话列表，
+  // 使外部新增/删除会话无需手动收起重展即可自动出现/消失。失焦或页面隐藏时停止，避免无谓 IO
+  // （也减轻后端文件扫描负载）。复用带 requestId 防竞态的 refreshSessions。
+  const refreshSessionsRef = useRef(refreshSessions);
+  useEffect(() => {
+    refreshSessionsRef.current = refreshSessions;
+  }, [refreshSessions]);
+
+  useEffect(() => {
+    if (!selectedProject) return;
+
+    let timerId: ReturnType<typeof setInterval> | null = null;
+
+    const canPoll = () =>
+      document.visibilityState === 'visible' && document.hasFocus();
+
+    const start = () => {
+      if (timerId !== null) return;
+      timerId = setInterval(() => {
+        if (canPoll()) {
+          refreshSessionsRef.current();
+        }
+      }, 3000);
+    };
+
+    const stop = () => {
+      if (timerId !== null) {
+        clearInterval(timerId);
+        timerId = null;
+      }
+    };
+
+    // 失焦/隐藏时停表，重新聚焦/可见时立即刷新一次再恢复轮询
+    const handleVisibility = () => {
+      if (canPoll()) {
+        refreshSessionsRef.current();
+        start();
+      } else {
+        stop();
+      }
+    };
+
+    start();
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleVisibility);
+    window.addEventListener('blur', handleVisibility);
+
+    return () => {
+      stop();
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleVisibility);
+      window.removeEventListener('blur', handleVisibility);
+    };
+  }, [selectedProject?.id]);
 
   const deleteProject = useCallback(async (project: Project) => {
     try {

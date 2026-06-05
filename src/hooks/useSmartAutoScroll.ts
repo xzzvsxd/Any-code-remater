@@ -87,8 +87,15 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
 
   /**
    * 执行自动滚动到底部。用户已离开底部时直接跳过。
+   *
+   * 关键：粘底只「向下追新增内容」，绝不「向上跟随高度收缩」。
+   * 流式输出时虚拟列表会渐进测量上方消息的真实高度，某些帧实测 < 估算会让 scrollHeight
+   * 短暂减小、目标位置上移；若跟着往上跳，就会与下一帧的内容增长来回对冲，表现为上下弹跳。
+   * 而 scrollTop 永远不会超过 target（浏览器自动 clamp），高度收缩时浏览器会一次性把位置
+   * 修正到位 —— 因此这里只处理「落后于底部」的情况，不主动制造任何向上的滚动，根除振荡。
+   * 全程瞬时（无 smooth 动画）：粘底语义就是"始终钉在底部"，瞬时跳转才不会被高频更新打断。
    */
-  const performAutoScroll = (behavior: ScrollBehavior = 'smooth') => {
+  const performAutoScroll = () => {
     // 用户已主动离开底部时，任何在途的自动滚动立即作废，避免“吸底”。
     // autoScrollEnabledRef 为同步状态，比 React state 更早生效，能即时止住正在执行的滚动循环。
     if (!autoScrollEnabledRef.current) return;
@@ -97,15 +104,13 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
     if (!scrollElement) return;
 
     const targetScrollTop = scrollElement.scrollHeight - scrollElement.clientHeight;
-    // 容差 2px：高 DPI 缩放下 scrollTop 可能有亚像素抖动，放宽阈值避免反复触发滚动。
-    if (Math.abs(scrollElement.scrollTop - targetScrollTop) <= 2) {
+    // 仅当 scrollTop 落后于底部（新内容在下方）才向下追。容差 2px 兼顾高 DPI 亚像素抖动。
+    // target - scrollTop <= 2 同时覆盖：已贴底、以及高度收缩后 scrollTop 被 clamp 的情形。
+    if (targetScrollTop - scrollElement.scrollTop <= 2) {
       return;
     }
 
-    scrollElement.scrollTo({
-      top: targetScrollTop,
-      behavior
-    });
+    scrollElement.scrollTop = targetScrollTop;
   };
 
   useEffect(() => {
@@ -207,37 +212,42 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
   }, []);
 
   /**
-   * 新消息到达时，仅在仍然处于粘底状态下跟随到底部。
+   * 统一的粘底驱动：由「真实新内容」驱动，而非每帧无脑 slam。
+   *
+   * 关键修复——之前流式期间常驻一个 60fps 循环，每帧都把视图钉到底部。但流式 markdown
+   * （尤其未闭合的代码围栏）会让虚拟列表实测高度来回非单调摆动：代码块渲染时高度骤增、
+   * 围栏闭合时又收缩。每帧追这个摆动的目标，就把每一次高度抖动放大成肉眼可见的上下弹跳，
+   * 表现为「运行中乱跳、太敏感」。
+   *
+   * 现在改为：effect 依赖 lastMessageHash，仅在「内容真正变化」（新 token 批次到达）时重启，
+   * 每次重启后跟随到底、稳定若干帧即停止释放 rAF。两个批次之间不滚动，因此「纯测量抖动」
+   * （不改变内容哈希）不会触发任何粘底动作，弹跳的源头被切断。配合「只向下追、容差 2px」，
+   * 连续增长的文本仍平滑跟随，只有非单调的瞬时摆动不再被逐帧追逐。
    */
   useEffect(() => {
     if (displayableMessages.length === 0 || !shouldAutoScroll || userScrolled) {
       return;
     }
 
-    const timeoutId = setTimeout(() => {
-      requestAnimationFrame(() => performAutoScroll(isLoading ? 'auto' : 'smooth'));
-    }, 80);
-
-    return () => clearTimeout(timeoutId);
-  }, [displayableMessages.length, isLoading, lastMessageHash, shouldAutoScroll, userScrolled]);
-
-  /**
-   * 流式输出期间持续跟随最新内容，但用户一旦离开底部就立即停止。
-   */
-  useEffect(() => {
-    if (!isLoading || !shouldAutoScroll || userScrolled) {
-      return;
-    }
-
-    performAutoScroll('auto');
-
     let rafId = 0;
-    let lastScrollTime = 0;
+    let settledFrames = 0;
+    // 连续稳定帧达到预算即停止：足以吸收虚拟列表渐进高度重测，又不会长时间空转或追摆动。
+    const SETTLE_FRAME_BUDGET = 10;
 
-    const tick = (timestamp: number) => {
-      if (timestamp - lastScrollTime >= 100) {
-        performAutoScroll('auto');
-        lastScrollTime = timestamp;
+    const tick = () => {
+      const before = parentRef.current?.scrollTop ?? 0;
+      performAutoScroll();
+      const after = parentRef.current?.scrollTop ?? 0;
+
+      // 本帧没有再向下追（位置已稳定）才累计稳定帧；仍在移动则清零，确保跟随完成后才退出。
+      if (Math.abs(after - before) <= 1) {
+        settledFrames += 1;
+      } else {
+        settledFrames = 0;
+      }
+      if (settledFrames >= SETTLE_FRAME_BUDGET) {
+        rafId = 0;
+        return;
       }
 
       rafId = requestAnimationFrame(tick);
@@ -245,28 +255,9 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
 
     rafId = requestAnimationFrame(tick);
 
-    return () => cancelAnimationFrame(rafId);
-  }, [isLoading, shouldAutoScroll, userScrolled, lastMessageHash]);
-
-  /**
-   * 非流式状态下给虚拟列表一个短暂的“粘底窗口”，用于处理高度重测后的补滚动。
-   */
-  useEffect(() => {
-    if (isLoading || !shouldAutoScroll || userScrolled || displayableMessages.length === 0) {
-      return;
-    }
-
-    let ticks = 0;
-    const intervalId = setInterval(() => {
-      ticks += 1;
-      requestAnimationFrame(() => performAutoScroll('auto'));
-
-      if (ticks >= 8) {
-        clearInterval(intervalId);
-      }
-    }, 100);
-
-    return () => clearInterval(intervalId);
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+    };
   }, [displayableMessages.length, isLoading, lastMessageHash, shouldAutoScroll, userScrolled]);
 
   return {

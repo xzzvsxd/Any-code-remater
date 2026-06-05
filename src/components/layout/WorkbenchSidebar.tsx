@@ -127,7 +127,7 @@ const EngineCountBadges: React.FC<{ project: Project; isCurrent: boolean }> = ({
 export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick }) => {
   const { t } = useTranslation();
   const { tabs, switchToTab, createNewTab, openSessionInBackground, closeTab } = useTabs();
-  const { projects, selectedProject, sessions, selectProject, deleteProject, refreshSessions } = useProject();
+  const { projects, selectedProject, sessions, sessionsLoading, selectProject, deleteProject, refreshSessions } = useProject();
   const { currentView, navigateTo } = useNavigation();
 
   const [collapsed, setCollapsed] = useState<boolean>(() => {
@@ -211,15 +211,12 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     try { localStorage.setItem(WIDTH_KEY, String(width)); } catch { /* ignore */ }
   }, [width]);
 
-  // 当前选中项目默认展开
+  // 当前选中项目默认展开（手风琴：选中项变化时只展开它，收起其它，与单槽位会话数据层保持一致）
   useEffect(() => {
     if (selectedProject) {
-      setExpandedProjects((prev) => {
-        if (prev.has(selectedProject.id)) return prev;
-        const next = new Set(prev);
-        next.add(selectedProject.id);
-        return next;
-      });
+      setExpandedProjects((prev) =>
+        prev.size === 1 && prev.has(selectedProject.id) ? prev : new Set([selectedProject.id])
+      );
     }
   }, [selectedProject]);
 
@@ -245,11 +242,11 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
 
   const toggleProject = useCallback(async (project: Project) => {
     const willExpand = !expandedProjects.has(project.id);
-    setExpandedProjects((prev) => {
-      const next = new Set(prev);
-      if (willExpand) next.add(project.id); else next.delete(project.id);
-      return next;
-    });
+    // 手风琴式：任意时刻最多展开一个项目，且恒等于 selectedProject。
+    // 根因——会话数据层（ProjectContext）只维护单个 selectedProject 的 sessions，
+    // 若允许多个项目同时展开，后展开的项目会把 selectedProject 抢走，先前展开的项目
+    // 因 isCurrent 失效而拿不到 diskSessions，永久卡在“加载会话中…”。收起其它项目即可根治。
+    setExpandedProjects(() => (willExpand ? new Set([project.id]) : new Set()));
     if (willExpand && selectedProject?.id !== project.id) {
       try { await selectProject(project); } catch { /* ignore */ }
     }
@@ -417,6 +414,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
         projects={projects}
         selectedProjectId={selectedProject?.id ?? null}
         sessions={sessions}
+        sessionsLoading={sessionsLoading}
         expandedProjects={expandedProjects}
         activeSessionId={tabs.find((tb) => tb.isActive)?.session?.id ?? null}
         runningSessionIds={runningSessionIds}
@@ -647,6 +645,8 @@ interface ProjectTreeProps {
   projects: Project[];
   selectedProjectId: string | null;
   sessions: Session[];
+  /** 当前选中项目的会话是否正在加载，用于空状态文案区分「加载中 / 暂无会话」 */
+  sessionsLoading: boolean;
   expandedProjects: Set<string>;
   activeSessionId: string | null;
   /** 运行中的会话 id 集合（来自标签页 streaming 状态），用于实时高亮 */
@@ -670,7 +670,7 @@ interface ProjectTreeProps {
   onRequestPurgeProject: (project: Project) => void;
 }
 const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
-  projects, selectedProjectId, sessions, expandedProjects, activeSessionId, runningSessionIds, openTabSessions,
+  projects, selectedProjectId, sessions, sessionsLoading, expandedProjects, activeSessionId, runningSessionIds, openTabSessions,
   onToggleProject, onOpenSession,
   onNewSession, onRefreshProject, onOpenInExplorer, onCopyText, onDuplicateSession, onExportSession,
   sessionTitles, onRenameSession, sessionOrder, onReorderSessions,
@@ -804,7 +804,8 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
               <div className="ml-[15px] pl-2.5 border-l border-border/40 space-y-px my-0.5">
                 {projectSessions.length === 0 ? (
                   <div className="px-2 py-2 text-[11px] text-muted-foreground/50 italic">
-                    {isCurrent ? t('workbench.noSessions') : t('workbench.loadingSessions')}
+                    {/* 手风琴模型下展开项恒为当前项目：正在加载显示「加载中」，加载完成且确实无会话才显示「暂无会话」 */}
+                    {isCurrent && sessionsLoading ? t('workbench.loadingSessions') : t('workbench.noSessions')}
                   </div>
                 ) : (
                   <>

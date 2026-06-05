@@ -194,18 +194,14 @@ impl ProjectStore {
         let mut hidden_projects = self.load_hidden_projects()?;
 
         if projects_dir.exists() {
-            let entries = fs::read_dir(&projects_dir)
-                .map_err(|e| format!("Failed to read projects directory: {}", e))?;
+            // 一次性收集目录项，避免重复 read_dir 同一目录（原先扫描两遍：一遍计数、一遍遍历）。
+            let entries: Vec<_> = fs::read_dir(&projects_dir)
+                .map_err(|e| format!("Failed to read projects directory: {}", e))?
+                .filter_map(|e| e.ok())
+                .collect();
 
             // Count total valid project directories first
-            let total_project_count = fs::read_dir(&projects_dir)
-                .map(|entries| {
-                    entries
-                        .filter_map(|e| e.ok())
-                        .filter(|e| e.path().is_dir())
-                        .count()
-                })
-                .unwrap_or(0);
+            let total_project_count = entries.iter().filter(|e| e.path().is_dir()).count();
 
             // Safety check: if hidden_projects would hide ALL projects, clear the hidden list
             // This prevents the "no projects found" issue caused by corrupted hidden_projects.json
@@ -223,7 +219,6 @@ impl ProjectStore {
             }
 
             for entry in entries {
-                let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
                 let path = entry.path();
 
                 if path.is_dir() {
@@ -798,6 +793,47 @@ impl ProjectStore {
             }
         }
         Ok(())
+    }
+
+    /// 按真实路径解除隐藏：把指定路径对应的（已被 delete_project 隐藏的）项目从 hidden 列表移除。
+    /// 用于"重新添加曾删除过的项目"——隐藏列表存的是目录名（编码后），需把每个隐藏项解析回真实
+    /// 路径再与目标路径归一化比对，命中即移除。复用 delete_project_permanently 的同款匹配思路。
+    /// 返回是否确有项目被恢复。
+    pub fn restore_project_by_path(&self, project_path: &str) -> Result<bool, String> {
+        let hidden_projects = self.load_hidden_projects()?;
+        if hidden_projects.is_empty() {
+            return Ok(false);
+        }
+
+        let target_normalized = normalize_path_for_comparison(project_path);
+        let projects_dir = self.projects_dir();
+        let mut to_restore: Vec<String> = Vec::new();
+
+        for hidden_id in &hidden_projects {
+            // 隐藏项的真实路径：优先从其会话 cwd 解析，目录不存在/无会话时回退到目录名解码。
+            let candidate_dir = projects_dir.join(hidden_id);
+            let candidate_path = match get_project_path_from_sessions(&candidate_dir) {
+                Ok(path) => path,
+                Err(_) => decode_project_path(hidden_id),
+            };
+
+            if normalize_path_for_comparison(&candidate_path) == target_normalized {
+                to_restore.push(hidden_id.clone());
+            }
+        }
+
+        if to_restore.is_empty() {
+            return Ok(false);
+        }
+
+        let refs: Vec<&str> = to_restore.iter().map(|s| s.as_str()).collect();
+        self.remove_from_hidden_projects(&refs)?;
+        log::info!(
+            "Restored project(s) by path '{}': {}",
+            project_path,
+            to_restore.join(", ")
+        );
+        Ok(true)
     }
 }
 

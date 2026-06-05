@@ -56,8 +56,24 @@ pub use platform::apply_no_window_async;
 pub use platform::kill_process_tree;
 // Agent functionality removed
 
+/// 项目/会话目录扫描类命令的全局并发闸门。
+///
+/// 这些命令（list_projects / get_project_sessions 等）会做大量同步文件 IO（递归 read_dir +
+/// 逐行读 JSONL），且前端会话列表采用 3s 轮询刷新。若不加限制，高频轮询 + 多标签并发会把
+/// spawn_blocking 线程池打满，在 Linux 文件系统抖动时放大为 UI 阻塞乃至白屏。
+/// 这里用信号量把同时进行的重扫描并发限制到很小的数，平滑磁盘压力（KISS：不改函数内部实现，
+/// 只在 command 入口排队）。
+static SCAN_CONCURRENCY: once_cell::sync::Lazy<tokio::sync::Semaphore> =
+    once_cell::sync::Lazy::new(|| tokio::sync::Semaphore::new(2));
+
 #[tauri::command]
 pub async fn list_projects() -> Result<Vec<Project>, String> {
+    // 限流：等待扫描配额，避免与其它扫描/轮询同时压垮磁盘与线程池。
+    let _permit = SCAN_CONCURRENCY
+        .acquire()
+        .await
+        .map_err(|e| format!("scan concurrency gate closed: {}", e))?;
+
     // 1) Claude 项目与本地会话（claude 计数已在 store 内填充）
     let projects = tokio::task::spawn_blocking(|| {
         let store = ProjectStore::new()?;
@@ -106,6 +122,12 @@ pub async fn list_projects() -> Result<Vec<Project>, String> {
 /// Gets sessions for a specific project
 #[tauri::command]
 pub async fn get_project_sessions(project_id: String) -> Result<Vec<Session>, String> {
+    // 限流：与 list_projects 共用扫描配额，平滑高频轮询下的磁盘/线程池压力。
+    let _permit = SCAN_CONCURRENCY
+        .acquire()
+        .await
+        .map_err(|e| format!("scan concurrency gate closed: {}", e))?;
+
     tokio::task::spawn_blocking(move || {
         let store = ProjectStore::new()?;
         store.get_project_sessions(&project_id)
@@ -185,6 +207,19 @@ pub async fn restore_project(project_id: String) -> Result<String, String> {
     let result_msg = format!("Project '{}' has been restored to the list", project_id);
     log::info!("{}", result_msg);
     Ok(result_msg)
+}
+
+/// 按真实路径解除隐藏：用于"重新添加曾被删除（隐藏）的项目"。
+/// 若该路径对应的项目此前被 delete_project 隐藏过，则从 hidden 列表移除使其重新可见。
+/// 返回是否确有项目被恢复（无匹配时返回 false，不报错——添加全新项目时调用是安全的 no-op）。
+#[tauri::command]
+pub async fn restore_project_by_path(project_path: String) -> Result<bool, String> {
+    let store = ProjectStore::new()?;
+    let restored = store.restore_project_by_path(&project_path)?;
+    if restored {
+        log::info!("Restored hidden project for path: {}", project_path);
+    }
+    Ok(restored)
 }
 
 /// Permanently delete a project from the file system with intelligent directory detection

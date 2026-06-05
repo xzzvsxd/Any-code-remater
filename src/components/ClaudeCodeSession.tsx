@@ -8,7 +8,8 @@ import {
   List,
   GripVertical,
   Pencil,
-  ArrowUp
+  ArrowUp,
+  Play
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SortableList, SortableDragHandle } from "@/components/ui/sortable-list";
@@ -29,7 +30,7 @@ import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useSmartAutoScroll } from '@/hooks/useSmartAutoScroll';
 import { useMessageTranslation } from '@/hooks/useMessageTranslation';
 import { useSessionStream } from '@/hooks/useSessionStream';
-import { usePromptExecution } from '@/hooks/usePromptExecution';
+import { usePromptExecution, type QueuedPrompt } from '@/hooks/usePromptExecution';
 import { formatDuration } from '@/lib/pricing';
 import { MessagesProvider, useMessagesContext } from '@/contexts/MessagesContext';
 import { SessionProvider } from '@/contexts/SessionContext';
@@ -41,6 +42,7 @@ import { AskUserQuestionDialog } from '@/components/dialogs/AskUserQuestionDialo
 import { codexConverter } from '@/lib/codexConverter';
 import { convertGeminiSessionDetailToClaudeMessages } from '@/lib/geminiConverter';
 import { formatClaudeModelLabel, resolveClaudeContinuationModel } from '@/lib/claudeModelSelection';
+import { buildQueueStorageKey, loadQueuedPrompts, saveQueuedPrompts } from '@/lib/queuedPromptsStore';
 import { buildPromptIndexByMessage, getPromptIndexForDisplayableMessage, getBranchPromptIndexForDisplayableMessage } from '@/lib/promptIndex';
 import { loadUiOnlySessionMessages, mergeUiOnlySessionMessages } from '@/lib/uiOnlySessionEvents';
 import { prepareRecentProjects } from '@/lib/recentProjects';
@@ -96,6 +98,11 @@ interface ClaudeCodeSessionProps {
    * ??? Plan ??????
    */
   planModeStorageKey?: string;
+  /**
+   * 队列提示词持久化存储键（按会话身份隔离）。由 TabSessionWrapper 计算下传，
+   * 使队列跨重启 / 跨视图保活且不同会话互不串味。缺省时 Inner 会按 session/path 兜底。
+   */
+  queueStorageKey?: string;
 }
 
 const engineDisplayNames: Record<'claude' | 'codex' | 'gemini', string> = {
@@ -126,6 +133,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   onSessionInfoChange,
   onFirstUserPrompt,
   isActive = true, // 默认为活跃状态，保持向后兼容
+  queueStorageKey: queueStorageKeyProp,
 }) => {
   const { t } = useTranslation();
   const [projectPath, setProjectPath] = useState(initialProjectPath || session?.project_path || "");
@@ -244,8 +252,17 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     };
   });
 
-  // Queued prompts state
-  const [queuedPrompts, setQueuedPrompts] = useState<Array<{ id: string; prompt: string; model: ModelType }>>([]);
+  // 队列持久化键：优先用 TabSessionWrapper 下传的 prop，缺省时按 session/path 兜底（与下传逻辑同款）。
+  // 队列持久化键：正常由 TabSessionWrapper 下传（已对齐 effectiveSession，键稳定不漂移）。
+  // 此处兜底仅用于极端无 prop 的场景（如单元/独立挂载），按 session/path 退化，不随 projectPath state 漂移。
+  const queueStorageKey = useMemo(
+    () => queueStorageKeyProp
+      ?? buildQueueStorageKey({ sessionId: session?.id, projectPath: initialProjectPath, tabId: 'fallback' }),
+    [queueStorageKeyProp, session?.id, initialProjectPath],
+  );
+
+  // Queued prompts state —— 惰性初始化时从 localStorage 恢复（恢复项标记 restored=true，不会被自动发送）。
+  const [queuedPrompts, setQueuedPrompts] = useState<QueuedPrompt[]>(() => loadQueuedPrompts(queueStorageKey));
   const lastSubmittedClaudeModelRef = useRef<ModelType | null>(null);
   // 首条用户消息是否已用于标签自动命名（防止重复触发）。
   // 已有会话本就有名，挂载即视为已通知，避免覆盖。
@@ -418,7 +435,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   const hasActiveSessionRef = useRef(false);
   const floatingPromptRef = useRef<FloatingPromptInputRef>(null);
   const sessionMessagesRef = useRef<SessionMessagesRef>(null);
-  const queuedPromptsRef = useRef<Array<{ id: string; prompt: string; model: ModelType }>>([]);
+  const queuedPromptsRef = useRef<QueuedPrompt[]>([]);
   const isMountedRef = useRef(true);
   const isListeningRef = useRef(false);
 
@@ -476,6 +493,12 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   useEffect(() => {
     queuedPromptsRef.current = queuedPrompts;
   }, [queuedPrompts]);
+
+  // 队列持久化：任何增删 / 重排 / 抽取都写回 localStorage，空队列则清理 key。
+  // 使队列跨重启（重启后恢复项为 restored，需手动确认）与跨视图（ViewRouter 卸载 TabManager）保活。
+  useEffect(() => {
+    saveQueuedPrompts(queueStorageKey, queuedPrompts);
+  }, [queueStorageKey, queuedPrompts]);
 
   // 🔧 NEW: Notify parent when project path changes (for tab title update)
   useEffect(() => {
@@ -1400,6 +1423,12 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
                   <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                     <List className="h-3.5 w-3.5" />
                     {t('session.queuedPrompts', { count: queuedPrompts.length })}
+                    {/* 存在重启恢复项时给出整体提示：这些项需逐条手动确认，不会自动发送 */}
+                    {queuedPrompts.some(p => p.restored) && (
+                      <span className="text-[10px] leading-none px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 font-normal">
+                        {t('session.queueRestoredHint')}
+                      </span>
+                    )}
                   </div>
                   <Button
                     variant="ghost"
@@ -1418,7 +1447,12 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
                       listClassName="space-y-1"
                       customHandle
                       renderItem={(queuedPrompt, index) => (
-                        <div className="group flex items-center gap-1.5 bg-muted/40 hover:bg-muted/60 rounded-md py-1 pr-1 pl-0.5 transition-colors">
+                        <div className={cn(
+                          "group flex items-center gap-1.5 rounded-md py-1 pr-1 pl-0.5 transition-colors",
+                          queuedPrompt.restored
+                            ? "bg-amber-500/10 hover:bg-amber-500/15 border-l-2 border-amber-500/70"
+                            : "bg-muted/40 hover:bg-muted/60"
+                        )}>
                           <SortableDragHandle className="h-5 w-4 flex-shrink-0 opacity-50 group-hover:opacity-100">
                             <GripVertical className="h-3.5 w-3.5" />
                           </SortableDragHandle>
@@ -1434,6 +1468,23 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
                           >
                             {queuedPrompt.prompt}
                           </p>
+                          {/* 恢复项（来自上次会话）：始终可见的「发送」按钮，必须用户逐条确认才发；streaming 时置灰禁用 */}
+                          {queuedPrompt.restored && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              disabled={isLoading}
+                              className="h-5 w-5 flex-shrink-0 text-amber-600 hover:text-amber-700 disabled:opacity-40"
+                              title={isLoading ? t('session.queueBusyWait') : t('session.queueRestoredSend')}
+                              onClick={() => {
+                                if (isLoading) return;
+                                setQueuedPrompts(prev => prev.filter(p => p.id !== queuedPrompt.id));
+                                handleSendPromptWithScroll(queuedPrompt.prompt, queuedPrompt.model);
+                              }}
+                            >
+                              <Play className="h-3 w-3" />
+                            </Button>
+                          )}
                           <Button
                             variant="ghost"
                             size="icon"

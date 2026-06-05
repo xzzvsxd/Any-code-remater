@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useCallback, useMemo } from 'react';
 import { ClaudeCodeSession } from './ClaudeCodeSession';
 import { useTabSession } from '@/hooks/useTabs';
 import type { Session } from '@/lib/api';
+import { buildQueueStorageKey } from '@/lib/queuedPromptsStore';
 
 interface TabSessionWrapperProps {
   tabId: string;
@@ -45,6 +46,19 @@ const TabSessionWrapperComponent: React.FC<TabSessionWrapperProps> = ({
     if (initialProjectPath) return `plan-mode:path:${initialProjectPath.replace(/\\/g, '/').toLowerCase()}`;
     return `plan-mode:tab:${tabId}`;
   }, [session?.id, initialProjectPath, tabId]);
+
+  // 队列持久化键：优先跟随真实 session.id；尚未拿到 sessionId 的新建 tab 暂用 tabId。
+  // 注意不要退回 projectPath：同一项目下可同时打开多个会话，按路径隔离会导致队列串味。
+  // 新建会话拿到 session.id 后，当前 state 会由 ClaudeCodeSession 的持久化 effect 写入 session 键，
+  // 重启后即可按会话身份精确恢复。
+  const queueStorageKey = useMemo(
+    () => buildQueueStorageKey({
+      sessionId: session?.id,
+      projectPath: null,
+      tabId,
+    }),
+    [session?.id, tabId],
+  );
 
   // 🔧 NEW: Register cleanup callback for proper resource management
   useEffect(() => {
@@ -113,6 +127,7 @@ const TabSessionWrapperComponent: React.FC<TabSessionWrapperProps> = ({
         onFirstUserPrompt={handleFirstUserPrompt}
         isActive={isActive}
         planModeStorageKey={planModeStorageKey}
+        queueStorageKey={queueStorageKey}
       />
     </div>
   );

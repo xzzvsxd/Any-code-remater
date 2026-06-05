@@ -374,7 +374,7 @@ interface WorkspaceBreadcrumbProps {
   projects: Project[];
   selectedProject: Project | null;
   sessions: Session[];
-  activeTab?: { id: string; title: string; session?: Session; engine?: 'claude' | 'codex' | 'gemini'; state?: string };
+  activeTab?: { id: string; title: string; session?: Session; projectPath?: string; engine?: 'claude' | 'codex' | 'gemini'; state?: string };
   onSelectProject: (project: Project) => void;
   onOpenSession: (session: Session) => void;
   onRenameActiveTab: (title: string) => void;
@@ -394,6 +394,19 @@ const WorkspaceBreadcrumb: React.FC<WorkspaceBreadcrumbProps> = ({
     const norm = p.path.replace(/\\/g, '/').replace(/\/+$/, '');
     return norm.split('/').pop() || norm;
   };
+
+  // 从路径字符串提取项目名（与 projectName 同款逻辑，供活跃标签页路径直接推导）
+  const projectNameFromPath = (path: string) => {
+    const norm = path.replace(/\\/g, '/').replace(/\/+$/, '');
+    return norm.split('/').pop() || norm;
+  };
+
+  // 面包屑项目名优先跟随「当前活跃标签页」，使切换不同项目的会话时即刻同步；
+  // 全局 selectedProject 仅在用户主动从面包屑下拉选择项目时才更新，会滞后于会话切换。
+  const activeTabProjectPath = activeTab?.session?.project_path ?? activeTab?.projectPath ?? null;
+  const displayedProjectName = activeTabProjectPath
+    ? projectNameFromPath(activeTabProjectPath)
+    : (selectedProject ? projectName(selectedProject) : t('tabs.workspace.noProjectSelected'));
 
   useEffect(() => {
     if (editing && inputRef.current) {
@@ -425,7 +438,7 @@ const WorkspaceBreadcrumb: React.FC<WorkspaceBreadcrumbProps> = ({
           <button className="flex items-center gap-1.5 px-2 py-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors max-w-[180px]">
             <FolderOpen className="h-3.5 w-3.5 flex-shrink-0 text-primary/70" />
             <span className="truncate font-medium">
-              {selectedProject ? projectName(selectedProject) : t('tabs.workspace.noProjectSelected')}
+              {displayedProjectName}
             </span>
             <ChevronDown className="h-3 w-3 flex-shrink-0 opacity-60" />
           </button>

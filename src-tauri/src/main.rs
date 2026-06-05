@@ -57,6 +57,7 @@ use commands::claude::{
     read_claude_md_file,
     reset_claude_execution_config,
     restore_project,
+    restore_project_by_path,
     resume_claude_code,
     save_claude_md_file,
     save_claude_settings,
@@ -240,6 +241,19 @@ use tauri::{Manager, WindowEvent};
 use tauri_plugin_window_state::Builder as WindowStatePlugin;
 
 fn main() {
+    // Linux 白屏/卡死缓解：部分 Linux 发行版 / 显卡驱动 / 虚拟机下，WebKitGTK 的 GPU 合成与
+    // DMABUF 渲染器会导致渲染线程阻塞、界面白屏。这里在 webview 创建前注入标准 workaround
+    // 环境变量（保留用户已显式设置的值，不覆盖），是 Tauri 社区针对 Linux 白屏的通用缓解手段。
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
+            std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+        }
+        if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
+    }
+
     // Initialize logger
     env_logger::init();
 
@@ -364,6 +378,7 @@ fn main() {
             delete_sessions_batch,
             delete_project,
             restore_project,
+            restore_project_by_path,
             list_hidden_projects,
             delete_project_permanently,
             get_claude_settings,
