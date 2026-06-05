@@ -1171,9 +1171,11 @@
     "newSessionInProject": "New chat",
     "noSessions": "No sessions in this project",
     "loadingSessions": "Loading sessions…",
+    "runningSessions": "{{count}} session(s) running",
     "showAllSessions": "Show all {{count}} sessions",
     "collapseSessions": "Collapse sessions",
     "ctx": {
+      "newSession": "New session",
       "openInExplorer": "Open in file manager",
       "copyPath": "Copy project path",
       "refreshSessions": "Refresh sessions",

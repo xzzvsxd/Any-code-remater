@@ -1192,9 +1192,11 @@
     "newSessionInProject": "新建對話",
     "noSessions": "此專案暫無對話",
     "loadingSessions": "載入對話中…",
+    "runningSessions": "{{count}} 個對話正在執行",
     "showAllSessions": "展開全部 {{count}} 個對話",
     "collapseSessions": "收起對話",
     "ctx": {
+      "newSession": "新建對話",
       "openInExplorer": "在檔案總管中開啟",
       "copyPath": "複製專案路徑",
       "refreshSessions": "重新整理對話",

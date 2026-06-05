@@ -182,25 +182,48 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
         behavior: 'auto',
       });
 
-      // 虚拟列表 scrollToIndex 后，目标项的真实高度会触发重测、改变总高度。
-      // 用两档 rAF 补滚动校正即可；过多档位会与 useSmartAutoScroll 的滚动互相覆盖、引发抖动。
-      const followUpDelays = [60, 200];
-      followUpDelays.forEach((delay) => {
-        setTimeout(() => {
-          requestAnimationFrame(() => {
-            if (parentRef.current) {
-              const { scrollTop, scrollHeight, clientHeight } = parentRef.current;
-              // Only scroll if we haven't reached the true bottom yet
-              if (scrollHeight - scrollTop - clientHeight > 1) {
-                parentRef.current.scrollTo({
-                  top: scrollHeight,
-                  behavior: 'auto',
-                });
-              }
-            }
-          });
-        }, delay);
-      });
+      // 进入会话/切换会话时的稳定置底：虚拟列表的真实行高是渐进测量的（先用 estimateSize 估算，
+      // 再由 ResizeObserver 逐项测真值），totalSize 会在数百毫秒内持续变化。固定两三档 followUp
+      // 不足以覆盖长会话的高度重测，导致停在"离底很远的随机位置"。
+      // 这里改用 rAF 轮询：持续把视图钉到底，直到「连续若干帧 scrollHeight 不再变化且已贴底」
+      // 或达到超时上限才停止，无论会话多长都能稳定落底。
+      let rafId = 0;
+      const startTs = performance.now();
+      const MAX_DURATION = 1500; // ms 超时上限，覆盖大会话的渐进重测
+      const STABLE_FRAMES = 4;   // 连续稳定帧数
+      let stableCount = 0;
+      let lastScrollHeight = -1;
+
+      const step = () => {
+        const el = parentRef.current;
+        if (!el) return;
+
+        const { scrollTop, scrollHeight, clientHeight } = el;
+        const atBottom = scrollHeight - scrollTop - clientHeight <= 1;
+        const heightStable = scrollHeight === lastScrollHeight;
+        lastScrollHeight = scrollHeight;
+
+        if (!atBottom) {
+          // 仍未贴底：用虚拟列表把末项顶进窗口，并直接钉到底，双保险。
+          rowVirtualizer.scrollToIndex(messageGroups.length - 1, { align: 'end', behavior: 'auto' });
+          el.scrollTop = scrollHeight;
+          stableCount = 0;
+        } else if (heightStable) {
+          // 已贴底且高度不再变化：累计稳定帧
+          stableCount += 1;
+        } else {
+          // 已贴底但高度仍在重测：保持贴底，等高度稳定
+          el.scrollTop = scrollHeight;
+          stableCount = 0;
+        }
+
+        if (stableCount >= STABLE_FRAMES) return; // 稳定落底，结束
+        if (performance.now() - startTs > MAX_DURATION) return; // 超时兜底
+        rafId = requestAnimationFrame(step);
+      };
+
+      rafId = requestAnimationFrame(step);
+      void rafId;
     },
     scrollToTop: () => {
       if (messageGroups.length === 0) return;

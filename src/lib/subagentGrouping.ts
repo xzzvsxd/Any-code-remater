@@ -276,6 +276,15 @@ export function groupMessages(messages: ClaudeStreamMessage[]): MessageGroup[] {
       return;
     }
 
+    // 关键修复：跳过「被判定为子代理消息、但未能归入任何 Task 组」的消息，避免污染主会话。
+    // 根因——第二遍只把 parent_tool_use_id 能匹配到已知 Task 的消息归组；若子代理消息的
+    // parent 尚未匹配（流式期间 Task 调用还没到），或只有 isSidechain 标志而无 parent_tool_use_id，
+    // 就会落到这里被当普通消息平铺进主会话。子代理消息不属于主对话上下文，一律不进主流：
+    // 待对应 Task 消息到达后 messages 变化触发重新分组，它会被正确归入子代理组。
+    if (isSubagentMessage(message)) {
+      return;
+    }
+
     // 检查是否是包含 Task 调用的消息
     const taskIds = indexToTaskIds.get(index);
 

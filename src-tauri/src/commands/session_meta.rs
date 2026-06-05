@@ -21,6 +21,10 @@ pub struct SessionMetaStore {
     pub titles: HashMap<String, String>,
     #[serde(default)]
     pub order: HashMap<String, Vec<String>>,
+    /// 工作区项目的自定义显示顺序（项目 id 列表）。用户拖拽排序后写入；
+    /// 非空即视为"用户已手动排序"，前端据此锁定顺序、不再自动置顶。
+    #[serde(default)]
+    pub project_order: Vec<String>,
 }
 
 fn meta_path() -> Result<PathBuf, String> {
@@ -83,6 +87,16 @@ pub async fn set_session_order(
     session_ids: Vec<String>,
 ) -> Result<(), String> {
     let mut store = load_store();
-    store.order.insert(order_key(&engine, &project_id), session_ids);
+    store
+        .order
+        .insert(order_key(&engine, &project_id), session_ids);
+    save_store(&store)
+}
+
+/// 设置工作区项目的自定义显示顺序（拖拽排序）。空列表表示清除手动顺序、恢复自动排序。
+#[tauri::command]
+pub async fn set_project_order(project_ids: Vec<String>) -> Result<(), String> {
+    let mut store = load_store();
+    store.project_order = project_ids;
     save_store(&store)
 }

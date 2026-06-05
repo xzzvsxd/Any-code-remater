@@ -5,6 +5,32 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::process::{Child, ChildStdin};
 
+/// live_output 缓冲上限（4MB）。超出时按 \n 边界丢弃旧数据，
+/// 避免长会话内存无限膨胀，同时按行边界 drain 规避 UTF-8 多字节切片 panic。
+const MAX_LIVE_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+
+fn trim_live_output_buffer(live_output: &mut String) {
+    while live_output.len() > MAX_LIVE_OUTPUT_BYTES {
+        let target = live_output.len() / 2;
+        // char_indices 保证 drain_to 一定落在 UTF-8 字符边界；优先按换行边界丢弃旧数据。
+        let drain_to = live_output
+            .char_indices()
+            .find_map(|(idx, ch)| (idx >= target && ch == '\n').then_some(idx + ch.len_utf8()))
+            .unwrap_or_else(|| {
+                // 极端情况：超大单行输出没有换行。退化为按字符边界丢弃前半段，避免内存无限增长。
+                live_output
+                    .char_indices()
+                    .find_map(|(idx, _)| (idx >= target).then_some(idx))
+                    .unwrap_or_else(|| live_output.len())
+            });
+
+        if drain_to == 0 {
+            break;
+        }
+        live_output.drain(..drain_to);
+    }
+}
+
 /// Type of process being tracked
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ProcessType {
@@ -307,11 +333,7 @@ impl ProcessRegistry {
     /// Used when a resumed Claude process is registered immediately with the
     /// known resume id so early cancellation can work, then Claude emits the
     /// authoritative session id in `system:init`.
-    pub fn update_claude_session_id(
-        &self,
-        run_id: i64,
-        session_id: String,
-    ) -> Result<(), String> {
+    pub fn update_claude_session_id(&self, run_id: i64, session_id: String) -> Result<(), String> {
         let mut processes = self.processes.lock().map_err(|e| e.to_string())?;
         let handle = processes
             .get_mut(&run_id)
@@ -640,17 +662,14 @@ impl ProcessRegistry {
             let mut live_output = handle.live_output.lock().map_err(|e| e.to_string())?;
             live_output.push_str(output);
             live_output.push('\n');
+            trim_live_output_buffer(&mut live_output);
         }
         Ok(())
     }
 
     /// 保存某进程的 stdin 写入端（持久化流式会话用）。
     /// 传入已包在 Arc<tokio::Mutex> 中的 stdin，便于 spawn 处与 registry 共享同一句柄。
-    pub fn set_stream_stdin(
-        &self,
-        run_id: i64,
-        stdin: ChildStdin,
-    ) -> Result<(), String> {
+    pub fn set_stream_stdin(&self, run_id: i64, stdin: ChildStdin) -> Result<(), String> {
         let processes = self.processes.lock().map_err(|e| e.to_string())?;
         if let Some(handle) = processes.get(&run_id) {
             // 用 try_lock 即可：此时尚无并发写入
@@ -769,6 +788,30 @@ impl ProcessRegistry {
             killed_count, total_processes
         );
         Ok(killed_count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trim_live_output_buffer_handles_multibyte_boundaries() {
+        let mut buffer = "测".repeat(MAX_LIVE_OUTPUT_BYTES / 3 + 16);
+        buffer.push('\n');
+        buffer.push_str(&"试".repeat(MAX_LIVE_OUTPUT_BYTES / 3 + 16));
+
+        trim_live_output_buffer(&mut buffer);
+
+        assert!(buffer.is_char_boundary(buffer.len()));
+        assert!(buffer.len() <= MAX_LIVE_OUTPUT_BYTES);
+    }
+
+    #[test]
+    fn trim_live_output_buffer_keeps_small_output() {
+        let mut buffer = "hello\nworld".to_string();
+        trim_live_output_buffer(&mut buffer);
+        assert_eq!(buffer, "hello\nworld");
     }
 }
 

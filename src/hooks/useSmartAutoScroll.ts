@@ -31,6 +31,12 @@ const RESUME_AUTO_SCROLL_THRESHOLD = 80;
 // 若沿用 80px 的宽松阈值，用户在底部附近小幅上滑（落在 80px 内）会被 scroll 事件
 // 立刻判定为“已回到底部”而重新粘底，与上滑解除直接对冲 —— 这正是“吸铁石”根因。
 const RESUME_AT_BOTTOM_THRESHOLD = 4;
+// 贴底死区：离底在此像素内一律视为"已贴底"，不再触发任何滚动。
+// 根治"一直闪"的关键——流式期间消息区有持续改变高度的元素（光标/loading/思考动画、
+// 代码高亮异步重排），会让虚拟列表 totalSize 持续微幅摆动。若每帧都去对齐这个摆动的目标，
+// scrollTop 就被反复微调、肉眼可见地一直闪。设一个略大于"半行"的死区吸收这些微抖：
+// 只有真正的新内容（通常 ≥ 一行 ~20px，超过死区）才触发跟随，且一次追到底。
+const STICK_BOTTOM_DEADBAND = 16;
 
 /**
  * 计算最后一条消息的内容哈希，用于检测内容变化
@@ -86,31 +92,30 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
   };
 
   /**
-   * 执行自动滚动到底部。用户已离开底部时直接跳过。
+   * 执行自动滚动到底部。返回本次是否实际滚动了。用户已离开底部时直接跳过。
    *
-   * 关键：粘底只「向下追新增内容」，绝不「向上跟随高度收缩」。
-   * 流式输出时虚拟列表会渐进测量上方消息的真实高度，某些帧实测 < 估算会让 scrollHeight
-   * 短暂减小、目标位置上移；若跟着往上跳，就会与下一帧的内容增长来回对冲，表现为上下弹跳。
-   * 而 scrollTop 永远不会超过 target（浏览器自动 clamp），高度收缩时浏览器会一次性把位置
-   * 修正到位 —— 因此这里只处理「落后于底部」的情况，不主动制造任何向上的滚动，根除振荡。
-   * 全程瞬时（无 smooth 动画）：粘底语义就是"始终钉在底部"，瞬时跳转才不会被高频更新打断。
+   * 两条铁律根除振荡：
+   * 1) 死区（STICK_BOTTOM_DEADBAND）：离底在死区内一律不动 —— 吸收虚拟列表测量抖动与
+   *    流式动画造成的高度微摆，这是"一直闪"的根治点。
+   * 2) 只向下追、绝不向上跟随收缩：scrollTop 不会超过 target（浏览器自动 clamp），
+   *    高度收缩浏览器会一次性修正，我们不主动制造向上滚动。
+   * 全程瞬时（无 smooth）：粘底就是"钉在底部"，瞬时跳转才不会被高频更新打断。
    */
-  const performAutoScroll = () => {
-    // 用户已主动离开底部时，任何在途的自动滚动立即作废，避免“吸底”。
-    // autoScrollEnabledRef 为同步状态，比 React state 更早生效，能即时止住正在执行的滚动循环。
-    if (!autoScrollEnabledRef.current) return;
+  const performAutoScroll = (): boolean => {
+    if (!autoScrollEnabledRef.current) return false;
 
     const scrollElement = parentRef.current;
-    if (!scrollElement) return;
+    if (!scrollElement) return false;
 
     const targetScrollTop = scrollElement.scrollHeight - scrollElement.clientHeight;
-    // 仅当 scrollTop 落后于底部（新内容在下方）才向下追。容差 2px 兼顾高 DPI 亚像素抖动。
-    // target - scrollTop <= 2 同时覆盖：已贴底、以及高度收缩后 scrollTop 被 clamp 的情形。
-    if (targetScrollTop - scrollElement.scrollTop <= 2) {
-      return;
+    const distance = targetScrollTop - scrollElement.scrollTop;
+    // 落后不足死区：视为已贴底，不滚动（吸收微抖）。也覆盖高度收缩后 scrollTop 被 clamp 的情形。
+    if (distance <= STICK_BOTTOM_DEADBAND) {
+      return false;
     }
 
     scrollElement.scrollTop = targetScrollTop;
+    return true;
   };
 
   useEffect(() => {
@@ -212,17 +217,11 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
   }, []);
 
   /**
-   * 统一的粘底驱动：由「真实新内容」驱动，而非每帧无脑 slam。
+   * 统一的粘底驱动：由「真实新内容」驱动（依赖 lastMessageHash），而非每帧无脑 slam。
    *
-   * 关键修复——之前流式期间常驻一个 60fps 循环，每帧都把视图钉到底部。但流式 markdown
-   * （尤其未闭合的代码围栏）会让虚拟列表实测高度来回非单调摆动：代码块渲染时高度骤增、
-   * 围栏闭合时又收缩。每帧追这个摆动的目标，就把每一次高度抖动放大成肉眼可见的上下弹跳，
-   * 表现为「运行中乱跳、太敏感」。
-   *
-   * 现在改为：effect 依赖 lastMessageHash，仅在「内容真正变化」（新 token 批次到达）时重启，
-   * 每次重启后跟随到底、稳定若干帧即停止释放 rAF。两个批次之间不滚动，因此「纯测量抖动」
-   * （不改变内容哈希）不会触发任何粘底动作，弹跳的源头被切断。配合「只向下追、容差 2px」，
-   * 连续增长的文本仍平滑跟随，只有非单调的瞬时摆动不再被逐帧追逐。
+   * 每次内容变化重启循环，持续把视图钉到底部，直到「连续若干帧都无需滚动」（已落在死区内，
+   * performAutoScroll 返回 false）即停止释放 rAF。配合死区，纯高度微抖不会触发滚动，
+   * 循环很快 settle 并退出，不再有"一直闪"。
    */
   useEffect(() => {
     if (displayableMessages.length === 0 || !shouldAutoScroll || userScrolled) {
@@ -231,19 +230,15 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
 
     let rafId = 0;
     let settledFrames = 0;
-    // 连续稳定帧达到预算即停止：足以吸收虚拟列表渐进高度重测，又不会长时间空转或追摆动。
-    const SETTLE_FRAME_BUDGET = 10;
+    const SETTLE_FRAME_BUDGET = 6;
 
     const tick = () => {
-      const before = parentRef.current?.scrollTop ?? 0;
-      performAutoScroll();
-      const after = parentRef.current?.scrollTop ?? 0;
-
-      // 本帧没有再向下追（位置已稳定）才累计稳定帧；仍在移动则清零，确保跟随完成后才退出。
-      if (Math.abs(after - before) <= 1) {
-        settledFrames += 1;
-      } else {
+      const didScroll = performAutoScroll();
+      // 本帧无需滚动（已在死区内贴底）才累计稳定帧；一旦还需滚动就清零。
+      if (didScroll) {
         settledFrames = 0;
+      } else {
+        settledFrames += 1;
       }
       if (settledFrames >= SETTLE_FRAME_BUDGET) {
         rafId = 0;

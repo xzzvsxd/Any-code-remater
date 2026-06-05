@@ -127,7 +127,7 @@ const EngineCountBadges: React.FC<{ project: Project; isCurrent: boolean }> = ({
 export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick }) => {
   const { t } = useTranslation();
   const { tabs, switchToTab, createNewTab, openSessionInBackground, closeTab } = useTabs();
-  const { projects, selectedProject, sessions, sessionsLoading, selectProject, deleteProject, refreshSessions } = useProject();
+  const { projects, selectedProject, sessions, sessionsByProject, sessionsLoading, selectProject, deleteProject, refreshSessions, loadProjectSessions } = useProject();
   const { currentView, navigateTo } = useNavigation();
 
   const [collapsed, setCollapsed] = useState<boolean>(() => {
@@ -152,16 +152,31 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
   const [sessionTitles, setSessionTitles] = useState<Record<string, string>>({});
   // 会话自定义排序（{ "engine:project_id": [session_id...] }）
   const [sessionOrder, setSessionOrder] = useState<Record<string, string[]>>({});
+  // 项目手动拖拽顺序（项目 id 列表）；非空即"用户已手动排序"，锁定顺序、不再自动置顶。
+  const [projectOrder, setProjectOrder] = useState<string[]>([]);
+  // 项目最近触发请求的时间戳（项目 id -> ts），用于"活跃项目自动置顶"（仅无手动顺序时生效）。
+  const [projectActivityTs, setProjectActivityTs] = useState<Record<string, number>>({});
 
   const reloadMeta = useCallback(async () => {
     try {
       const meta = await api.getSessionMeta();
       setSessionTitles(meta.titles || {});
       setSessionOrder(meta.order || {});
+      setProjectOrder(meta.project_order || []);
     } catch { /* ignore */ }
   }, []);
 
   useEffect(() => { reloadMeta(); }, [reloadMeta]);
+
+  // 项目拖拽排序：写入手动顺序并持久化。一旦有手动顺序，排序即锁定（自动置顶让位）。
+  const reorderProjects = useCallback(async (orderedIds: string[]) => {
+    setProjectOrder(orderedIds);
+    try {
+      await api.setProjectOrder(orderedIds);
+    } catch (e) {
+      console.error('[Workbench] reorder projects failed:', e);
+    }
+  }, []);
 
   const renameSession = useCallback(async (session: Session, title: string) => {
     try {
@@ -204,6 +219,24 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     [tabs],
   );
 
+  // 活跃置顶时间戳：有标签进入 streaming 时，给其所属项目打当前时间戳，供"活跃项目自动置顶"。
+  // 仅在用户未手动排序（projectOrder 为空）时参与排序；手动排序后锁定，不再被打乱。
+  useEffect(() => {
+    const runningProjectIds = tabs
+      .filter((tb) => tb.state === 'streaming' && tb.session?.project_id)
+      .map((tb) => tb.session!.project_id);
+    if (runningProjectIds.length === 0) return;
+    setProjectActivityTs((prev) => {
+      const now = Date.now();
+      let changed = false;
+      const next = { ...prev };
+      runningProjectIds.forEach((pid) => {
+        if (pid) { next[pid] = now; changed = true; }
+      });
+      return changed ? next : prev;
+    });
+  }, [tabs]);
+
   useEffect(() => {
     try { localStorage.setItem(COLLAPSED_KEY, String(collapsed)); } catch { /* ignore */ }
   }, [collapsed]);
@@ -211,16 +244,66 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     try { localStorage.setItem(WIDTH_KEY, String(width)); } catch { /* ignore */ }
   }, [width]);
 
-  // 当前选中项目默认展开（手风琴：选中项变化时只展开它，收起其它，与单槽位会话数据层保持一致）
+  // 项目显示顺序：① 有手动顺序(projectOrder 非空) → 按它排，未列入的按活跃时间补末尾、锁定不被置顶打乱；
+  // ② 无手动顺序 → 按活跃时间降序(取项目自身活跃时间与 projectActivityTs 的较大值)，触发新请求的项目自动置顶。
+  const orderedProjects = React.useMemo(() => {
+    const activityOf = (p: Project) => Math.max(p.created_at * 1000 || 0, projectActivityTs[p.id] ?? 0);
+    if (projectOrder.length > 0) {
+      const indexOf = (id: string) => {
+        const i = projectOrder.indexOf(id);
+        return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+      };
+      return [...projects].sort((a, b) => {
+        const ia = indexOf(a.id);
+        const ib = indexOf(b.id);
+        if (ia !== ib) return ia - ib;        // 手动顺序优先
+        return activityOf(b) - activityOf(a); // 都未列入时按活跃时间补在末尾
+      });
+    }
+    return [...projects].sort((a, b) => activityOf(b) - activityOf(a));
+  }, [projects, projectOrder, projectActivityTs]);
+
+  // 当前选中项目默认展开（多项目展开：仅把选中项加入展开集合，不收起其它项目）
   useEffect(() => {
     if (selectedProject) {
-      setExpandedProjects((prev) =>
-        prev.size === 1 && prev.has(selectedProject.id) ? prev : new Set([selectedProject.id])
-      );
+      setExpandedProjects((prev) => {
+        if (prev.has(selectedProject.id)) return prev;
+        const next = new Set(prev);
+        next.add(selectedProject.id);
+        return next;
+      });
     }
   }, [selectedProject]);
 
-  // 拖拽调宽
+  // 聚焦时只刷新「已展开的项目」：窗口重新可见且聚焦时，遍历展开集合各自静默刷新会话。
+  // 用 ref 持有最新值，effect 仅挂载一次；不引入定时轮询，避免 Linux 上的高频扫描卡顿。
+  const focusRefreshRef = useRef<{ expanded: Set<string>; projects: Project[]; load: typeof loadProjectSessions }>({
+    expanded: expandedProjects,
+    projects,
+    load: loadProjectSessions,
+  });
+  useEffect(() => {
+    focusRefreshRef.current = { expanded: expandedProjects, projects, load: loadProjectSessions };
+  }, [expandedProjects, projects, loadProjectSessions]);
+
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
+      const { expanded, projects: projs, load } = focusRefreshRef.current;
+      projs.forEach((p) => {
+        if (expanded.has(p.id)) {
+          load(p, { silent: true }).catch(() => { /* ignore */ });
+        }
+      });
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleVisibility);
+    };
+  }, []);
   const onDragStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     draggingRef.current = true;
@@ -242,15 +325,21 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
 
   const toggleProject = useCallback(async (project: Project) => {
     const willExpand = !expandedProjects.has(project.id);
-    // 手风琴式：任意时刻最多展开一个项目，且恒等于 selectedProject。
-    // 根因——会话数据层（ProjectContext）只维护单个 selectedProject 的 sessions，
-    // 若允许多个项目同时展开，后展开的项目会把 selectedProject 抢走，先前展开的项目
-    // 因 isCurrent 失效而拿不到 diskSessions，永久卡在“加载会话中…”。收起其它项目即可根治。
-    setExpandedProjects(() => (willExpand ? new Set([project.id]) : new Set()));
-    if (willExpand && selectedProject?.id !== project.id) {
-      try { await selectProject(project); } catch { /* ignore */ }
+    // 多项目展开：增量展开/收起，不再收起其它项目（数据层已按项目缓存会话，互不抢占）。
+    setExpandedProjects((prev) => {
+      const next = new Set(prev);
+      if (willExpand) next.add(project.id); else next.delete(project.id);
+      return next;
+    });
+    if (willExpand) {
+      // 加载该项目会话到按项目缓存（不强制改 selectedProject，其它展开项目不受影响）。
+      loadProjectSessions(project).catch(() => { /* ignore */ });
+      // 同时把它设为"当前选中"用于高亮（selectProject 不再破坏其它展开项目）。
+      if (selectedProject?.id !== project.id) {
+        try { await selectProject(project); } catch { /* ignore */ }
+      }
     }
-  }, [expandedProjects, selectedProject, selectProject]);
+  }, [expandedProjects, selectedProject, selectProject, loadProjectSessions]);
 
   const openSession = useCallback((session: Session) => {
     const result = openSessionInBackground(session);
@@ -260,6 +349,12 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
 
   const onNewSession = useCallback(() => {
     createNewTab();
+    navigateTo('claude-tab-manager');
+  }, [createNewTab, navigateTo]);
+
+  // 在指定项目下新建会话：createNewTab 第二参数接受项目路径，新标签即落在该项目目录。
+  const onNewSessionInProject = useCallback((project: Project) => {
+    createNewTab(undefined, project.path);
     navigateTo('claude-tab-manager');
   }, [createNewTab, navigateTo]);
 
@@ -411,9 +506,10 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
 
       {/* 主体：项目资源管理器（打开中的会话在树里高亮，无需单独标签列表） */}
       <WorkbenchProjectTree
-        projects={projects}
+        projects={orderedProjects}
         selectedProjectId={selectedProject?.id ?? null}
         sessions={sessions}
+        sessionsByProject={sessionsByProject}
         sessionsLoading={sessionsLoading}
         expandedProjects={expandedProjects}
         activeSessionId={tabs.find((tb) => tb.isActive)?.session?.id ?? null}
@@ -422,6 +518,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
         onToggleProject={toggleProject}
         onOpenSession={openSession}
         onNewSession={onNewSession}
+        onNewSessionInProject={onNewSessionInProject}
         onRefreshProject={(p) => selectProject(p)}
         onOpenInExplorer={openInExplorer}
         onCopyText={copyText}
@@ -431,6 +528,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
         onRenameSession={renameSession}
         sessionOrder={sessionOrder}
         onReorderSessions={reorderSessions}
+        onReorderProjects={reorderProjects}
         onRequestDeleteSession={(s) => setConfirm({ kind: 'deleteSession', session: s })}
         onRequestRemoveProject={(p) => setConfirm({ kind: 'removeProject', project: p })}
         onRequestPurgeProject={(p) => setConfirm({ kind: 'purgeProject', project: p })}
@@ -645,6 +743,8 @@ interface ProjectTreeProps {
   projects: Project[];
   selectedProjectId: string | null;
   sessions: Session[];
+  /** 按项目 id 缓存的会话，支持多项目同时展开各显各的会话 */
+  sessionsByProject: Record<string, Session[]>;
   /** 当前选中项目的会话是否正在加载，用于空状态文案区分「加载中 / 暂无会话」 */
   sessionsLoading: boolean;
   expandedProjects: Set<string>;
@@ -656,6 +756,7 @@ interface ProjectTreeProps {
   onToggleProject: (project: Project) => void;
   onOpenSession: (session: Session) => void;
   onNewSession: () => void;
+  onNewSessionInProject: (project: Project) => void;
   onRefreshProject: (project: Project) => void;
   onOpenInExplorer: (path: string) => void;
   onCopyText: (text: string, label: string) => void;
@@ -665,15 +766,16 @@ interface ProjectTreeProps {
   onRenameSession: (session: Session, title: string) => void;
   sessionOrder: Record<string, string[]>;
   onReorderSessions: (engine: string, projectId: string, orderedIds: string[]) => void;
+  onReorderProjects: (orderedIds: string[]) => void;
   onRequestDeleteSession: (session: Session) => void;
   onRequestRemoveProject: (project: Project) => void;
   onRequestPurgeProject: (project: Project) => void;
 }
 const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
-  projects, selectedProjectId, sessions, sessionsLoading, expandedProjects, activeSessionId, runningSessionIds, openTabSessions,
+  projects, selectedProjectId, sessions, sessionsByProject, sessionsLoading, expandedProjects, activeSessionId, runningSessionIds, openTabSessions,
   onToggleProject, onOpenSession,
-  onNewSession, onRefreshProject, onOpenInExplorer, onCopyText, onDuplicateSession, onExportSession,
-  sessionTitles, onRenameSession, sessionOrder, onReorderSessions,
+  onNewSession, onNewSessionInProject, onRefreshProject, onOpenInExplorer, onCopyText, onDuplicateSession, onExportSession,
+  sessionTitles, onRenameSession, sessionOrder, onReorderSessions, onReorderProjects,
   onRequestDeleteSession, onRequestRemoveProject, onRequestPurgeProject,
 }) => {
   const { t } = useTranslation();
@@ -709,11 +811,19 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
         </button>
       </div>
       <div className="space-y-0.5 mt-0.5">
-      {projects.map((project) => {
+      <SortableList
+        items={projects}
+        customHandle
+        listClassName="space-y-0.5"
+        onReorder={(items) => onReorderProjects(items.map((p) => p.id))}
+        renderItem={(project) => {
         const isExpanded = expandedProjects.has(project.id);
         const isCurrent = selectedProjectId === project.id;
-        // 仅当前选中项目能拿到已加载的（落盘）sessions；其它项目展开时会触发加载并成为当前项目。
-        const diskSessions = isCurrent ? sessions : [];
+        // 多项目展开：优先读该项目的按项目缓存；缓存未命中时回退到当前选中项目的 sessions。
+        const cachedSessions = sessionsByProject[project.id];
+        const diskSessions = cachedSessions ?? (isCurrent ? sessions : []);
+        // 缓存未命中（首次展开、尚未加载完）视为加载中，用于空状态文案区分「加载中 / 暂无会话」。
+        const isProjectLoading = cachedSessions === undefined && (isCurrent ? sessionsLoading : isExpanded);
         // 实时合并该项目下"已在标签页打开但尚未落盘/尚未刷新"的会话，
         // 使新建会话拿到 sessionId 后立刻出现在树里，无需等 AI 完成事件。
         const diskIds = new Set(diskSessions.map((s) => s.id));
@@ -739,8 +849,15 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
         const expandedAll = showAll.has(project.id);
         const visible = expandedAll ? projectSessions : projectSessions.slice(0, RECENT_SESSION_COUNT);
 
+        // 该项目下运行中的会话数：取所有已打开标签会话中归属本项目、且处于 streaming 的。
+        // 用 openTabSessions（不依赖项目是否展开/缓存是否命中），保证未展开项目也能显示运行标识。
+        const runningCount = openTabSessions.filter(
+          (s) => tabSessionBelongsTo(s, project) && runningSessionIds.has(s.id),
+        ).length;
+        const hasRunning = runningCount > 0;
+
         return (
-          <div key={project.id} className="px-1">
+          <div className="px-1">
             <div
               role="button"
               tabIndex={0}
@@ -754,9 +871,28 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
               )}
             >
               {isCurrent && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-primary" />}
+              {/* 拖拽手柄：hover 项目行时显示，按住可调整项目显示顺序 */}
+              <SortableDragHandle className="flex-shrink-0 h-4 w-3 -ml-1 opacity-0 group-hover/proj:opacity-100 transition-opacity cursor-grab">
+                <GripVertical className="h-3 w-3" />
+              </SortableDragHandle>
               <ChevronRight className={cn('h-3.5 w-3.5 flex-shrink-0 transition-transform duration-200 text-muted-foreground/70', isExpanded && 'rotate-90')} />
-              <FolderOpen className={cn('h-3.5 w-3.5 flex-shrink-0', isCurrent ? 'text-primary' : 'text-muted-foreground/70')} />
+              {/* 文件夹图标：有运行中会话时变运行色（amber），优先级高于选中色，一眼区分"正在跑" */}
+              <FolderOpen className={cn(
+                'h-3.5 w-3.5 flex-shrink-0',
+                hasRunning ? 'text-amber-500' : isCurrent ? 'text-primary' : 'text-muted-foreground/70'
+              )} />
               <span className="flex-1 truncate text-left">{projectName(project)}</span>
+
+              {/* 运行中会话数：图标变色 + 数字（amber 小字），常驻显示、不随 hover 隐藏 */}
+              {hasRunning && (
+                <span
+                  className="flex-shrink-0 flex items-center gap-0.5 text-[10px] font-semibold text-amber-500 tabular-nums"
+                  title={t('workbench.runningSessions', { count: runningCount })}
+                >
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  {runningCount}
+                </span>
+              )}
 
               {/* 会话数徽章（分引擎图标）：hover 项目行时隐藏，给 ⋯ 让位 */}
               <span className="group-hover/proj:hidden">
@@ -777,6 +913,10 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="w-52" onClick={(e) => e.stopPropagation()}>
+                  <DropdownMenuItem onClick={() => onNewSessionInProject(project)}>
+                    <Plus className="h-4 w-4 mr-2" />{t('workbench.ctx.newSession')}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => onOpenInExplorer(project.path)}>
                     <FolderInput className="h-4 w-4 mr-2" />{t('workbench.ctx.openInExplorer')}
                   </DropdownMenuItem>
@@ -804,8 +944,8 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
               <div className="ml-[15px] pl-2.5 border-l border-border/40 space-y-px my-0.5">
                 {projectSessions.length === 0 ? (
                   <div className="px-2 py-2 text-[11px] text-muted-foreground/50 italic">
-                    {/* 手风琴模型下展开项恒为当前项目：正在加载显示「加载中」，加载完成且确实无会话才显示「暂无会话」 */}
-                    {isCurrent && sessionsLoading ? t('workbench.loadingSessions') : t('workbench.noSessions')}
+                    {/* 多项目展开：该项目缓存未命中（加载中）显示「加载中」，加载完成且确实无会话才显示「暂无会话」 */}
+                    {isProjectLoading ? t('workbench.loadingSessions') : t('workbench.noSessions')}
                   </div>
                 ) : (
                   <>
@@ -813,10 +953,14 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
                       items={visible}
                       customHandle
                       listClassName="space-y-px"
-                      disabled={!expandedAll}
+                      disabled={expandedAll}
                       onReorder={(items) => {
-                        // 拖拽后的完整顺序：展开全部时 items 即全部会话
-                        onReorderSessions('proj', project.id, items.map((s) => s.id));
+                        // 拖拽仅在「最近 N 个」视图启用（展开全部时退化为纯列表、不挂 dnd-kit，
+                        // 避免几百个 useSortable 实例导致 Linux 反复开关文件夹卡死）。
+                        // 此时 items 是拖拽后的前 N 个，完整顺序 = 新前 N + 其余会话（保持原相对序）。
+                        const movedIds = new Set(items.map((s) => s.id));
+                        const rest = projectSessions.filter((s) => !movedIds.has(s.id));
+                        onReorderSessions('proj', project.id, [...items, ...rest].map((s) => s.id));
                       }}
                       renderItem={(session) => {
                       const isActive = activeSessionId === session.id;
@@ -847,8 +991,8 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
                           ) : isRunning ? (
                             <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-amber-500/80" />
                           ) : null}
-                          {/* 拖拽手柄：仅展开全部时可见可用 */}
-                          {expandedAll && (
+                          {/* 拖拽手柄：仅「最近 N 个」视图可见可用（展开全部时退化纯列表、无拖拽） */}
+                          {!expandedAll && (
                             <SortableDragHandle className="flex-shrink-0 h-4 w-3 opacity-0 group-hover/sess:opacity-100 transition-opacity">
                               <GripVertical className="h-3 w-3" />
                             </SortableDragHandle>
@@ -883,55 +1027,63 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
                             </span>
                           )}
 
-                          <DropdownMenu open={menuFor === `sess:${session.id}`} onOpenChange={(o) => setMenuFor(o ? `sess:${session.id}` : null)}>
-                            <DropdownMenuTrigger asChild>
-                              <button
-                                onClick={(e) => { e.stopPropagation(); setMenuFor(`sess:${session.id}`); }}
-                                className={cn(
-                                  'flex-shrink-0 h-5 w-5 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted-foreground/15 transition-opacity',
-                                  menuFor === `sess:${session.id}` ? 'opacity-100' : 'opacity-0 group-hover/sess:opacity-100'
-                                )}
-                              >
-                                <MoreHorizontal className="h-3.5 w-3.5" />
-                              </button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="start" className="w-48" onClick={(e) => e.stopPropagation()}>
-                              <DropdownMenuItem onClick={() => onOpenSession(session)}>
-                                <ExternalLink className="h-4 w-4 mr-2" />{t('workbench.ctx.openSession')}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => onDuplicateSession(session)}>
-                                <Files className="h-4 w-4 mr-2" />{t('workbench.ctx.duplicate')}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => onExportSession(session, 'markdown')}>
-                                <Download className="h-4 w-4 mr-2" />{t('workbench.ctx.exportMd')}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => onExportSession(session, 'json')}>
-                                <Download className="h-4 w-4 mr-2" />{t('workbench.ctx.exportJson')}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => onExportSession(session, 'jsonl')}>
-                                <Download className="h-4 w-4 mr-2" />{t('workbench.ctx.exportJsonl')}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => onCopyText(session.id, t('workbench.ctx.idCopied'))}>
-                                <Copy className="h-4 w-4 mr-2" />{t('workbench.ctx.copyId')}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => onOpenInExplorer(session.project_path)}>
-                                <FolderInput className="h-4 w-4 mr-2" />{t('workbench.ctx.openFolder')}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => {
-                                setRenameDraft(sessionTitles[session.id] || (session.first_message ? getFirstLine(session.first_message) : session.id.slice(0, 8)));
-                                setRenamingId(session.id);
-                              }}>
-                                <Pencil className="h-4 w-4 mr-2" />{t('workbench.ctx.rename')}
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                onClick={() => onRequestDeleteSession(session)}
-                                className="text-destructive focus:text-destructive"
-                              >
-                                <Trash2 className="h-4 w-4 mr-2" />{t('workbench.ctx.deleteSession')}
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                          {/* 会话行操作菜单：懒挂载——仅当前打开的那一行渲染完整 Radix DropdownMenu 树，
+                              其余几百行只渲染纯 button，消除"每行常驻一个 DropdownMenu Root+Trigger"的开销。 */}
+                          {menuFor === `sess:${session.id}` ? (
+                            <DropdownMenu open onOpenChange={(o) => { if (!o) setMenuFor(null); }}>
+                              <DropdownMenuTrigger asChild>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); }}
+                                  className="flex-shrink-0 h-5 w-5 rounded flex items-center justify-center text-foreground bg-muted-foreground/15 opacity-100"
+                                >
+                                  <MoreHorizontal className="h-3.5 w-3.5" />
+                                </button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="start" className="w-48" onClick={(e) => e.stopPropagation()}>
+                                <DropdownMenuItem onClick={() => onOpenSession(session)}>
+                                  <ExternalLink className="h-4 w-4 mr-2" />{t('workbench.ctx.openSession')}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => onDuplicateSession(session)}>
+                                  <Files className="h-4 w-4 mr-2" />{t('workbench.ctx.duplicate')}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => onExportSession(session, 'markdown')}>
+                                  <Download className="h-4 w-4 mr-2" />{t('workbench.ctx.exportMd')}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => onExportSession(session, 'json')}>
+                                  <Download className="h-4 w-4 mr-2" />{t('workbench.ctx.exportJson')}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => onExportSession(session, 'jsonl')}>
+                                  <Download className="h-4 w-4 mr-2" />{t('workbench.ctx.exportJsonl')}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => onCopyText(session.id, t('workbench.ctx.idCopied'))}>
+                                  <Copy className="h-4 w-4 mr-2" />{t('workbench.ctx.copyId')}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => onOpenInExplorer(session.project_path)}>
+                                  <FolderInput className="h-4 w-4 mr-2" />{t('workbench.ctx.openFolder')}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => {
+                                  setRenameDraft(sessionTitles[session.id] || (session.first_message ? getFirstLine(session.first_message) : session.id.slice(0, 8)));
+                                  setRenamingId(session.id);
+                                }}>
+                                  <Pencil className="h-4 w-4 mr-2" />{t('workbench.ctx.rename')}
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  onClick={() => onRequestDeleteSession(session)}
+                                  className="text-destructive focus:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4 mr-2" />{t('workbench.ctx.deleteSession')}
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          ) : (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setMenuFor(`sess:${session.id}`); }}
+                              className="flex-shrink-0 h-5 w-5 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted-foreground/15 transition-opacity opacity-0 group-hover/sess:opacity-100"
+                            >
+                              <MoreHorizontal className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                         </div>
                       );
                     }}
@@ -957,7 +1109,8 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = ({
             )}
           </div>
         );
-      })}
+      }}
+      />
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { api } from "@/lib/api";
+import { isAbsolutePath, normalizeImagePath } from "@/lib/imagePath";
 import { ImageAttachment } from "../types";
 
 export interface UseImageHandlingOptions {
@@ -44,25 +45,25 @@ export function useImageHandling({
     let matches = Array.from(text.matchAll(quotedRegex));
     for (const match of matches) {
       const path = match[1];
-      const fullPath = path.startsWith('data:') 
-        ? path 
-        : (path.startsWith('/') ? path : (projectPath ? `${projectPath}/${path}` : path));
-      
+      const fullPath = path.startsWith('data:')
+        ? path
+        : normalizeImagePath(isAbsolutePath(path) ? path : (projectPath ? `${projectPath}/${path}` : path));
+
       if (isImageFile(fullPath)) {
         pathsSet.add(fullPath);
       }
     }
-    
+
     // Remove quoted mentions to avoid double-matching
     let textWithoutQuoted = text.replace(quotedRegex, '');
-    
+
     // Extract unquoted paths
     matches = Array.from(textWithoutQuoted.matchAll(unquotedRegex));
     for (const match of matches) {
       const path = match[1].trim();
       if (path.includes('data:')) continue;
-      
-      const fullPath = path.startsWith('/') ? path : (projectPath ? `${projectPath}/${path}` : path);
+
+      const fullPath = normalizeImagePath(isAbsolutePath(path) ? path : (projectPath ? `${projectPath}/${path}` : path));
       
       if (isImageFile(fullPath)) {
         pathsSet.add(fullPath);
@@ -104,7 +105,7 @@ export function useImageHandling({
             lastDropTime = currentTime;
 
             const droppedPaths = event.payload.paths as string[];
-            const imagePaths = droppedPaths.filter(isImageFile);
+            const imagePaths = droppedPaths.filter(isImageFile).map(normalizeImagePath);
 
             if (imagePaths.length > 0) {
               const existingPaths = extractImagePaths(prompt);
@@ -261,10 +262,13 @@ export function useImageHandling({
   const addImage = (imagePath: string) => {
     if (!isImageFile(imagePath)) return;
 
-    const existingPaths = extractImagePaths(prompt);
-    if (existingPaths.includes(imagePath)) return;
+    // 规范化路径分隔符，确保 Claude CLI @引用能正确解析（见 normalizeImagePath 注释）
+    const normalizedPath = normalizeImagePath(imagePath);
 
-    const mention = imagePath.includes(' ') ? `@"${imagePath}"` : `@${imagePath}`;
+    const existingPaths = extractImagePaths(prompt);
+    if (existingPaths.includes(normalizedPath)) return;
+
+    const mention = normalizedPath.includes(' ') ? `@"${normalizedPath}"` : `@${normalizedPath}`;
     const newPrompt = prompt + (prompt.endsWith(' ') || prompt === '' ? '' : ' ') + mention + ' ';
     
     onPromptChange(newPrompt);

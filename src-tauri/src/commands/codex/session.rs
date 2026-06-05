@@ -39,14 +39,16 @@ const MAX_CODEX_SESSION_LIST_SCAN_LINES: usize = 200;
 // ============================================================================
 
 /// Codex execution mode
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum CodexExecutionMode {
-    /// Read-only mode (default, safe)
+    /// Read-only mode (safe, no writes)
     ReadOnly,
-    /// Allow file edits
+    /// Default sandbox: 交由 Codex CLI 自身决定，不显式覆盖
+    Default,
+    /// Allow file edits without prompts (workspace-write)
     FullAuto,
-    /// Full access including network
+    /// Full access including network (danger)
     DangerFullAccess,
 }
 
@@ -103,6 +105,16 @@ pub struct CodexExecutionOptions {
 
 fn default_json_mode() -> bool {
     true
+}
+
+/// 把 mode 转成 Codex CLI 的 -c sandbox_mode=… 值；Default 不需要覆盖
+fn codex_sandbox_mode_override(mode: &CodexExecutionMode) -> Option<&'static str> {
+    match mode {
+        CodexExecutionMode::ReadOnly => Some("read-only"),
+        CodexExecutionMode::FullAuto => Some("workspace-write"),
+        CodexExecutionMode::DangerFullAccess => Some("danger-full-access"),
+        CodexExecutionMode::Default => None,
+    }
 }
 
 /// Codex session metadata
@@ -225,7 +237,11 @@ impl CodexProcessHandle {
                     );
                 }
                 if let Err(e2) = self.child.kill().await {
-                    log::error!("[Codex] Fallback child.kill failed for PID {}: {}", self.pid, e2);
+                    log::error!(
+                        "[Codex] Fallback child.kill failed for PID {}: {}",
+                        self.pid,
+                        e2
+                    );
                 }
                 return;
             }
@@ -240,7 +256,11 @@ impl CodexProcessHandle {
                     e
                 );
                 if let Err(e2) = self.child.kill().await {
-                    log::error!("[Codex] Fallback child.kill failed for PID {}: {}", self.pid, e2);
+                    log::error!(
+                        "[Codex] Fallback child.kill failed for PID {}: {}",
+                        self.pid,
+                        e2
+                    );
                 }
             }
         }
@@ -394,7 +414,6 @@ pub async fn list_codex_sessions() -> Result<Vec<CodexSession>, String> {
 }
 
 fn list_codex_sessions_blocking() -> Result<Vec<CodexSession>, String> {
-
     // Use unified sessions directory function (supports WSL)
     let sessions_dir = get_codex_sessions_dir()?;
     log::info!("Looking for Codex sessions in: {:?}", sessions_dir);
@@ -497,7 +516,11 @@ pub fn parse_codex_session_file(path: &std::path::Path) -> Option<CodexSession> 
     let metadata_updated_at = std::fs::metadata(path)
         .ok()
         .and_then(|m| m.modified().ok())
-        .and_then(|modified| modified.duration_since(std::time::SystemTime::UNIX_EPOCH).ok())
+        .and_then(|modified| {
+            modified
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .ok()
+        })
         .map(|duration| duration.as_secs());
 
     // Extract first user message and other metadata from the head of the file.
@@ -560,13 +583,14 @@ pub fn parse_codex_session_file(path: &std::path::Path) -> Option<CodexSession> 
         }
     }
 
-    let updated_at = metadata_updated_at.or_else(|| {
-        last_timestamp
-            .as_ref()
-            .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
-            .map(|dt| dt.timestamp() as u64)
-    })
-    .unwrap_or(created_at);
+    let updated_at = metadata_updated_at
+        .or_else(|| {
+            last_timestamp
+                .as_ref()
+                .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
+                .map(|dt| dt.timestamp() as u64)
+        })
+        .unwrap_or(created_at);
 
     let display_last_timestamp = last_timestamp.clone().or_else(|| {
         metadata_updated_at.and_then(|updated| {
@@ -604,7 +628,6 @@ pub async fn load_codex_session_history(
 fn load_codex_session_history_blocking(
     session_id: String,
 ) -> Result<Vec<serde_json::Value>, String> {
-
     // Use unified sessions directory function (supports WSL)
     let sessions_dir = get_codex_sessions_dir()?;
 
@@ -802,21 +825,35 @@ fn build_codex_command(
     }
 
     if is_resume {
-        // Add 'resume' after --json
+        // 通过 -c 配置覆盖在 'resume' 子命令前注入 sandbox_mode/model
+        // 修复 #174: resume 之前不会传 mode/model，导致用户在 GUI 的选择被忽略、强制回退只读
+        if let Some(sandbox_mode) = codex_sandbox_mode_override(&options.mode) {
+            cmd.arg("-c");
+            cmd.arg(format!("sandbox_mode={}", sandbox_mode));
+        }
+
+        if let Some(ref model) = options.model {
+            cmd.arg("-c");
+            cmd.arg(format!(
+                "model={}",
+                model.strip_suffix("-fast").unwrap_or(model)
+            ));
+        }
+
         cmd.arg("resume");
 
         // Add session_id
         if let Some(sid) = session_id {
             cmd.arg(sid);
         }
-
-        // Resume mode: other options are NOT supported
-        // The session retains its original mode/model configuration
     } else {
         // For new sessions: add other options
         // (--json already added above)
 
         match options.mode {
+            CodexExecutionMode::Default => {
+                // Codex 默认沙箱：交由 CLI 自身决定，不显式传 --sandbox
+            }
             CodexExecutionMode::FullAuto => {
                 cmd.arg("--full-auto");
             }
@@ -825,7 +862,8 @@ fn build_codex_command(
                 cmd.arg("danger-full-access");
             }
             CodexExecutionMode::ReadOnly => {
-                // Read-only is default
+                cmd.arg("--sandbox");
+                cmd.arg("read-only");
             }
         }
 
@@ -895,12 +933,27 @@ fn build_wsl_codex_command(
     }
 
     if is_resume {
+        // 同原生路径：resume 前注入 sandbox_mode/model（修复 #174）
+        if let Some(sandbox_mode) = codex_sandbox_mode_override(&options.mode) {
+            args.push("-c".to_string());
+            args.push(format!("sandbox_mode={}", sandbox_mode));
+        }
+        if let Some(ref model) = options.model {
+            args.push("-c".to_string());
+            args.push(format!(
+                "model={}",
+                model.strip_suffix("-fast").unwrap_or(model)
+            ));
+        }
         args.push("resume".to_string());
         if let Some(sid) = session_id {
             args.push(sid.to_string());
         }
     } else {
         match options.mode {
+            CodexExecutionMode::Default => {
+                // Codex 默认沙箱：交由 CLI 自身决定
+            }
             CodexExecutionMode::FullAuto => {
                 args.push("--full-auto".to_string());
             }
@@ -908,7 +961,10 @@ fn build_wsl_codex_command(
                 args.push("--sandbox".to_string());
                 args.push("danger-full-access".to_string());
             }
-            CodexExecutionMode::ReadOnly => {}
+            CodexExecutionMode::ReadOnly => {
+                args.push("--sandbox".to_string());
+                args.push("read-only".to_string());
+            }
         }
 
         if let Some(ref model) = options.model {
@@ -993,8 +1049,9 @@ async fn execute_codex_process(
     session_id: String,
     mut cmd: Command,
     prompt: Option<String>,
-    #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
-    wsl_spec: Option<wsl_utils::WslCommandSpec>,
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables))] wsl_spec: Option<
+        wsl_utils::WslCommandSpec,
+    >,
     _project_path: String,
     tab_id: Option<String>,
     app_handle: AppHandle,

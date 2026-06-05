@@ -30,6 +30,7 @@ use commands::claude::{
     delete_session,
     delete_sessions_batch,
     execute_claude_code,
+    execute_claude_streaming,
     find_claude_md_files,
     get_available_tools,
     get_claude_capabilities,
@@ -51,9 +52,6 @@ use commands::claude::{
     list_running_claude_sessions,
     load_session_history,
     open_new_session,
-    // 持久化流式会话：随时插话
-    send_stream_message,
-    execute_claude_streaming,
     read_claude_md_file,
     reset_claude_execution_config,
     restore_project,
@@ -64,6 +62,8 @@ use commands::claude::{
     save_codex_system_prompt,
     save_system_prompt,
     search_files,
+    // 持久化流式会话：随时插话
+    send_stream_message,
     set_claude_wsl_mode_config,
     set_custom_claude_path,
     update_claude_execution_config,
@@ -108,8 +108,6 @@ use commands::mcp::{
 use commands::storage::{init_database, AgentDb};
 
 use commands::clipboard::{read_from_clipboard, save_clipboard_image, write_to_clipboard};
-use commands::session_search::search_sessions_content;
-use commands::session_meta::{get_session_meta, set_session_title, set_session_order};
 use commands::prompt_tracker::{
     branch_session_at_prompt, check_rewind_capabilities, duplicate_claude_session, get_prompt_list,
     get_prompt_list_with_capabilities, get_unified_prompt_list, mark_prompt_completed,
@@ -121,6 +119,10 @@ use commands::provider::{
     reorder_provider_configs, switch_provider_config, test_provider_connection,
     update_provider_config,
 };
+use commands::session_meta::{
+    get_session_meta, set_project_order, set_session_order, set_session_title,
+};
+use commands::session_search::search_sessions_content;
 use commands::simple_git::{check_and_init_git, check_reset_safety, precise_revert_code};
 use commands::storage::{
     storage_analyze_query, storage_delete_row, storage_execute_sql, storage_get_performance_stats,
@@ -142,6 +144,7 @@ use commands::window::{
 
 use commands::codex::{
     add_codex_provider_config,
+    branch_codex_at_prompt,
     cancel_codex,
     check_codex_availability,
     check_codex_rewind_capabilities,
@@ -153,6 +156,7 @@ use commands::codex::{
     convert_session,
     delete_codex_provider_config,
     delete_codex_session,
+    duplicate_codex_session,
     execute_codex,
     // Codex mode configuration
     get_codex_mode_config,
@@ -174,8 +178,6 @@ use commands::codex::{
     resume_codex,
     resume_last_codex,
     revert_codex_to_prompt,
-    branch_codex_at_prompt,
-    duplicate_codex_session,
     set_codex_mode_config,
     set_codex_multi_agent_config,
     set_custom_codex_path,
@@ -198,12 +200,14 @@ use commands::extensions::{
 use commands::file_operations::{open_directory_in_explorer, open_file_with_default_app};
 use commands::gemini::{
     add_gemini_provider_config,
+    branch_gemini_at_prompt,
     cancel_gemini,
     check_gemini_installed,
     check_gemini_rewind_capabilities,
     clear_gemini_provider_config,
     delete_gemini_provider_config,
     delete_gemini_session,
+    duplicate_gemini_session,
     execute_gemini,
     get_current_gemini_provider_config,
     get_gemini_config,
@@ -225,8 +229,6 @@ use commands::gemini::{
     record_gemini_prompt_sent,
     reorder_gemini_provider_configs,
     revert_gemini_to_prompt,
-    branch_gemini_at_prompt,
-    duplicate_gemini_session,
     save_gemini_system_prompt,
     set_gemini_wsl_mode_config,
     switch_gemini_provider,
@@ -532,6 +534,7 @@ fn main() {
             get_session_meta,
             set_session_title,
             set_session_order,
+            set_project_order,
             get_prompt_list,
             get_prompt_list_with_capabilities,
             get_unified_prompt_list,
@@ -579,7 +582,7 @@ fn main() {
             record_codex_prompt_completed,
             revert_codex_to_prompt,
             branch_codex_at_prompt,
-    duplicate_codex_session,
+            duplicate_codex_session,
             // Codex custom path
             validate_codex_path_cmd,
             set_custom_codex_path,
@@ -635,7 +638,7 @@ fn main() {
             record_gemini_prompt_completed,
             revert_gemini_to_prompt,
             branch_gemini_at_prompt,
-    duplicate_gemini_session,
+            duplicate_gemini_session,
             // Gemini Provider Commands
             get_gemini_provider_presets,
             get_current_gemini_provider_config,

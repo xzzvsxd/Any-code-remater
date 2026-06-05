@@ -6,6 +6,8 @@ interface ProjectContextType {
   projects: Project[];
   selectedProject: Project | null;
   sessions: Session[];
+  /** 按项目 id 缓存的会话列表，支持多个项目同时展开各显各的会话 */
+  sessionsByProject: Record<string, Session[]>;
   loading: boolean;
   projectsLoading: boolean;
   sessionsLoading: boolean;
@@ -14,7 +16,9 @@ interface ProjectContextType {
   loadProjects: () => Promise<void>;
   selectProject: (project: Project) => Promise<void>;
   registerProjectByPath: (projectPath: string) => Promise<void>;
-  refreshSessions: () => Promise<void>;
+  refreshSessions: (options?: { silent?: boolean }) => Promise<void>;
+  /** 加载指定项目的会话到 sessionsByProject 缓存，不改变 selectedProject（用于多项目展开） */
+  loadProjectSessions: (project: Project, options?: { silent?: boolean }) => Promise<void>;
   scheduleProjectRefresh: (includeSessions?: boolean) => void;
   deleteProject: (project: Project) => Promise<void>;
   clearSelection: () => void;
@@ -103,6 +107,8 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [manualProjects, setManualProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
+  // 按项目 id 缓存会话，支持多项目同时展开。selectProject/refreshSessions/loadProjectSessions 写入。
+  const [sessionsByProject, setSessionsByProject] = useState<Record<string, Session[]>>({});
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [mutationLoading, setMutationLoading] = useState(false);
@@ -284,7 +290,14 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
 
       setSessions(prev => {
         const withoutSource = prev.filter(session => (session.engine || 'claude') !== source);
-        return sortSessionsByActivity([...withoutSource, ...sourceSessions]);
+        const merged = sortSessionsByActivity([...withoutSource, ...sourceSessions]);
+        // 同步写入按项目缓存，使该项目即便不是"当前选中"在树中也能持续显示会话（多项目展开）。
+        setSessionsByProject(prevMap => {
+          const existing = prevMap[effectiveProject.id] ?? [];
+          const withoutSrc = existing.filter(s => (s.engine || 'claude') !== source);
+          return { ...prevMap, [effectiveProject.id]: sortSessionsByActivity([...withoutSrc, ...sourceSessions]) };
+        });
+        return merged;
       });
     };
     const markSource = (source: SessionSource, status: SessionSourceStatus) => {
@@ -382,88 +395,70 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     }
   }, [buildVirtualProject, findProjectByPath, manualProjects, mergeProjects, normalizeProjectPath, projects, t]);
 
-  const refreshSessions = useCallback(async () => {
+  const refreshSessions = useCallback(async (options?: { silent?: boolean }) => {
     if (selectedProject) {
+      const silent = options?.silent === true;
       const requestId = sessionLoadRequestRef.current + 1;
       sessionLoadRequestRef.current = requestId;
       try {
-        setSessionsLoading(true);
-        setSessionsLoadProgress(loadingSessionsLoadProgress);
+        // 静默刷新（聚焦/轮询触发）不进入 loading 态，避免会话列表反复闪烁重渲染、拖慢界面。
+        if (!silent) {
+          setSessionsLoading(true);
+          setSessionsLoadProgress(loadingSessionsLoadProgress);
+        }
         const latestProjects = await api.listProjects().catch(() => [] as Project[]);
         const { effectiveProject, sessions: allSessions } = await loadSessionsForProject(selectedProject, latestProjects);
 
         if (sessionLoadRequestRef.current === requestId) {
           setSelectedProject(effectiveProject);
           setSessions(allSessions);
-          setSessionsLoadProgress({ claude: 'done', codex: 'done', gemini: 'done' });
+          // 同步当前项目的按项目缓存
+          setSessionsByProject(prev => ({ ...prev, [effectiveProject.id]: allSessions }));
+          // 把最新项目列表（含 session_counts）写回 projects，使删除/新增会话后引擎计数徽章即时刷新。
+          // latestProjects 作 primary（同路径优先，更新计数）；prev 补充其中没有的虚拟/手动项目。
+          if (latestProjects.length > 0) {
+            setProjects(prev => mergeProjects(latestProjects, prev));
+          }
+          if (!silent) {
+            setSessionsLoadProgress({ claude: 'done', codex: 'done', gemini: 'done' });
+          }
         }
       } catch (err) {
         console.error("Failed to refresh sessions:", err);
-        if (sessionLoadRequestRef.current === requestId) {
+        if (!silent && sessionLoadRequestRef.current === requestId) {
           setSessionsLoadProgress({ claude: 'error', codex: 'error', gemini: 'error' });
         }
       } finally {
-        if (sessionLoadRequestRef.current === requestId) {
+        if (!silent && sessionLoadRequestRef.current === requestId) {
           setSessionsLoading(false);
         }
       }
     }
-  }, [loadSessionsForProject, selectedProject]);
+  }, [loadSessionsForProject, selectedProject, mergeProjects]);
 
-  // 会话列表实时刷新（前端轮询）：选中项目展开后，页面可见且窗口聚焦时每 3s 刷新一次会话列表，
-  // 使外部新增/删除会话无需手动收起重展即可自动出现/消失。失焦或页面隐藏时停止，避免无谓 IO
-  // （也减轻后端文件扫描负载）。复用带 requestId 防竞态的 refreshSessions。
-  const refreshSessionsRef = useRef(refreshSessions);
-  useEffect(() => {
-    refreshSessionsRef.current = refreshSessions;
-  }, [refreshSessions]);
-
-  useEffect(() => {
-    if (!selectedProject) return;
-
-    let timerId: ReturnType<typeof setInterval> | null = null;
-
-    const canPoll = () =>
-      document.visibilityState === 'visible' && document.hasFocus();
-
-    const start = () => {
-      if (timerId !== null) return;
-      timerId = setInterval(() => {
-        if (canPoll()) {
-          refreshSessionsRef.current();
-        }
-      }, 3000);
-    };
-
-    const stop = () => {
-      if (timerId !== null) {
-        clearInterval(timerId);
-        timerId = null;
+  // 多项目展开：加载指定项目会话到 sessionsByProject 缓存，不触碰 selectedProject。
+  // 每个项目独立的请求序号，防止同一项目并发刷新时旧结果覆盖新结果。
+  const projectLoadReqRef = useRef<Record<string, number>>({});
+  const loadProjectSessions = useCallback(async (project: Project, _options?: { silent?: boolean }) => {
+    const pid = project.id;
+    const reqId = (projectLoadReqRef.current[pid] ?? 0) + 1;
+    projectLoadReqRef.current[pid] = reqId;
+    try {
+      const { sessions: allSessions } = await loadSessionsForProject(project);
+      if (projectLoadReqRef.current[pid] === reqId) {
+        setSessionsByProject(prev => ({ ...prev, [pid]: allSessions }));
       }
-    };
-
-    // 失焦/隐藏时停表，重新聚焦/可见时立即刷新一次再恢复轮询
-    const handleVisibility = () => {
-      if (canPoll()) {
-        refreshSessionsRef.current();
-        start();
-      } else {
-        stop();
+    } catch (err) {
+      console.warn(`[ProjectContext] Failed to load sessions for project ${pid}:`, err);
+      // 失败时写入空数组，让 UI 退出"加载中"占位，避免一直转圈
+      if (projectLoadReqRef.current[pid] === reqId) {
+        setSessionsByProject(prev => (prev[pid] ? prev : { ...prev, [pid]: [] }));
       }
-    };
+    }
+  }, [loadSessionsForProject]);
 
-    start();
-    document.addEventListener('visibilitychange', handleVisibility);
-    window.addEventListener('focus', handleVisibility);
-    window.addEventListener('blur', handleVisibility);
-
-    return () => {
-      stop();
-      document.removeEventListener('visibilitychange', handleVisibility);
-      window.removeEventListener('focus', handleVisibility);
-      window.removeEventListener('blur', handleVisibility);
-    };
-  }, [selectedProject?.id]);
+  // 注：会话列表的"聚焦时刷新"已下沉到 WorkbenchSidebar —— 它持有 expandedProjects，
+  // 能在窗口重新聚焦时只静默刷新「已展开的项目」，避免刷新未展开项目造成无谓磁盘扫描。
 
   const deleteProject = useCallback(async (project: Project) => {
     try {
@@ -487,6 +482,13 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       setMutationLoading(true);
       await api.deleteProject(project.id);
       await loadProjects();
+      // 清理该项目的会话缓存，避免树中残留已删除项目的会话
+      setSessionsByProject(prev => {
+        if (!(project.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[project.id];
+        return next;
+      });
       if (selectedProject?.id === project.id) {
         sessionLoadRequestRef.current += 1;
         setSelectedProject(null);
@@ -552,6 +554,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       projects,
       selectedProject,
       sessions,
+      sessionsByProject,
       loading,
       projectsLoading,
       sessionsLoading,
@@ -561,6 +564,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       selectProject,
       registerProjectByPath,
       refreshSessions,
+      loadProjectSessions,
       scheduleProjectRefresh,
       deleteProject,
       clearSelection

@@ -616,7 +616,10 @@ pub async fn send_stream_message(
     let stdin = match guard.as_mut() {
         Some(s) => s,
         None => {
-            log::warn!("send_stream_message: stdin already closed for {}", session_id);
+            log::warn!(
+                "send_stream_message: stdin already closed for {}",
+                session_id
+            );
             return Ok(false);
         }
     };
@@ -630,7 +633,11 @@ pub async fn send_stream_message(
         .await
         .map_err(|e| format!("Failed to flush stream message: {}", e))?;
 
-    log::info!("send_stream_message: wrote {} bytes to session {}", line.len(), session_id);
+    log::info!(
+        "send_stream_message: wrote {} bytes to session {}",
+        line.len(),
+        session_id
+    );
     Ok(true)
 }
 
@@ -639,6 +646,178 @@ pub async fn send_stream_message(
 fn is_slash_command(prompt: &str) -> bool {
     let trimmed = prompt.trim();
     trimmed.starts_with('/') && !trimmed.contains('\n') && trimmed.len() < 256
+}
+
+/// 检测 prompt 是否包含 @文件/路径引用（图片或文件）。
+/// Claude CLI 的 @引用展开只在 print 模式（-p）下生效；经 stdin 但不带 -p 时 @提及不被展开，
+/// 模型只看到字面路径文本。为避免把邮箱（user@host）、npm scope（@types/node）误判为路径，
+/// 仅当 token 以 @ 开头、且其后看起来像文件路径（含 / 或 \，或带常见扩展名）时才命中。
+fn contains_at_reference(prompt: &str) -> bool {
+    prompt.split_whitespace().any(|tok| {
+        let t = tok.trim_start_matches(|c| c == '(' || c == '[' || c == '"' || c == '\'');
+        let Some(rest) = t.strip_prefix('@') else {
+            return false;
+        };
+        if rest.is_empty() {
+            return false;
+        }
+        let rest = rest.trim_end_matches(|c| c == '"' || c == '\'' || c == ')' || c == ']');
+        rest.contains('/')
+            || rest.contains('\\')
+            || matches!(
+                rest.rsplit('.')
+                    .next()
+                    .map(|e| e.to_ascii_lowercase())
+                    .as_deref(),
+                Some(
+                    "png"
+                        | "jpg"
+                        | "jpeg"
+                        | "gif"
+                        | "webp"
+                        | "bmp"
+                        | "ico"
+                        | "svg"
+                        | "pdf"
+                        | "txt"
+                        | "md"
+                        | "json"
+                        | "csv"
+                        | "log"
+                )
+            )
+    })
+}
+
+/// 判断扩展名是否为图片
+fn is_image_extension(path: &str) -> bool {
+    matches!(
+        path.rsplit('.')
+            .next()
+            .map(|e| e.to_ascii_lowercase())
+            .as_deref(),
+        Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" | "svg")
+    )
+}
+
+/// 按扩展名推断图片 media_type
+fn image_media_type(path: &str) -> &'static str {
+    match path
+        .rsplit('.')
+        .next()
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        // png 及其它（bmp/ico/svg 等少见格式）统一回退到 png
+        _ => "image/png",
+    }
+}
+
+/// 从 prompt 提取 @图片路径：支持 @"含空格" 与 @无空格两形态，仅图片扩展名，跳过 data: 内联，去重。
+fn extract_image_paths(prompt: &str) -> Vec<String> {
+    let mut paths: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    let mut push = |p: &str| {
+        if p.starts_with("data:") {
+            return;
+        }
+        if is_image_extension(p) && seen.insert(p.to_string()) {
+            paths.push(p.to_string());
+        }
+    };
+
+    // 模式1：@"路径"（含空格，引号包裹）。
+    let bytes = prompt.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'@' && bytes[i + 1] == b'"' {
+            if let Some(end_rel) = prompt[i + 2..].find('"') {
+                let start = i + 2;
+                let end = start + end_rel;
+                push(&prompt[start..end]);
+                i = end + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    // 模式2：@路径（无空格，到空白或引号止）。引号形态已由模式1处理、此处跳过；重复路径由 seen 去重。
+    for tok in prompt.split_whitespace() {
+        let t = tok.trim_start_matches(|c| c == '(' || c == '[' || c == '\'');
+        if let Some(rest) = t.strip_prefix('@') {
+            if rest.starts_with('"') {
+                continue;
+            }
+            let rest = rest.trim_end_matches(|c| c == ')' || c == ']' || c == ',');
+            push(rest);
+        }
+    }
+
+    paths
+}
+
+/// 解析图片读盘路径：相对 @图片路径 按项目目录解析，避免跟随 Any Code 自身 cwd。
+fn resolve_image_read_path(path: &str, project_path: &str) -> std::path::PathBuf {
+    let image_path = std::path::Path::new(path);
+    if image_path.is_absolute() {
+        image_path.to_path_buf()
+    } else {
+        std::path::Path::new(project_path).join(image_path)
+    }
+}
+
+/// 构造一行 stream-json（NDJSON）user 消息，把图片作为 base64 视觉块直接注入。
+/// 这样 Claude 无需调用 Read 工具即可"看到"图片（绕开 Read 读较大图失效的问题，issue #18588）。
+/// 读盘失败的图片会被跳过并记录 warn，不阻断整条消息。
+fn build_stream_json_message(prompt: &str, image_paths: &[String], project_path: &str) -> String {
+    use base64::{engine::general_purpose, Engine};
+
+    let mut content: Vec<serde_json::Value> = Vec::new();
+    content.push(serde_json::json!({ "type": "text", "text": prompt }));
+
+    for path in image_paths {
+        let read_path = resolve_image_read_path(path, project_path);
+        match std::fs::read(&read_path) {
+            Ok(bytes) => {
+                let b64 = general_purpose::STANDARD.encode(&bytes);
+                content.push(serde_json::json!({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": image_media_type(path),
+                        "data": b64,
+                    }
+                }));
+                log::info!(
+                    "Injected image as base64 block: {} -> {} ({} bytes)",
+                    path,
+                    read_path.display(),
+                    bytes.len()
+                );
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to read image '{}' resolved as '{}', skipping: {}",
+                    path,
+                    read_path.display(),
+                    e
+                );
+            }
+        }
+    }
+
+    let msg = serde_json::json!({
+        "type": "user",
+        "message": { "role": "user", "content": content }
+    });
+
+    // NDJSON：单行 JSON + 换行
+    format!("{}\n", msg)
 }
 
 /// Helper function to spawn Claude process and handle streaming
@@ -657,34 +836,73 @@ async fn spawn_claude_process(
     use std::sync::Mutex;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-    // 🔥 关键修复：检测斜杠命令，通过 -p 参数传递以触发命令解析
-    // Claude CLI 只在 -p 参数中解析斜杠命令，stdin 管道不会触发
-    let use_p_flag = is_slash_command(&prompt);
-    if use_p_flag {
+    // 🔥 prompt 分流：斜杠命令(-p 参数) / 含图片(-p + stream-json) / 普通(stdin)
+    let is_slash = is_slash_command(&prompt);
+    // 含 @图片：改走 stream-json 输入，把图片作为 base64 视觉块注入（绕开 Read 读大图失效，#18588）
+    let image_paths = if is_slash {
+        Vec::new()
+    } else {
+        extract_image_paths(&prompt)
+    };
+    let has_images = !image_paths.is_empty();
+    // 含非图片 @文件引用：需 print 模式(-p)才能触发 @展开（实测无 -p 时 @提及不被解析）
+    let has_at_ref = !is_slash && !has_images && contains_at_reference(&prompt);
+
+    if is_slash {
+        // 斜杠命令：prompt 作为 -p 的参数传入以触发命令解析
         log::info!("Detected slash command, using -p flag: {}", prompt.trim());
         cmd.arg("-p");
         cmd.arg(&prompt);
+    } else if has_images {
+        // 含图片：print 模式 + stream-json 输入，stdin 注入 base64 图像块
+        log::info!(
+            "Detected {} image(s) in prompt, using stream-json input to inject image blocks",
+            image_paths.len()
+        );
+        cmd.arg("-p");
+        cmd.arg("--input-format");
+        cmd.arg("stream-json");
+    } else if has_at_ref {
+        // 含非图片 @引用：仅加 -p 标志触发 @展开，prompt 仍走 stdin（避免命令行长度限制）
+        log::info!("Detected @file reference, enabling print mode (-p) for @expansion");
+        cmd.arg("-p");
     }
+
+    // 是否通过 stdin 写入：斜杠命令已用 -p 参数带入，无需 stdin；其余都走 stdin。
+    let write_stdin = !is_slash;
+    // stdin 内容：含图片时为 stream-json NDJSON，否则为原始 prompt。
+    let stdin_payload = if has_images {
+        build_stream_json_message(&prompt, &image_paths, &project_path)
+    } else {
+        prompt.clone()
+    };
 
     // Spawn the process
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn Claude: {}", e))?;
 
-    // 🔥 普通 prompt 通过 stdin 管道传递，避免命令行长度限制
-    // 斜杠命令已通过 -p 参数传递，不需要 stdin
-    if !use_p_flag {
+    // 🔥 prompt 通过 stdin 管道传递，避免命令行长度限制
+    if write_stdin {
         if let Some(mut stdin) = child.stdin.take() {
-            // 克隆 prompt 以便在 async 块中使用（避免生命周期问题）
-            let prompt_for_stdin = prompt.clone();
-            let prompt_len = prompt_for_stdin.len();
-            log::info!("Writing prompt to stdin ({} bytes)", prompt_len);
+            let payload_len = stdin_payload.len();
+            log::info!("Writing prompt to stdin ({} bytes)", payload_len);
 
             // 使用 spawn 异步写入 stdin，避免阻塞主流程
             tokio::spawn(async move {
-                if let Err(e) = stdin.write_all(prompt_for_stdin.as_bytes()).await {
-                    log::error!("Failed to write prompt to stdin: {}", e);
-                    return;
+                match stdin.write_all(stdin_payload.as_bytes()).await {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
+                        // 子进程在 prompt 写完前就退出（如启动即失败）：降级为 warn，不当错误处理
+                        log::warn!(
+                            "stdin BrokenPipe: child process exited before prompt was fully written"
+                        );
+                        return;
+                    }
+                    Err(e) => {
+                        log::error!("Failed to write prompt to stdin: {}", e);
+                        return;
+                    }
                 }
                 // 关闭 stdin 表示输入完成
                 if let Err(e) = stdin.shutdown().await {
@@ -780,7 +998,10 @@ async fn spawn_claude_process(
 
     let registry = app.state::<crate::process::ProcessRegistryState>();
 
-    if let Some(initial_sid) = initial_session_id.as_ref().filter(|sid| !sid.trim().is_empty()) {
+    if let Some(initial_sid) = initial_session_id
+        .as_ref()
+        .filter(|sid| !sid.trim().is_empty())
+    {
         #[cfg(windows)]
         let job_object_for_register = job_object_holder.lock().unwrap().take();
         #[cfg(not(windows))]
@@ -865,10 +1086,9 @@ async fn spawn_claude_process(
                         let existing_run_id = *run_id_holder_clone.lock().unwrap();
                         let run_id = if let Some(run_id) = existing_run_id {
                             if previous_session_id.as_deref() != Some(claude_session_id) {
-                                if let Err(e) = registry_clone.update_claude_session_id(
-                                    run_id,
-                                    claude_session_id.to_string(),
-                                ) {
+                                if let Err(e) = registry_clone
+                                    .update_claude_session_id(run_id, claude_session_id.to_string())
+                                {
                                     log::warn!(
                                         "Failed to update Claude session id for run {}: {}",
                                         run_id,
@@ -917,13 +1137,9 @@ async fn spawn_claude_process(
                                 "pid": pid,
                                 "run_id": run_id,
                             });
-                            if let Err(e) =
-                                app_handle.emit("claude-session-state", &event_payload)
+                            if let Err(e) = app_handle.emit("claude-session-state", &event_payload)
                             {
-                                log::warn!(
-                                    "Failed to emit claude-session-state event: {}",
-                                    e
-                                );
+                                log::warn!("Failed to emit claude-session-state event: {}", e);
                             } else {
                                 log::info!(
                                     "Emitted claude-session-started event for session: {}",

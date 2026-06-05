@@ -3034,8 +3034,8 @@ export const api = {
     return invoke<string>("duplicate_claude_session", { sessionId, projectId });
   },
 
-  /** 读取会话元数据（自定义标题 + 排序）。 */
-  async getSessionMeta(): Promise<{ titles: Record<string, string>; order: Record<string, string[]> }> {
+  /** 读取会话元数据（自定义标题 + 排序 + 项目顺序）。 */
+  async getSessionMeta(): Promise<{ titles: Record<string, string>; order: Record<string, string[]>; project_order?: string[] }> {
     return invoke("get_session_meta");
   },
 
@@ -3047,6 +3047,11 @@ export const api = {
   /** 设置某项目下会话的自定义顺序。 */
   async setSessionOrder(engine: string, projectId: string, sessionIds: string[]): Promise<void> {
     return invoke("set_session_order", { engine, projectId, sessionIds });
+  },
+
+  /** 设置工作区项目的自定义显示顺序（拖拽排序）；空数组=清除手动顺序。 */
+  async setProjectOrder(projectIds: string[]): Promise<void> {
+    return invoke("set_project_order", { projectIds });
   },
 
   /**
