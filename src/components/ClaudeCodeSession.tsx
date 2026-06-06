@@ -192,6 +192,13 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     executionStartedAtRef.current = executionStartedAt;
   }, [executionStartedAt]);
 
+  // 跟随 isLoading 变化上报 streaming 状态：驱动 tab.state(idle↔streaming)，使侧栏实时反映「运行中」。
+  // 关键：不要求 session 存在——新会话首轮还没拿到 sessionId 就已在 streaming，
+  // 这条上报让它也能即时点亮侧栏运行标识（修复「会话已运行但侧栏不显示」）。
+  useEffect(() => {
+    onStreamingChange?.(isLoading, claudeSessionId);
+  }, [isLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     lastOutputAtRef.current = lastOutputAt;
   }, [lastOutputAt]);

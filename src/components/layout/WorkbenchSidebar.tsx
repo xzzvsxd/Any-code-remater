@@ -255,6 +255,10 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
           tb.title,
           tb.session!.project_id ?? '',
           tb.session!.project_path ?? '',
+          // state 必须入签名：tab 从 idle↔streaming 变化时若签名不变，openTabSessions 不重算，
+          // 会导致「会话已在运行但侧栏不刷新/不显示」（Linux 尤甚，聚焦刷新不常触发）。
+          // state 是低频枚举（仅边沿变化），入签名不会重新引入 streaming 抖动。
+          tb.state,
         ]))
         .join('\n'),
     [tabs],
