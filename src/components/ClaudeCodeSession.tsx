@@ -44,7 +44,7 @@ import { convertGeminiSessionDetailToClaudeMessages } from '@/lib/geminiConverte
 import { formatClaudeModelLabel, resolveClaudeContinuationModel } from '@/lib/claudeModelSelection';
 import { buildQueueStorageKey, loadQueuedPrompts, saveQueuedPrompts } from '@/lib/queuedPromptsStore';
 import { buildPromptIndexByMessage, getPromptIndexForDisplayableMessage, getBranchPromptIndexForDisplayableMessage } from '@/lib/promptIndex';
-import { loadUiOnlySessionMessages, mergeUiOnlySessionMessages } from '@/lib/uiOnlySessionEvents';
+import { loadUiOnlySessionMessages, mergeUiOnlySessionMessages, pruneUiOnlySessionMessagesAfter } from '@/lib/uiOnlySessionEvents';
 import { prepareRecentProjects } from '@/lib/recentProjects';
 import { SessionHeader } from "./session/SessionHeader";
 import { SessionMessages, type SessionMessagesRef } from "./session/SessionMessages";
@@ -103,6 +103,8 @@ interface ClaudeCodeSessionProps {
    * 使队列跨重启 / 跨视图保活且不同会话互不串味。缺省时 Inner 会按 session/path 兜底。
    */
   queueStorageKey?: string;
+  /** 承载本会话的 tab id：用于新会话(未落盘)草稿的后端持久化唯一标识，支持多草稿互不覆盖。 */
+  tabId?: string;
 }
 
 const engineDisplayNames: Record<'claude' | 'codex' | 'gemini', string> = {
@@ -134,6 +136,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   onFirstUserPrompt,
   isActive = true, // 默认为活跃状态，保持向后兼容
   queueStorageKey: queueStorageKeyProp,
+  tabId: tabIdProp,
 }) => {
   const { t } = useTranslation();
   const [projectPath, setProjectPath] = useState(initialProjectPath || session?.project_path || "");
@@ -1050,15 +1053,29 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       const sessionEngine = effectiveSession.engine || executionEngineConfig.engine || 'claude';
       const isCodex = sessionEngine === 'codex';
       const isGemini = sessionEngine === 'gemini';
-      const uiEngine = isCodex ? 'codex' : isGemini ? 'gemini' : 'claude';
-      const withUiOnlyEvents = (historyMessages: ClaudeStreamMessage[]) => mergeUiOnlySessionMessages(
-        historyMessages,
-        loadUiOnlySessionMessages({
+      const uiEngine: 'claude' | 'codex' | 'gemini' = isCodex ? 'codex' : isGemini ? 'gemini' : 'claude';
+      const withUiOnlyEvents = (historyMessages: ClaudeStreamMessage[]) => {
+        // 撤回后：先按「保留历史的最大时间戳」裁剪掉晚于撤回点的 UI-only 事件
+        //（如"✅ 本次执行完成，用时 X"），并写回 localStorage——否则这些独立存储的事件
+        // 会被 merge 回来而残留，表现为撤回后完成提示仍挂在列表里。
+        const cutoff = historyMessages.reduce((max, m) => {
+          const raw = (m as any).receivedAt || (m as any).timestamp || (m as any).sentAt;
+          const t = typeof raw === 'string' ? Date.parse(raw) : NaN;
+          return Number.isFinite(t) && t > max ? t : max;
+        }, Number.NEGATIVE_INFINITY);
+        const uiOnlyParams = {
           sessionId: effectiveSession.id,
           projectPath,
           engine: uiEngine,
-        }),
-      );
+        };
+        if (Number.isFinite(cutoff)) {
+          pruneUiOnlySessionMessagesAfter(uiOnlyParams, cutoff);
+        }
+        return mergeUiOnlySessionMessages(
+          historyMessages,
+          loadUiOnlySessionMessages(uiOnlyParams),
+        );
+      };
 
       // 调用后端撤回（返回提示词文本）
       const promptText = isCodex
@@ -1553,6 +1570,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
             projectPath={projectPath}
             sessionId={effectiveSession?.id}         // 🆕 传递会话 ID
             projectId={effectiveSession?.project_id} // 🆕 传递项目 ID
+            draftTabId={tabIdProp}                   // 🆕 新会话草稿落盘的唯一 id（=tab id）
             sessionModel={session?.model}
             getConversationContext={getConversationContext}
             messages={messages}                      // 🆕 传递完整消息列表

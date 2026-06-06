@@ -156,6 +156,22 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
   const [projectOrder, setProjectOrder] = useState<string[]>([]);
   // 项目最近触发请求的时间戳（项目 id -> ts），用于"活跃项目自动置顶"（仅无手动顺序时生效）。
   const [projectActivityTs, setProjectActivityTs] = useState<Record<string, number>>({});
+  // 草稿会话列表（来自后端落盘 ~/.claude/draft-sessions.json）。每项目可多个、全局可多个。
+  const [draftSessions, setDraftSessions] = useState<import('@/lib/api').DraftSession[]>([]);
+
+  const reloadDrafts = useCallback(async () => {
+    try {
+      setDraftSessions(await api.listDraftSessions());
+    } catch { /* ignore */ }
+  }, []);
+
+  // 挂载时加载草稿；并监听草稿变更事件，发送/保存草稿后即时刷新侧栏。
+  useEffect(() => {
+    reloadDrafts();
+    const onDraftsChanged = () => { reloadDrafts(); };
+    window.addEventListener('drafts-changed', onDraftsChanged);
+    return () => window.removeEventListener('drafts-changed', onDraftsChanged);
+  }, [reloadDrafts]);
 
   const reloadMeta = useCallback(async () => {
     try {
@@ -386,10 +402,32 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
   }, [expandedProjects, selectedProject, selectProject, loadProjectSessions]);
 
   const openSession = useCallback((session: Session) => {
+    // 草稿条目：session.id 即承载它的 tab id。若该 tab 仍存在则切回去（输入框文本由
+    // useDraftPersistence 按 draftId 从 localStorage 恢复）；若 tab 已关闭，则新建一个
+    // 该项目下的新会话 tab 并把草稿正文回填到输入框。
+    if ((session as any).is_draft === true) {
+      const existing = tabs.find((tb) => tb.id === session.id);
+      if (existing) {
+        switchToTab(existing.id);
+      } else {
+        const newTabId = createNewTab(undefined, session.project_path);
+        // 等输入框挂载后回填草稿正文
+        const text = session.first_message || '';
+        if (text) {
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('restore-draft-text', {
+              detail: { tabId: newTabId, text },
+            }));
+          }, 150);
+        }
+      }
+      navigateTo('claude-tab-manager');
+      return;
+    }
     const result = openSessionInBackground(session);
     switchToTab(result.tabId);
     navigateTo('claude-tab-manager');
-  }, [openSessionInBackground, switchToTab, navigateTo]);
+  }, [openSessionInBackground, switchToTab, navigateTo, tabs, createNewTab]);
 
   const onNewSession = useCallback(() => {
     createNewTab();
@@ -397,10 +435,14 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
   }, [createNewTab, navigateTo]);
 
   // 在指定项目下新建会话：createNewTab 第二参数接受项目路径，新标签即落在该项目目录。
+  // 同时 selectProject 把该项目设为当前选中——否则侧栏树不会高亮它，用户以为没选中而再手动点一次。
   const onNewSessionInProject = useCallback((project: Project) => {
     createNewTab(undefined, project.path);
+    selectProject(project).catch((err) => {
+      console.error('[Workbench] select project on new session failed:', err);
+    });
     navigateTo('claude-tab-manager');
-  }, [createNewTab, navigateTo]);
+  }, [createNewTab, navigateTo, selectProject]);
 
   // ---- 右键菜单操作 ----
   const toast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
@@ -571,6 +613,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
         activeSessionId={activeSessionId}
         runningSessionIds={runningSessionIds}
         openTabSessions={openTabSessions}
+        draftSessions={draftSessions}
         onToggleProject={toggleProject}
         onOpenSession={openSession}
         onNewSession={onNewSession}
@@ -809,6 +852,8 @@ interface ProjectTreeProps {
   runningSessionIds: Set<string>;
   /** 已在标签页打开的会话（含未落盘的新建会话），实时合并进树 */
   openTabSessions: Session[];
+  /** 草稿会话（来自后端落盘），按所属项目渲染为红色标注条目 */
+  draftSessions: import('@/lib/api').DraftSession[];
   onToggleProject: (project: Project) => void;
   onOpenSession: (session: Session) => void;
   onNewSession: () => void;
@@ -831,7 +876,7 @@ interface ProjectTreeProps {
 // 配合上方所有 props 已稳定引用化（useCallback/useMemo + 稳定签名），memo 才能真正生效，
 // 从而消除会话列表的鬼畜/上下乱跳/乱闪（根治抖动的最后一环）。
 const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
-  projects, selectedProjectId, sessions, sessionsByProject, sessionsLoading, expandedProjects, activeSessionId, runningSessionIds, openTabSessions,
+  projects, selectedProjectId, sessions, sessionsByProject, sessionsLoading, expandedProjects, activeSessionId, runningSessionIds, openTabSessions, draftSessions,
   onToggleProject, onOpenSession,
   onNewSession, onNewSessionInProject, onRefreshProject, onOpenInExplorer, onCopyText, onDuplicateSession, onExportSession,
   sessionTitles, onRenameSession, sessionOrder, onReorderSessions, onReorderProjects,
@@ -889,8 +934,22 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
         const pendingTabSessions = openTabSessions.filter(
           (s) => tabSessionBelongsTo(s, project) && !diskIds.has(s.id),
         );
-        const rawSessions = pendingTabSessions.length > 0
-          ? [...pendingTabSessions, ...diskSessions]
+        // 该项目的草稿会话：转成 Session 形态混进列表（置顶），用 is_draft 标记走红色渲染。
+        // first_message 用草稿正文首行预览；点击时据 is_draft 走「恢复草稿」入口。
+        const projectDrafts: Session[] = draftSessions
+          .filter((d) => d.project_id === project.id
+            || (!!d.project_path && normPath(d.project_path) === normPath(project.path)))
+          .map((d) => ({
+            id: d.id,
+            project_id: project.id,
+            project_path: d.project_path || project.path,
+            created_at: d.created_at,
+            first_message: d.content,
+            engine: (d.engine || 'claude') as 'claude' | 'codex' | 'gemini',
+            is_draft: true,
+          } as Session & { is_draft: boolean }));
+        const rawSessions = (projectDrafts.length > 0 || pendingTabSessions.length > 0)
+          ? [...projectDrafts, ...pendingTabSessions, ...diskSessions]
           : diskSessions;
         // 应用用户自定义排序：order key 以项目维度存储（引擎前缀固定，仅作存储键）。
         const orderKey = `proj:${project.id}`;
@@ -1022,6 +1081,7 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
                         onReorderSessions('proj', project.id, [...items, ...rest].map((s) => s.id));
                       }}
                       renderItem={(session) => {
+                      const isDraft = (session as any).is_draft === true;
                       const isActive = activeSessionId === session.id;
                       const isRunning = runningSessionIds.has(session.id);
                       const customTitle = sessionTitles[session.id];
@@ -1037,26 +1097,22 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
                           onContextMenu={(e) => { e.preventDefault(); setMenuFor(`sess:${session.id}`); }}
                           className={cn(
                             'group/sess relative flex items-center gap-1.5 pl-1 pr-1 py-1.5 rounded-md cursor-pointer transition-all duration-150',
-                            // 选中与运行两维度正交、可叠加：背景表达「是否选中」，ring 描边表达「是否运行」。
-                            // 选中态背景加深，确保它是列表里最突出的一行（一眼看清选了哪个）。
-                            isActive
-                              ? 'bg-gradient-to-r from-primary/25 to-primary/10 text-foreground'
-                              : isRunning
-                                ? 'bg-amber-500/[0.08] text-foreground'
-                                : 'text-muted-foreground/90 hover:text-foreground hover:bg-muted/40',
-                            // 运行中 → 橙色描边，且优先级高于选中描边：这样「选中且正在运行」的会话
-                            // 在突出的选中背景之上仍保留橙色描边，不会被选中态吞掉。
-                            isRunning
-                              ? 'ring-1 ring-inset ring-amber-500/70'
+                            // 配色语义：草稿(未发送)用红色遮罩+描边，优先级最高，醒目提示「这是没发出去的草稿」；
+                            // 聚焦(选中)用橙色遮罩——一眼锁定当前会话；运行中但未聚焦用白色低调遮罩。
+                            isDraft
+                              ? 'bg-red-500/10 text-foreground ring-1 ring-inset ring-red-500/50'
                               : isActive
-                                ? 'ring-1 ring-inset ring-primary/40'
-                                : ''
+                                ? 'bg-gradient-to-r from-amber-500/20 to-amber-500/[0.08] text-foreground ring-1 ring-inset ring-amber-500/70'
+                                : isRunning
+                                  ? 'bg-white/[0.06] text-foreground ring-1 ring-inset ring-white/15'
+                                  : 'text-muted-foreground/90 hover:text-foreground hover:bg-muted/40'
                           )}
                         >
-                          {/* 左侧竖条专表「选中」（primary）：运行状态已由橙色 ring 描边表达，
-                              此处只在选中时画 primary 竖条，进一步强化「当前选中」的视觉权重。 */}
-                          {isActive ? (
-                            <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-primary" />
+                          {/* 左侧竖条：草稿用红色，聚焦用橙色（草稿优先级最高）。 */}
+                          {isDraft ? (
+                            <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-red-500" />
+                          ) : isActive ? (
+                            <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-amber-500" />
                           ) : null}
                           {/* 拖拽手柄：仅「最近 N 个」视图可见可用（展开全部时退化纯列表、无拖拽） */}
                           {!expandedAll && (
@@ -1064,9 +1120,11 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
                               <GripVertical className="h-3 w-3" />
                             </SortableDragHandle>
                           )}
-                          {/* 运行中直接用旋转 loading 图标替换引擎图标，明确表达「执行中」；空闲时显示引擎图标 */}
+                          {/* 草稿用红色文档图标；运行中用旋转 loading；否则引擎图标。 */}
                           <span className="flex items-center justify-center flex-shrink-0">
-                            {isRunning ? (
+                            {isDraft ? (
+                              <FileText className="h-3.5 w-3.5 text-red-500" />
+                            ) : isRunning ? (
                               <Loader2 className="h-3.5 w-3.5 text-amber-500 animate-spin" />
                             ) : (
                               <EngineDot engine={session.engine} active={isActive} />
@@ -1088,9 +1146,16 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
                           ) : (
                             <span
                               onDoubleClick={(e) => { e.stopPropagation(); setRenameDraft(customTitle || preview); setRenamingId(session.id); }}
-                              className={cn('flex-1 truncate text-[11px] leading-relaxed', isActive && 'font-medium')}
+                              className={cn('flex-1 truncate text-[11px] leading-relaxed', (isActive || isDraft) && 'font-medium')}
                             >
-                              {preview}
+                              {preview || (isDraft ? t('workbench.draftUntitled') : '')}
+                            </span>
+                          )}
+
+                          {/* 草稿徽章：红色「草稿」小标签，明确区分未发送草稿 */}
+                          {isDraft && !isRenaming && (
+                            <span className="flex-shrink-0 px-1 py-0.5 rounded text-[9px] font-bold bg-red-500/20 text-red-600 dark:text-red-400">
+                              {t('workbench.draftBadge')}
                             </span>
                           )}
 

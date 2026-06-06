@@ -45,6 +45,7 @@ const FloatingPromptInputInner = (
     projectPath,
     sessionId,
     projectId,
+    draftTabId,
     className,
     onCancel,
     getConversationContext,
@@ -102,14 +103,32 @@ const FloatingPromptInputInner = (
     executionEngineConfig: externalEngineConfig || initialState.executionEngineConfig,
   });
 
-  // 草稿持久化 Hook - 确保输入内容在页面切换后不丢失
+  // 草稿持久化 Hook - 确保输入内容在页面切换后不丢失；新会话草稿落盘到后端(多草稿)
   const { saveDraft, clearDraft } = useDraftPersistence({
     sessionId,
+    draftId: draftTabId,
+    projectId,
+    projectPath,
+    engine: state.executionEngineConfig?.engine,
     onRestore: useCallback((draft: string) => {
       // 恢复草稿时更新 prompt 状态
       dispatch({ type: "SET_PROMPT", payload: draft });
     }, []),
   });
+
+  // 监听「从侧栏草稿条目恢复正文」事件：仅当 tabId 匹配本输入框时回填，
+  // 用于「草稿对应 tab 已关闭、需新建 tab 并回填正文」的场景。
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { tabId?: string; text?: string } | undefined;
+      if (!detail || !draftTabId || detail.tabId !== draftTabId) return;
+      if (typeof detail.text === 'string' && detail.text) {
+        dispatch({ type: "SET_PROMPT", payload: detail.text });
+      }
+    };
+    window.addEventListener('restore-draft-text', handler);
+    return () => window.removeEventListener('restore-draft-text', handler);
+  }, [draftTabId]);
 
   // Initialize enableProjectContext from localStorage
   useEffect(() => {

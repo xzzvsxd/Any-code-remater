@@ -130,6 +130,10 @@ export interface FloatingPromptInputProps {
    */
   projectId?: string;
   /**
+   * 🆕 承载本输入框的 tab id：新会话(无 sessionId)时用作后端草稿的唯一 id，支持多草稿互不覆盖。
+   */
+  draftTabId?: string;
+  /**
    * Optional className for styling
    */
   className?: string;

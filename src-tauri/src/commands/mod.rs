@@ -14,6 +14,7 @@ pub mod permission_config;
 pub mod prompt_tracker;
 pub mod provider;
 pub mod session_meta; // 会话自定义标题 + 排序元数据
+pub mod draft_sessions; // 草稿会话：未发送的新会话落盘（每项目/全局多个）
 pub mod session_search; // 跨会话内容并行流式搜索
 pub mod simple_git;
 pub mod storage;

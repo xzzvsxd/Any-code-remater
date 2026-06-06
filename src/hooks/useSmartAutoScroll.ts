@@ -206,8 +206,26 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
     scrollElement.addEventListener('keydown', handleKeyDown);
     scrollElement.addEventListener('scroll', handleScroll, { passive: true });
 
+    // 内容高度即时跟随：rAF 粘底循环靠 lastMessageHash 重启，有两个盲区——
+    // ① streaming 平静期 settle 退出后，新内容到来时重启有一帧延迟；
+    // ② 代码高亮异步重排会改变高度但内容长度不变（hash 不变）→ 不重启 → 不跟随。
+    // 用 ResizeObserver 观察内容容器高度，任何高度变化且仍处于粘底态时立即追底。
+    // performAutoScroll 自带死区 + 用户上滑解除保护，故与用户滚动、与 rAF 循环均不冲突
+    //（scrollTop 调整不改内容尺寸，不会反过来触发本 observer，无循环）。
+    let contentObserver: ResizeObserver | null = null;
+    const contentEl = scrollElement.firstElementChild;
+    if (contentEl) {
+      contentObserver = new ResizeObserver(() => {
+        if (autoScrollEnabledRef.current) {
+          performAutoScroll();
+        }
+      });
+      contentObserver.observe(contentEl);
+    }
+
     return () => {
       cancelResumeConfirmation();
+      contentObserver?.disconnect();
       scrollElement.removeEventListener('wheel', handleWheel);
       scrollElement.removeEventListener('touchstart', handleTouchStart);
       scrollElement.removeEventListener('touchmove', handleTouchMove);

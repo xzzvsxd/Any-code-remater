@@ -1193,6 +1193,8 @@
     "noSessions": "此專案暫無對話",
     "loadingSessions": "載入對話中…",
     "runningSessions": "{{count}} 個對話正在執行",
+    "draftBadge": "草稿",
+    "draftUntitled": "未命名草稿",
     "showAllSessions": "展開全部 {{count}} 個對話",
     "collapseSessions": "收起對話",
     "ctx": {

@@ -122,6 +122,9 @@ use commands::provider::{
 use commands::session_meta::{
     get_session_meta, set_project_order, set_session_order, set_session_title,
 };
+use commands::draft_sessions::{
+    delete_draft_session, list_draft_sessions, save_draft_session,
+};
 use commands::session_search::search_sessions_content;
 use commands::simple_git::{check_and_init_git, check_reset_safety, precise_revert_code};
 use commands::storage::{
@@ -535,6 +538,9 @@ fn main() {
             set_session_title,
             set_session_order,
             set_project_order,
+            list_draft_sessions,
+            save_draft_session,
+            delete_draft_session,
             get_prompt_list,
             get_prompt_list_with_capabilities,
             get_unified_prompt_list,

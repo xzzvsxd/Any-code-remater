@@ -143,8 +143,13 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
 
       // 优先返回「已测得的真实高度」：避免未在窗口内的行用粗估占位，
       // 重新进入窗口测量时高度从估算值跳到真实值，导致整列平移闪动。
-      const cached = measuredHeightsRef.current.get(getGroupKey(messageGroup, index));
-      if (cached) return cached;
+      // 例外：正在 streaming 的最后一行高度时刻在变，缓存的是滞后旧值，会低估 totalSize、
+      // 让视图停在「离底一点点」（表现为贴底时被往上弹）。该行不读缓存，交给实时测量驱动粘底。
+      const isStreamingRow = isLoading && index === messageGroups.length - 1;
+      if (!isStreamingRow) {
+        const cached = measuredHeightsRef.current.get(getGroupKey(messageGroup, index));
+        if (cached) return cached;
+      }
 
       // For subagent groups, estimate larger height
       if (messageGroup.type === 'subagent') {
@@ -191,11 +196,16 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
     overscan: 12, // ✅ OPTIMIZED: Increased to 12 to prevent blank areas during fast scrolling
     measureElement: (element) => {
       // Ensure element is fully rendered before measurement
-      const height = (element as HTMLElement)?.getBoundingClientRect().height ?? 200;
+      const el = element as HTMLElement;
+      const height = el?.getBoundingClientRect().height ?? 200;
       // 写入高度缓存（key 来自 MeasurableItem 设置的 data-item-key），
       // 供 estimateSize 复用真实高度，消除重测时的整列跳动。
-      const key = (element as HTMLElement)?.getAttribute?.('data-item-key');
-      if (key && height > 0) {
+      // 例外：正在 streaming 的最后一行高度时刻在变，不写缓存——否则会留下滞后旧值，
+      // 下次 estimateSize 用它低估 totalSize，把贴底视图往上弹。
+      const key = el?.getAttribute?.('data-item-key');
+      const idxAttr = el?.getAttribute?.('data-index');
+      const isStreamingRow = isLoading && idxAttr !== null && Number(idxAttr) === messageGroups.length - 1;
+      if (key && height > 0 && !isStreamingRow) {
         measuredHeightsRef.current.set(key, height);
       }
       return height;

@@ -112,6 +112,27 @@ export interface Session {
 }
 
 /**
+ * 草稿会话：未发送的新会话，独立落盘于 ~/.claude/draft-sessions.json。
+ * 支持每个项目多个、全局多个。发送首条消息转为正式会话后由前端删除。
+ */
+export interface DraftSession {
+  /** 草稿唯一 id（前端生成，通常等于承载它的 tab id） */
+  id: string;
+  /** 所属项目 id（可空：尚未归属项目的全局草稿） */
+  project_id: string;
+  /** 所属项目路径（侧栏归一化匹配项目用） */
+  project_path: string;
+  /** 草稿正文（输入框文本） */
+  content: string;
+  /** 目标引擎 */
+  engine: string;
+  /** 创建时间（Unix 秒） */
+  created_at: number;
+  /** 最后更新时间（Unix 秒） */
+  updated_at: number;
+}
+
+/**
  * Session conversion source information
  */
 export interface ConversionSource {
@@ -3052,6 +3073,21 @@ export const api = {
   /** 设置工作区项目的自定义显示顺序（拖拽排序）；空数组=清除手动顺序。 */
   async setProjectOrder(projectIds: string[]): Promise<void> {
     return invoke("set_project_order", { projectIds });
+  },
+
+  /** 列出草稿会话。传 projectId 时只返回该项目的草稿；不传返回全部。 */
+  async listDraftSessions(projectId?: string): Promise<DraftSession[]> {
+    return invoke("list_draft_sessions", { projectId: projectId ?? null });
+  },
+
+  /** 保存草稿（upsert，按 draft.id 覆盖）。content 为空时后端会删除该草稿。返回 draft id。 */
+  async saveDraftSession(draft: DraftSession): Promise<string> {
+    return invoke("save_draft_session", { draft });
+  },
+
+  /** 删除草稿（会话转正/用户丢弃时调用）。 */
+  async deleteDraftSession(draftId: string): Promise<void> {
+    return invoke("delete_draft_session", { draftId });
   },
 
   /**

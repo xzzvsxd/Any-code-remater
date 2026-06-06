@@ -128,6 +128,7 @@ const TabSessionWrapperComponent: React.FC<TabSessionWrapperProps> = ({
         isActive={isActive}
         planModeStorageKey={planModeStorageKey}
         queueStorageKey={queueStorageKey}
+        tabId={tabId}
       />
     </div>
   );

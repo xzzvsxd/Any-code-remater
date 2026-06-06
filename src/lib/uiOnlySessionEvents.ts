@@ -145,6 +145,35 @@ export function persistUiOnlySessionMessage(params: PersistUiOnlySessionMessageP
   }
 }
 
+export function pruneUiOnlySessionMessagesAfter(
+  params: UiOnlySessionMessageParams,
+  cutoffTimeMs: number,
+): boolean {
+  const storage = getStorage(params.storage);
+  const key = getUiOnlySessionEventsStorageKey(params);
+  if (!storage || !key) return false;
+  if (!Number.isFinite(cutoffTimeMs)) return false;
+
+  try {
+    const existing = loadUiOnlySessionMessages(params);
+    if (existing.length === 0) return true;
+    // 撤回后裁剪：剔除「晚于撤回保留边界」的 UI-only 事件（如"✅ 本次执行完成，用时 X"），
+    // 否则后端截断了会话 JSONL，但这些独立存于 localStorage 的事件仍会被 merge 回来而残留。
+    // 无有效时间戳的事件一律保留（无法判定先后，从宽不误删）。
+    const kept = existing.filter((message) => {
+      const t = getMessageTime(message);
+      if (!Number.isFinite(t)) return true;
+      return t <= cutoffTimeMs;
+    });
+    if (kept.length === existing.length) return true;
+    storage.setItem(key, JSON.stringify(kept));
+    return true;
+  } catch (err) {
+    console.warn('[uiOnlySessionEvents] Failed to prune UI-only session messages:', err);
+    return false;
+  }
+}
+
 export function mergeUiOnlySessionMessages(
   historyMessages: ClaudeStreamMessage[],
   uiOnlyMessages: ClaudeStreamMessage[],
@@ -162,12 +191,24 @@ export function mergeUiOnlySessionMessages(
     merged.push(message);
   }
 
-  // 稳定排序：两边时间相等或任一为 NaN（无有效时间戳）时，回退到原始顺序（index 次级键），
-  // 避免 comparator 返回 0 让无时间戳消息随机插队 —— 这是用户消息堆叠到顶部的另一诱因。
+  // 稳定排序：核心原则——真实历史消息(非 uiOnly)之间一律保持原始物理顺序(JSONL 行序)，
+  // 绝不因时间戳重排。
+  //
+  // 为什么(修复撤回错位/吞消息)：前端 promptIndex 按 messages 数组顺序计数，后端按 JSONL 物理
+  // 行序计数。若此处按时间戳重排打乱了两条真实用户消息的相对顺序(时间戳因时钟/补写不一致很常见)，
+  // 前端给某条消息算出的 promptIndex 就与后端不一致 → 撤回定位到错误的消息、吞掉中间几条。
+  // 也是历史消息「堆叠到顶部」的根因。故真实消息只认 index，仅 UI-only 事件按时间戳找插入位。
   const indexOf = new Map<ClaudeStreamMessage, number>();
   merged.forEach((message, index) => indexOf.set(message, index));
 
+  const isUiOnly = (m: ClaudeStreamMessage) => (m as any).uiOnly === true;
+
   return [...merged].sort((a, b) => {
+    // 两条都是真实历史消息：严格按原始顺序，不比时间戳（防止重排打乱 JSONL 物理序）。
+    if (!isUiOnly(a) && !isUiOnly(b)) {
+      return (indexOf.get(a) ?? 0) - (indexOf.get(b) ?? 0);
+    }
+    // 至少一方是 UI-only 事件：按时间戳决定插入位置；时间相等/缺失时回退原始顺序。
     const left = getMessageTime(a);
     const right = getMessageTime(b);
     if (!Number.isFinite(left) || !Number.isFinite(right) || left === right) {
