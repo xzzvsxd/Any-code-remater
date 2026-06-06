@@ -229,8 +229,10 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
   const runningIdsSig = React.useMemo(
     () =>
       tabs
-        .filter((tb) => tb.state === 'streaming' && tb.session?.id)
-        .map((tb) => tb.session!.id)
+        .filter((tb) => tb.state === 'streaming')
+        // 兜底：运行中的新会话在拿到 sessionId 前用 tab.id 顶临时 id，
+        // 保证「正在运行」从发起那一刻就能被 runningSessionIds 命中（不必等 sessionId 落地）。
+        .map((tb) => tb.session?.id || tb.id)
         .sort()
         .join('|'),
     [tabs],
@@ -239,34 +241,53 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     () => new Set(runningIdsSig ? runningIdsSig.split('|') : []),
     [runningIdsSig],
   );
-  // 已在标签页打开的会话（含尚未落盘的新建会话）：实时合并进项目树，
-  // 无需等待 AI 完成事件与磁盘刷新，新会话拿到 sessionId 即刻可见。
+  // 已在标签页打开的会话（含尚未落盘的新建会话、以及运行中但还没拿到 sessionId 的新会话）：
+  // 实时合并进项目树，无需等待 AI 完成事件与磁盘刷新。
   // 落盘前 session 无 first_message，用标签页标题兜底，避免显示成裸 id。
   //
-  // 同样以稳定签名为依赖（仅取真正影响渲染的字段），避免 streaming 期间 tabs 高频变化时
-  // 反复重建 session 对象引用 → 触发会话树抖动。签名不变时整段 memo 直接复用旧结果。
+  // 纳入条件：① 已有 session.id；或 ② 正在运行(streaming)且有 projectPath 可归类。
+  // 后者是关键兜底——修复「会话已运行但侧栏不显示，仅项目 badge 亮」：新会话首轮 state 已是
+  // streaming 但 session.id 要等 system:init 才写入，这段窗口期(Linux 上因 focus 刷新不可靠
+  // 可能长达数秒)若不纳入，列表里就看不到它。用 tab.id 作临时会话 id 顶上。
+  const includeTab = useCallback(
+    (tb: typeof tabs[number]) => !!tb.session?.id || (tb.state === 'streaming' && !!tb.projectPath),
+    [],
+  );
   const openTabsSig = React.useMemo(
     () =>
       tabs
-        .filter((tb) => tb.session?.id)
+        .filter(includeTab)
         .map((tb) => JSON.stringify([
-          tb.session!.id,
-          tb.session!.first_message ?? '',
+          tb.session?.id || tb.id,
+          tb.session?.first_message ?? '',
           tb.title,
-          tb.session!.project_id ?? '',
-          tb.session!.project_path ?? '',
+          tb.session?.project_id ?? '',
+          tb.session?.project_path ?? tb.projectPath ?? '',
           // state 必须入签名：tab 从 idle↔streaming 变化时若签名不变，openTabSessions 不重算，
           // 会导致「会话已在运行但侧栏不刷新/不显示」（Linux 尤甚，聚焦刷新不常触发）。
           // state 是低频枚举（仅边沿变化），入签名不会重新引入 streaming 抖动。
           tb.state,
         ]))
         .join('\n'),
-    [tabs],
+    [tabs, includeTab],
   );
   const openTabSessions = React.useMemo(
     () => tabs
-      .filter((tb) => tb.session?.id)
-      .map((tb) => (tb.session!.first_message ? tb.session! : { ...tb.session!, first_message: tb.title })),
+      .filter(includeTab)
+      .map((tb) => {
+        if (tb.session?.id) {
+          return tb.session.first_message ? tb.session : { ...tb.session, first_message: tb.title };
+        }
+        // 运行中但还没 session 的新会话：构造临时 Session（id=tab.id），让它即时进树。
+        return {
+          id: tb.id,
+          project_id: '',
+          project_path: tb.projectPath || '',
+          created_at: Math.floor((tb.createdAt || Date.now()) / 1000),
+          first_message: tb.title,
+          engine: (tb.engine || 'claude') as 'claude' | 'codex' | 'gemini',
+        } as Session;
+      }),
     // 依赖稳定签名而非 tabs 本身：仅当影响渲染的字段变化时才重算，消除 streaming 期间的引用抖动。
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [openTabsSig],
@@ -368,6 +389,24 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
       window.removeEventListener('focus', handleVisibility);
     };
   }, []);
+
+  // 运行期兜底刷新：仅当「有会话正在运行」时启用一个低频(4s)定时器，静默刷新已展开项目的会话列表。
+  // 目的——Linux 上 focus/visibilitychange 事件不可靠，新会话落盘后聚焦刷新可能迟迟不触发，
+  // 导致「会话在跑但侧栏一直不显示」。此定时器只在 runningSessionIds 非空时存在、会话跑完即清除，
+  // 不是常驻轮询，规避了「高频扫描卡顿」的老问题。即便前面所有派生失灵，这里也能把会话拉出来。
+  useEffect(() => {
+    if (runningSessionIds.size === 0) return;
+    const timer = window.setInterval(() => {
+      if (document.hidden) return;
+      const { expanded, projects: projs, load } = focusRefreshRef.current;
+      projs.forEach((p) => {
+        if (expanded.has(p.id)) {
+          load(p, { silent: true }).catch(() => { /* ignore */ });
+        }
+      });
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [runningSessionIds]);
   const onDragStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     draggingRef.current = true;
@@ -952,14 +991,16 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
             engine: (d.engine || 'claude') as 'claude' | 'codex' | 'gemini',
             is_draft: true,
           } as Session & { is_draft: boolean }));
-        const rawSessions = (projectDrafts.length > 0 || pendingTabSessions.length > 0)
-          ? [...projectDrafts, ...pendingTabSessions, ...diskSessions]
-          : diskSessions;
-        // 应用用户自定义排序：order key 以项目维度存储（引擎前缀固定，仅作存储键）。
+        // 置顶项（草稿 + 已打开未落盘的会话，含正在运行的新会话）：始终排在最前，
+        // 不参与 savedOrder 排序。否则它们的 id 不在 savedOrder 里 → indexOf=-1 → 被排到末尾
+        // → 被 visible 的 slice(0,5) 截断 →「会话已在运行但列表里看不到」（项目 badge 却亮，
+        // 因为 badge 不受 slice 影响）。这是 Linux/Windows 都会触发的真正根因。
+        const pinnedSessions = [...projectDrafts, ...pendingTabSessions];
+        // 仅对落盘会话应用用户自定义排序：order key 以项目维度存储（引擎前缀固定，仅作存储键）。
         const orderKey = `proj:${project.id}`;
         const savedOrder = sessionOrder[orderKey];
-        const projectSessions = savedOrder && savedOrder.length > 0
-          ? [...rawSessions].sort((a, b) => {
+        const orderedDisk = savedOrder && savedOrder.length > 0
+          ? [...diskSessions].sort((a, b) => {
               const ia = savedOrder.indexOf(a.id);
               const ib = savedOrder.indexOf(b.id);
               if (ia === -1 && ib === -1) return 0;
@@ -967,9 +1008,27 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
               if (ib === -1) return -1;
               return ia - ib;
             })
-          : rawSessions;
+          : diskSessions;
+        const projectSessions = pinnedSessions.length > 0
+          ? [...pinnedSessions, ...orderedDisk]
+          : orderedDisk;
+        // 运行中的落盘会话也强制提到最近区可见位置：避免它因 savedOrder 排到第 6+ 位被 slice 截断，
+        // 表现为「正在运行却不在列表里」。pinned(草稿/未落盘) 已在最前，这里只重排 orderedDisk 部分。
+        const visibleSorted = (() => {
+          const running = projectSessions.filter((s) => runningSessionIds.has(s.id));
+          if (running.length === 0) return projectSessions;
+          const runningIds = new Set(running.map((s) => s.id));
+          const rest = projectSessions.filter((s) => !runningIds.has(s.id));
+          // 运行中的排在 pinned 之后、其余之前（pinned 本身可能也在 running 里，用 Set 去重保序）
+          const pinnedIds = new Set(pinnedSessions.map((s) => s.id));
+          const pinnedPart = projectSessions.filter((s) => pinnedIds.has(s.id));
+          const runningNotPinned = running.filter((s) => !pinnedIds.has(s.id));
+          const restNotPinned = rest.filter((s) => !pinnedIds.has(s.id));
+          return [...pinnedPart, ...runningNotPinned, ...restNotPinned];
+        })();
         const expandedAll = showAll.has(project.id);
-        const visible = expandedAll ? projectSessions : projectSessions.slice(0, RECENT_SESSION_COUNT);
+        // 截断前用 visibleSorted（pinned + 运行中 已提到最前），保证运行中/草稿会话不被 slice 截掉。
+        const visible = expandedAll ? visibleSorted : visibleSorted.slice(0, RECENT_SESSION_COUNT);
 
         // 该项目下运行中的会话数：取所有已打开标签会话中归属本项目、且处于 streaming 的。
         // 用 openTabSessions（不依赖项目是否展开/缓存是否命中），保证未展开项目也能显示运行标识。
@@ -1088,6 +1147,9 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
                       const isDraft = (session as any).is_draft === true;
                       const isActive = activeSessionId === session.id;
                       const isRunning = runningSessionIds.has(session.id);
+                      // 已打开(在标签页中开着)但非聚焦/非运行：也给一层淡淡的区分背景，
+                      // 与「完全没打开的磁盘会话」区分开（用户要求保留区分，不要只剩聚焦/运行有遮罩）。
+                      const isOpen = openTabSessions.some((s) => s.id === session.id);
                       const customTitle = sessionTitles[session.id];
                       const preview = customTitle
                         ? truncateText(customTitle, 40)
@@ -1100,24 +1162,33 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
                           onClick={() => { if (!isRenaming) onOpenSession(session); }}
                           onContextMenu={(e) => { e.preventDefault(); setMenuFor(`sess:${session.id}`); }}
                           className={cn(
-                            'group/sess relative flex items-center gap-1.5 pl-1 pr-1 py-1.5 rounded-md cursor-pointer transition-all duration-150',
-                            // 配色语义：草稿(未发送)用红色遮罩+描边，优先级最高，醒目提示「这是没发出去的草稿」；
-                            // 聚焦(选中)用橙色遮罩——一眼锁定当前会话；运行中但未聚焦用白色低调遮罩。
+                            'group/sess relative flex items-center gap-1.5 pl-2 pr-1 py-1.5 rounded-md cursor-pointer transition-all duration-150 overflow-hidden',
+                            // 布局重设计：状态只用「背景遮罩 + 左侧竖条」表达，去掉 ring 描边——
+                            // 旧设计 ring-inset 会沿圆角描一圈，和左竖条重叠发丑。现在竖条是唯一的状态强调元素。
+                            // 优先级：草稿(红) > 聚焦(橙) > 运行中(白) > 已打开未聚焦(淡橙) > 未打开(无/hover)。
                             isDraft
-                              ? 'bg-red-500/10 text-foreground ring-1 ring-inset ring-red-500/50'
+                              ? 'bg-red-500/10 text-foreground'
                               : isActive
-                                ? 'bg-gradient-to-r from-amber-500/20 to-amber-500/[0.08] text-foreground ring-1 ring-inset ring-amber-500/70'
+                                ? 'bg-gradient-to-r from-amber-500/[0.18] to-transparent text-foreground'
                                 : isRunning
-                                  ? 'bg-white/[0.06] text-foreground ring-1 ring-inset ring-white/15'
-                                  : 'text-muted-foreground/90 hover:text-foreground hover:bg-muted/40'
+                                  ? 'bg-white/[0.06] text-foreground'
+                                  : isOpen
+                                    ? 'bg-amber-500/[0.06] text-foreground/90 hover:bg-amber-500/[0.1]'
+                                    : 'text-muted-foreground/90 hover:text-foreground hover:bg-muted/40'
                           )}
                         >
-                          {/* 左侧竖条：草稿用红色，聚焦用橙色（草稿优先级最高）。 */}
-                          {isDraft ? (
-                            <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-red-500" />
-                          ) : isActive ? (
-                            <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-amber-500" />
-                          ) : null}
+                          {/* 左侧竖条：唯一的状态强调元素，贴左边缘、上下留白避免顶圆角。
+                              草稿红 > 聚焦橙 > 运行中琥珀 > 已打开淡橙，统一用竖条，不再与描边重叠。 */}
+                          {(isDraft || isActive || isRunning || isOpen) && (
+                            <span className={cn(
+                              'absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full',
+                              // 竖条强度随状态递减：草稿红 > 聚焦橙 > 运行中琥珀60% > 已打开未聚焦琥珀35%
+                              isDraft ? 'bg-red-500'
+                                : isActive ? 'bg-amber-500'
+                                  : isRunning ? 'bg-amber-500/60'
+                                    : 'bg-amber-500/35'
+                            )} />
+                          )}
                           {/* 拖拽手柄：仅「最近 N 个」视图可见可用（展开全部时退化纯列表、无拖拽） */}
                           {!expandedAll && (
                             <SortableDragHandle className="flex-shrink-0 h-4 w-3 opacity-0 group-hover/sess:opacity-100 transition-opacity">
