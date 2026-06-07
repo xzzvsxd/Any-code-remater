@@ -388,6 +388,10 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       style={{
         paddingTop: '20px',
         paddingBottom: '24px', // 底部留一点间距即可
+        // 关闭浏览器 scroll anchoring：虚拟列表用绝对定位 + 固定容器高度「手动」管理滚动位置，
+        // 浏览器自带的锚定会在内容高度变化时擅自改 scrollTop 保持锚点可见，与 react-virtual 的
+        // 高度补偿、与 performAutoScroll 粘底三方打架，是 streaming 期间向上翻动「鬼畜抖动」的干扰源之一。
+        overflowAnchor: 'none',
       }}
     >
       <div

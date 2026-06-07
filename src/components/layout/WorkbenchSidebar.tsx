@@ -583,6 +583,17 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     try {
       if (confirm.kind === 'deleteSession') {
         const s = confirm.session;
+        // 草稿条目：落盘在 ~/.claude/draft-sessions.json，不是各引擎的正式 .jsonl。
+        // 必须走 deleteDraftSession 删后端草稿，否则 reloadDrafts 会把它重新拉回侧栏（“删了还在”）。
+        // 草稿的 id 即承载它的 tab id，连带关闭该 tab，避免该 tab 再次落盘草稿。
+        if ((s as any).is_draft === true) {
+          await api.deleteDraftSession(s.id);
+          const draftTabs = tabs.filter((tb) => tb.id === s.id);
+          for (const tb of draftTabs) await closeTab(tb.id, true);
+          await reloadDrafts();
+          toast(t('workbench.ctx.sessionDeleted'));
+          return;
+        }
         const engine = s.engine || 'claude';
         if (engine === 'codex') await api.deleteCodexSession(s.id);
         else if (engine === 'gemini') await api.deleteGeminiSession(s.project_path, s.id);
@@ -615,7 +626,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
       setBusy(false);
       setConfirm(null);
     }
-  }, [confirm, selectedProject, refreshSessions, deleteProject, tabs, closeTab, t]);
+  }, [confirm, selectedProject, refreshSessions, deleteProject, tabs, closeTab, reloadDrafts, t]);
 
   // 折叠态：只留一个细把手
   if (collapsed) {

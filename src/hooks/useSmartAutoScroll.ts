@@ -68,6 +68,14 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
   // 标记“用户主动上滑解除了粘底”。置位后，scroll 事件必须等用户几乎精确贴底才恢复粘底，
   // 避免在 80px 区间内被立即拉回（吸铁石）。回到底部恢复后清除该标记。
   const userIntentReleasedRef = useRef(false);
+  // 标记“最近一次滚动是用户主动向下滚的”。这是恢复粘底的硬性意图闸门：
+  // streaming 期间向上翻动时，虚拟列表渐进测量上方行真实高度 → react-virtual 增大 scrollOffset
+  // 做高度补偿 → 某些帧“离底距离”被瞬间压到接近 0（假性贴底）。仅靠距离判断会把这种补偿
+  // 误判为“用户回到底部”而恢复粘底，随即被 rAF 循环 slam 到底 —— 这正是“向上翻被鬼畜回滚”的根因。
+  // 高度补偿不会产生向下意图，所以要求“贴底 + 有向下意图”双条件后，补偿造成的假贴底永不误恢复。
+  const userIntentDownwardRef = useRef(false);
+  // 记录上一帧 scrollTop，用于在 scroll 事件里甄别“真·向下滚动”与“高度补偿被动位移”。
+  const lastScrollTopRef = useRef(0);
 
   const lastMessageHash = useMemo(
     () => getLastMessageContentHash(displayableMessages),
@@ -122,6 +130,9 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
     const scrollElement = parentRef.current;
     if (!scrollElement) return;
 
+    // 初始化基线：避免首个 scroll 事件用 scrollTop - 0 算出巨大正 delta 而误置向下意图。
+    lastScrollTopRef.current = scrollElement.scrollTop;
+
     // 跨帧二次确认句柄：用于过滤虚拟列表测量抖动那一帧的“假性贴底”，下方 handleScroll 说明根因。
     let resumeConfirmFrame = 0;
     const cancelResumeConfirmation = () => {
@@ -142,11 +153,19 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
       if (getDistanceFromBottom(scrollElement) <= 1) return;
       cancelResumeConfirmation();
       userIntentReleasedRef.current = true;
+      userIntentDownwardRef.current = false; // 上滑意图清除任何残留的向下意图
       syncAutoScrollState(false);
+    };
+
+    // 记录“用户主动向下滚动”意图。这是恢复粘底的钥匙：只有用户真的想回到底部时，
+    // 才允许 handleScroll 在贴底时恢复粘底，从而把虚拟列表高度补偿造成的“假性贴底”挡在门外。
+    const markDownwardIntent = (movingDown: boolean) => {
+      if (movingDown) userIntentDownwardRef.current = true;
     };
 
     const handleWheel = (event: WheelEvent) => {
       releaseOnUserIntent(event.deltaY < 0);
+      markDownwardIntent(event.deltaY > 0);
     };
 
     let touchStartY = 0;
@@ -155,13 +174,16 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
     };
     const handleTouchMove = (event: TouchEvent) => {
       const currentY = event.touches[0]?.clientY ?? 0;
-      // 手指下滑（clientY 增大）= 内容上移 = 查看历史
+      // 手指下滑（clientY 增大）= 内容上移 = 查看历史；手指上滑（clientY 减小）= 内容下移 = 回到底部
       releaseOnUserIntent(currentY > touchStartY);
+      markDownwardIntent(currentY < touchStartY);
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
       const upKeys = ['ArrowUp', 'PageUp', 'Home'];
+      const downKeys = ['ArrowDown', 'PageDown', 'End'];
       releaseOnUserIntent(upKeys.includes(event.key));
+      markDownwardIntent(downKeys.includes(event.key));
     };
 
     /**
@@ -169,6 +191,17 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
      * 避免高频自动滚动期间把用户真实滚动一并吞掉。
      */
     const handleScroll = () => {
+      // 通过 scrollTop 真实增大兜底捕获“向下意图”：拖动滚动条、点击轨道等不产生 wheel/touch 事件，
+      // 但会让 scrollTop 增大。只有「增量明显（> 死区，排除高度补偿的微小被动位移）」才算意图。
+      // 注意：虚拟列表高度补偿也会增大 scrollTop，但那是为保持锚点、幅度通常很小且伴随 scrollHeight 变化；
+      // 这里用一个略大于死区的阈值过滤，宁可漏判（用户再滚一下即可）也不误判（误判=鬼畜回滚复发）。
+      const currentScrollTop = scrollElement.scrollTop;
+      const delta = currentScrollTop - lastScrollTopRef.current;
+      lastScrollTopRef.current = currentScrollTop;
+      if (delta > STICK_BOTTOM_DEADBAND) {
+        userIntentDownwardRef.current = true;
+      }
+
       // 用户主动上滑解除过粘底：必须几乎精确贴底（≤4px）才恢复，避免 80px 区间内被立即吸回。
       // 未经主动解除（如程序滚动后的微抖）：维持 80px 宽松阈值恢复，保证正常跟随体验。
       const resumeThreshold = userIntentReleasedRef.current
@@ -185,7 +218,14 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
       // 在某一帧先行变化、而 scrollTop 的补偿调整尚未应用 —— 这一帧的 distance 会出现
       // “假性贴底”（甚至为负）。isLoading 期间又常驻一个自动滚动循环，一旦此刻误判贴底
       // 恢复粘底，就会被该循环立刻拽到底部，表现为“向上翻、一遇到刷新加载就弹到底”。
-      // 因此跨一帧二次确认：仅当连续两帧都贴底，才认定为用户真实回到底部。
+      // 双重防线：
+      //  ① 意图闸门：用户主动解除粘底后，必须检测到“向下意图”才允许恢复 —— 高度补偿造成的假贴底
+      //     不带向下意图，永远被挡在门外（根治“向上翻被鬼畜回滚”）。
+      //  ② 跨帧二次确认：仅当连续两帧都贴底，才认定真实回到底部，过滤单帧测量抖动。
+      if (userIntentReleasedRef.current && !userIntentDownwardRef.current) {
+        cancelResumeConfirmation();
+        return;
+      }
       cancelResumeConfirmation();
       resumeConfirmFrame = requestAnimationFrame(() => {
         resumeConfirmFrame = 0;
@@ -195,6 +235,7 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
           : RESUME_AUTO_SCROLL_THRESHOLD;
         if (getDistanceFromBottom(scrollElement) <= currentResumeThreshold) {
           userIntentReleasedRef.current = false;
+          userIntentDownwardRef.current = false;
           syncAutoScrollState(true);
         }
       });

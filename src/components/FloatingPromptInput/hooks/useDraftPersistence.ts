@@ -33,6 +33,16 @@ export function useDraftPersistence({
 }: UseDraftPersistenceOptions) {
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const hasRestoredRef = useRef(false);
+  // 后端草稿操作串行化队列：save/delete 都是后端「读-改-写同一文件」的无锁操作，
+  // 并发时存在写后写竞态——发送时 clearDraft 的 delete 可能先执行、in-flight 的 save 后落盘，
+  // 导致草稿残留（已发出仍显示草稿）。用 promise 链强制按调用顺序串行，根除竞态。
+  const backendQueueRef = useRef<Promise<unknown>>(Promise.resolve());
+
+  // 把一个后端草稿操作排进串行队列；前一个完成后才执行下一个，无论成败都不阻塞后续。
+  const enqueueBackendOp = useCallback((op: () => Promise<unknown>) => {
+    backendQueueRef.current = backendQueueRef.current.then(op, op);
+    return backendQueueRef.current;
+  }, []);
 
   // 是否走后端草稿落盘：新会话(无 sessionId)且有 draftId + 项目路径时。
   const useBackendDraft = !sessionId && !!draftId && !!projectPath;
@@ -69,9 +79,10 @@ export function useDraftPersistence({
       }
 
       // 后端草稿落盘：content 为空时后端会删除该草稿（见 save_draft_session）。
+      // 走串行队列，保证与 clearDraft 的 delete 不发生写后写竞态。
       if (useBackendDraft && draftId) {
         const now = Math.floor(Date.now() / 1000);
-        api.saveDraftSession({
+        enqueueBackendOp(() => api.saveDraftSession({
           id: draftId,
           project_id: projectId || '',
           project_path: projectPath || '',
@@ -79,12 +90,12 @@ export function useDraftPersistence({
           engine: engine || 'claude',
           created_at: now,
           updated_at: now,
-        }).then(notifyDraftsChanged).catch((e) => {
+        })).then(notifyDraftsChanged).catch((e) => {
           console.warn('[DraftPersistence] Failed to persist backend draft:', e);
         });
       }
     }, DRAFT_DEBOUNCE_MS);
-  }, [getStorageKey, useBackendDraft, draftId, projectId, projectPath, engine, notifyDraftsChanged]);
+  }, [getStorageKey, useBackendDraft, draftId, projectId, projectPath, engine, notifyDraftsChanged, enqueueBackendOp]);
 
   // 清除草稿（发送成功/丢弃时）。新会话同时删除后端草稿。
   const clearDraft = useCallback(() => {
@@ -100,11 +111,11 @@ export function useDraftPersistence({
     }
 
     if (useBackendDraft && draftId) {
-      api.deleteDraftSession(draftId).then(notifyDraftsChanged).catch((e) => {
+      enqueueBackendOp(() => api.deleteDraftSession(draftId)).then(notifyDraftsChanged).catch((e) => {
         console.warn('[DraftPersistence] Failed to delete backend draft:', e);
       });
     }
-  }, [getStorageKey, useBackendDraft, draftId, notifyDraftsChanged]);
+  }, [getStorageKey, useBackendDraft, draftId, notifyDraftsChanged, enqueueBackendOp]);
 
   // 恢复草稿
   const restoreDraft = useCallback((): string | null => {
