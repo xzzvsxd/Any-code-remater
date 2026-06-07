@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, Mutex};
@@ -460,5 +460,49 @@ fn sanitize_filename(s: &str) -> String {
         "default".to_string()
     } else {
         cleaned
+    }
+}
+
+/// 共享：为一次 one-shot Claude 命令挂载阻塞式提问/审批 MCP 工具，返回需追加到命令行的 args。
+///
+/// 真实 GUI 会话走 one-shot 路径（execute/continue/resume_claude_code），不是 streaming，
+/// 因此 MCP 工具必须挂在这些命令上才会生效。先确保桥接 HTTP 服务已就绪（规避启动竞态），
+/// 再生成临时 mcp 配置并返回：--mcp-config <p> [--allowedTools <t>]* --append-system-prompt <引导>。
+/// 失败仅记日志返回空（退化为无阻塞提问），不阻断会话启动。
+pub async fn build_ask_user_args(app: &AppHandle, session_hint: &str) -> Vec<String> {
+    let bridge = match app.try_state::<AskUserBridge>() {
+        Some(b) => b.inner().clone(),
+        None => {
+            log::warn!("[ask-user] bridge state missing; skip mount");
+            return Vec::new();
+        }
+    };
+    // 确保桥接已启动（setup 异步启动可能尚未完成）。
+    let _ = ensure_bridge_started(app.clone(), bridge.clone()).await;
+
+    match write_mcp_config(&bridge, session_hint) {
+        Ok((cfg_path, tool_names)) => {
+            let mut args = Vec::new();
+            args.push("--mcp-config".to_string());
+            args.push(cfg_path.to_string_lossy().to_string());
+            for tool in &tool_names {
+                args.push("--allowedTools".to_string());
+                args.push(tool.clone());
+            }
+            args.push("--append-system-prompt".to_string());
+            args.push(
+                "本运行环境下，内置的 AskUserQuestion 与 ExitPlanMode 工具无法真正等待用户，会被立即短路。\
+                 因此：① 需要向用户提问 / 让其在多个方案间选择 / 澄清需求时，必须调用 mcp__askuser__ask_user 工具；\
+                 ② 在 Plan（计划）模式下完成方案、准备开始执行前，必须调用 mcp__askuser__submit_plan 工具提交计划等待用户审批。\
+                 这两个工具会阻塞等待用户在界面上响应后再返回。不要使用内置的 AskUserQuestion / ExitPlanMode，也不要仅用纯文本提问。"
+                    .to_string(),
+            );
+            log::info!("[ask-user] mounted MCP tools for one-shot: {:?} {:?}", cfg_path, tool_names);
+            args
+        }
+        Err(e) => {
+            log::warn!("[ask-user] MCP not mounted: {}", e);
+            Vec::new()
+        }
     }
 }

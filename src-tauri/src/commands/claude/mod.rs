@@ -15,7 +15,7 @@ pub use paths::*;
 pub use self::streaming::execute_claude_streaming;
 // 阻塞式"向用户提问"MCP 桥接：状态、命令、启动入口
 pub use self::ask_user_bridge::{
-    answer_user_question, cancel_user_questions, ensure_bridge_started, write_mcp_config,
+    answer_user_question, build_ask_user_args, cancel_user_questions, ensure_bridge_started,
     AskUserBridge,
 };
 // Export platform utilities for process window hiding

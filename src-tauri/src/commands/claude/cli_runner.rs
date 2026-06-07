@@ -289,7 +289,17 @@ pub async fn execute_claude_code(
     // 使用新的参数构建函数（先映射模型名称）
     // 🔥 修复：prompt 不再通过命令行参数传递，改为 stdin 管道传递
     let mapped_model = map_model_to_claude_alias(&model);
-    let args = build_execution_args(&execution_config, &mapped_model);
+    let mut args = build_execution_args(&execution_config, &mapped_model);
+
+    // 挂载阻塞式"向用户提问 / 计划审批"MCP 工具（真实会话走 one-shot 路径，必须挂在这里才生效）。
+    // session_hint 用 tab_id 供前端路由；缺省 "default"。失败不致命。
+    args.extend(
+        crate::commands::claude::build_ask_user_args(
+            &app,
+            tab_id.as_deref().unwrap_or("default"),
+        )
+        .await,
+    );
 
     // Create command
     let cmd = create_system_command(
@@ -357,6 +367,15 @@ pub async fn continue_claude_code(
 
     // 在开头插入 -c 标志
     args.insert(0, "-c".to_string());
+
+    // 挂载阻塞式提问/审批 MCP 工具（one-shot 路径必须挂在这里）。
+    args.extend(
+        crate::commands::claude::build_ask_user_args(
+            &app,
+            tab_id.as_deref().unwrap_or("default"),
+        )
+        .await,
+    );
 
     // Create command
     let cmd = create_system_command(
@@ -438,6 +457,15 @@ pub async fn resume_claude_code(
     // 为resume模式重新组织参数：--resume session_id 应该在最前面
     args.insert(0, "--resume".to_string());
     args.insert(1, session_id.clone());
+
+    // 挂载阻塞式提问/审批 MCP 工具（one-shot 路径必须挂在这里）。
+    args.extend(
+        crate::commands::claude::build_ask_user_args(
+            &app,
+            tab_id.as_deref().unwrap_or("default"),
+        )
+        .await,
+    );
 
     log::info!("Resume command: claude {}", args.join(" "));
 

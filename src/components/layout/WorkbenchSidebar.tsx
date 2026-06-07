@@ -1025,14 +1025,22 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
         // 仅对落盘会话应用用户自定义排序：order key 以项目维度存储（引擎前缀固定，仅作存储键）。
         const orderKey = `proj:${project.id}`;
         const savedOrder = sessionOrder[orderKey];
+        // 会话活跃时间：优先末条消息时间，回退到创建时间。用于「新活跃会话排最前」。
+        const activityOf = (s: Session) =>
+          (s.last_message_timestamp ? Date.parse(s.last_message_timestamp) : 0)
+          || (s.message_timestamp ? Date.parse(s.message_timestamp) : 0)
+          || (s.created_at || 0) * 1000;
         const orderedDisk = savedOrder && savedOrder.length > 0
           ? [...diskSessions].sort((a, b) => {
               const ia = savedOrder.indexOf(a.id);
               const ib = savedOrder.indexOf(b.id);
-              if (ia === -1 && ib === -1) return 0;
-              if (ia === -1) return 1;
-              if (ib === -1) return -1;
-              return ia - ib;
+              // 两者都已手动排序：严格遵循用户拖拽的 savedOrder。
+              if (ia !== -1 && ib !== -1) return ia - ib;
+              // 仅一方在 savedOrder 中：未排序的「新会话」提到最前（与旧逻辑相反）。
+              if (ia === -1 && ib !== -1) return -1;
+              if (ia !== -1 && ib === -1) return 1;
+              // 两者都是新会话：按活跃时间倒序，最近活跃的在最前。
+              return activityOf(b) - activityOf(a);
             })
           : diskSessions;
         const projectSessions = pinnedSessions.length > 0
