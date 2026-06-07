@@ -247,19 +247,19 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
                   {t('widget.questionsCount', { count: safeQuestions.length })}
                 </span>
               )}
+              {/* 回答问题按钮紧跟问题数文本，而非推到行尾（视觉上作为文本标签的直接操作入口） */}
+              {canAnswerQuestion && triggerQuestionDialog && (
+                <Button
+                  size="sm"
+                  className="h-7 px-2.5 text-xs gap-1 bg-blue-600 hover:bg-blue-700 text-white"
+                  onClick={handleAnswerNow}
+                >
+                  <MessageCircle className="h-3.5 w-3.5" />
+                  {t('widget.answerQuestions')}
+                </Button>
+              )}
             </div>
 
-            {/* 回答问题：主色实心按钮，作为头部可点击区的强引导（与标题区融为一体） */}
-            {canAnswerQuestion && triggerQuestionDialog && (
-              <Button
-                size="sm"
-                className="h-7 px-2.5 text-xs gap-1 bg-blue-600 hover:bg-blue-700 text-white"
-                onClick={handleAnswerNow}
-              >
-                <MessageCircle className="h-3.5 w-3.5" />
-                {t('widget.answerQuestions')}
-              </Button>
-            )}
             <Button
               variant="ghost"
               size="sm"

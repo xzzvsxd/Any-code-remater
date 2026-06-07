@@ -1290,6 +1290,24 @@ export const api = {
   },
 
   /**
+   * 回灌"向用户提问"MCP 工具的答案：唤醒被阻塞的工具 handler，使 CLI 在同一轮继续。
+   * @param requestId 后端 ask-user-question 事件携带的唯一请求 id
+   * @param text 已格式化好的用户回答文本
+   * @returns true 命中并已唤醒；false 未找到挂起请求（可能已超时/取消）
+   */
+  async answerUserQuestion(requestId: string, text: string): Promise<boolean> {
+    return invoke<boolean>("answer_user_question", { requestId, text });
+  },
+
+  /**
+   * 取消某会话下所有挂起的"向用户提问"（会话被 cancel 时兜底调用，防 CLI 永久挂起）。
+   * @returns 取消的挂起提问条数
+   */
+  async cancelUserQuestions(sessionId: string): Promise<number> {
+    return invoke<number>("cancel_user_questions", { sessionId });
+  },
+
+  /**
    * Continues an existing Claude Code conversation with streaming output
    * @param planMode - Enable Plan Mode for read-only research and planning
    * @param tabId - Unique identifier for the tab, used to filter global events

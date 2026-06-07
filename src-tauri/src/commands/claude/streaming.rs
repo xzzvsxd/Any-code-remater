@@ -65,7 +65,43 @@ pub async fn execute_claude_streaming(
     }
 
     let mapped_model = map_model_to_claude_alias(&model);
-    let args = build_streaming_execution_args(&execution_config, &mapped_model);
+    let mut args = build_streaming_execution_args(&execution_config, &mapped_model);
+
+    // 挂载阻塞式"向用户提问"MCP 工具：让 CLI 在需要提问时真正阻塞等待用户回答。
+    // session_hint 用 tab_id（spawn 时已知），前端据此路由问答 UI；缺省用 "default"。
+    // 失败不致命：仅退化为"无法真正阻塞提问"，不阻断会话启动。
+    let ask_bridge = app
+        .state::<crate::commands::claude::AskUserBridge>()
+        .inner()
+        .clone();
+    // setup 阶段会异步启动 bridge；如果用户在应用刚打开后立刻发起 streaming，
+    // 这里可能先于 setup 的启动任务执行。再确保一次，避免端口尚未就绪导致 MCP 挂载退化。
+    let _ = crate::commands::claude::ensure_bridge_started(app.clone(), ask_bridge.clone()).await;
+    let session_hint = tab_id.clone().unwrap_or_else(|| "default".to_string());
+    match crate::commands::claude::write_mcp_config(&ask_bridge, &session_hint) {
+        Ok((cfg_path, tool_names)) => {
+            args.push("--mcp-config".to_string());
+            args.push(cfg_path.to_string_lossy().to_string());
+            // 追加到 allowedTools，避免这些工具被权限拦截而无法调用。
+            for tool in &tool_names {
+                args.push("--allowedTools".to_string());
+                args.push(tool.clone());
+            }
+            // 引导模型用阻塞式 MCP 工具替代被 headless 短路的内置工具。
+            args.push("--append-system-prompt".to_string());
+            args.push(
+                "本运行环境下，内置的 AskUserQuestion 与 ExitPlanMode 工具无法真正等待用户，会被立即短路。\
+                 因此：① 需要向用户提问 / 让其在多个方案间选择 / 澄清需求时，必须调用 mcp__askuser__ask_user 工具；\
+                 ② 在 Plan（计划）模式下完成方案、准备开始执行前，必须调用 mcp__askuser__submit_plan 工具提交计划等待用户审批。\
+                 这两个工具会阻塞等待用户在界面上响应后再返回。不要使用内置的 AskUserQuestion / ExitPlanMode。"
+                    .to_string(),
+            );
+            log::info!("[streaming] ask-user MCP mounted: {:?} tools={:?}", cfg_path, tool_names);
+        }
+        Err(e) => {
+            log::warn!("[streaming] ask-user MCP not mounted: {}", e);
+        }
+    }
 
     // 复用 one-shot 的命令构建（stdin/stdout/stderr 均 piped）
     let mut cmd = super::cli_runner::create_streaming_command(

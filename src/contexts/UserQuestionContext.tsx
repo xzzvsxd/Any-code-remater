@@ -22,6 +22,7 @@ import {
   type ReactNode,
 } from "react";
 import { getQuestionIdContent, getQuestionKey, normalizeQuestions } from "@/lib/askUserQuestionUtils";
+import { api } from "@/lib/api";
 
 /**
  * 问题选项接口
@@ -51,6 +52,13 @@ export interface PendingQuestion {
   questionId: string;
   /** 时间戳 */
   timestamp: number;
+  /**
+   * 阻塞式 MCP 提问的桥接请求 id。存在时，提交答案走「回灌唤醒挂起的 MCP handler」
+   * （api.answerUserQuestion），CLI 在同一轮继续；不存在时退化为旧的「发新一轮消息」。
+   */
+  requestId?: string;
+  /** 关联会话 id（MCP 提问携带），用于必要时按会话取消。 */
+  sessionId?: string;
 }
 
 /**
@@ -67,6 +75,12 @@ interface UserQuestionContextValue {
   /** 触发问答对话框（当检测到 AskUserQuestion 工具调用时）；toolId 为工具调用唯一 ID，优先用作去重键。
    *  auto=true 表示「自动弹出」，同一问题仅允许自动弹一次；用户手动点击触发（auto=false/省略）则始终放行。 */
   triggerQuestionDialog: (questions: Question[], toolId?: string, auto?: boolean) => void;
+  /**
+   * 触发一次「阻塞式 MCP 提问」对话框：由后端 ask-user-question 事件驱动。
+   * 与 triggerQuestionDialog 不同，它必然弹出（每个 MCP 调用唯一、且 CLI 正阻塞等待），
+   * 并携带 requestId/sessionId 供提交时回灌唤醒。
+   */
+  triggerBridgeQuestion: (requestId: string, sessionId: string, questions: Question[]) => void;
   /** 提交答案 - 格式化并发送给 Claude */
   submitAnswers: (answers: UserAnswers) => boolean;
   /** 关闭问答对话框 */
@@ -162,6 +176,23 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
     setShowQuestionDialog(true);
   }, [answeredQuestionIds]);
 
+  // 触发阻塞式 MCP 提问：由后端 ask-user-question 事件驱动，必然弹出并携带 requestId。
+  // 不走 answeredQuestionIds / autoTriggered 去重——每个 MCP 调用唯一，且 CLI 正阻塞等待，必须弹。
+  const triggerBridgeQuestion = useCallback(
+    (requestId: string, sessionId: string, questions: Question[]) => {
+      const safeQuestions = normalizeQuestions(questions);
+      setPendingQuestion({
+        questions: safeQuestions,
+        questionId: `bridge_${requestId}`,
+        timestamp: Date.now(),
+        requestId,
+        sessionId,
+      });
+      setShowQuestionDialog(true);
+    },
+    [],
+  );
+
   // 设置发送消息回调
   const setSendMessageCallback = useCallback((callback: ((message: string) => void) | null) => {
     sendMessageCallbackRef.current = callback;
@@ -191,29 +222,57 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
     return lines.join("\n");
   }, []);
 
-  // 提交答案 - 格式化并发送给 Claude
+  // 提交答案 - 格式化后交给 Claude
+  // 两条路径：
+  //  ① 阻塞式 MCP 提问（pendingQuestion.requestId 存在）：调 api.answerUserQuestion 回灌唤醒
+  //     被阻塞的工具 handler，CLI 在【同一轮】拿到答案继续——这是真正的"等用户回答再继续"。
+  //  ② 旧路径（无 requestId，如历史会话里内置 AskUserQuestion 的 widget）：退化为发新一轮消息。
   const submitAnswers = useCallback((answers: UserAnswers) => {
     if (!pendingQuestion) return false;
 
+    const { questionId, questions, requestId } = pendingQuestion;
+    const message = formatAnswersAsMessage(answers, questions);
+
+    // 路径①：阻塞式 MCP 回灌
+    if (requestId) {
+      // 标记已回答 + 关闭对话框
+      setAnsweredQuestionIds(prev => {
+        const newSet = new Set(prev);
+        newSet.add(questionId);
+        return newSet;
+      });
+      setPendingQuestion(null);
+      setShowQuestionDialog(false);
+
+      // 回灌唤醒挂起的 handler。失败（已超时/取消）则降级为发新一轮，避免答案丢失。
+      api.answerUserQuestion(requestId, message)
+        .then((hit) => {
+          if (!hit && sendMessageCallbackRef.current) {
+            console.warn("[UserQuestion] bridge miss, fallback to new turn");
+            sendMessageCallbackRef.current(message);
+          }
+        })
+        .catch((e) => {
+          console.error("[UserQuestion] answerUserQuestion failed:", e);
+          if (sendMessageCallbackRef.current) sendMessageCallbackRef.current(message);
+        });
+
+      return true;
+    }
+
+    // 路径②：旧的"发新一轮"
     if (!sendMessageCallbackRef.current) {
       console.warn("[UserQuestion] Cannot submit answers: send callback is not available");
       setShowQuestionDialog(true);
       return false;
     }
-
     const sendMessage = sendMessageCallbackRef.current;
 
-    const { questionId, questions } = pendingQuestion;
-    const message = formatAnswersAsMessage(answers, questions);
-
-    // 标记为已回答（去重键已在 trigger 时确定，优先 toolId）
     setAnsweredQuestionIds(prev => {
       const newSet = new Set(prev);
       newSet.add(questionId);
       return newSet;
     });
-
-    // 关闭对话框
     setPendingQuestion(null);
     setShowQuestionDialog(false);
 
@@ -235,6 +294,7 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
     pendingQuestion,
     showQuestionDialog,
     triggerQuestionDialog,
+    triggerBridgeQuestion,
     submitAnswers,
     closeQuestionDialog,
     isQuestionAnswered,

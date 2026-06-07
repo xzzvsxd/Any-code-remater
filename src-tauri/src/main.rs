@@ -21,7 +21,9 @@ use commands::acemcp::{
     load_acemcp_config, preindex_project, save_acemcp_config, test_acemcp_availability,
 };
 use commands::claude::{
+    answer_user_question,
     cancel_claude_execution,
+    cancel_user_questions,
     check_claude_version,
     clear_custom_claude_path,
     continue_claude_code,
@@ -31,6 +33,8 @@ use commands::claude::{
     delete_sessions_batch,
     execute_claude_code,
     execute_claude_streaming,
+    ensure_bridge_started,
+    AskUserBridge,
     find_claude_md_files,
     get_available_tools,
     get_claude_capabilities,
@@ -298,6 +302,21 @@ fn main() {
             // Initialize Gemini process state
             app.manage(GeminiProcessState::default());
 
+            // 阻塞式"向用户提问"MCP 桥接：注册状态并启动本地 HTTP 服务。
+            // MCP server(ask-user-mcp-server.cjs) 的 handler 会 POST 到该服务并被长挂起，
+            // 直到前端用户提交答案，从而让 CLI 在工具调用处真正阻塞等待。
+            let ask_user_bridge = AskUserBridge::new();
+            app.manage(ask_user_bridge.clone());
+            {
+                let app_for_bridge = app.handle().clone();
+                let bridge_for_start = ask_user_bridge.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = ensure_bridge_started(app_for_bridge, bridge_for_start).await {
+                        log::error!("Failed to start ask-user bridge: {}", e);
+                    }
+                });
+            }
+
             // Initialize auto-compact manager for context management
             let auto_compact_manager =
                 Arc::new(commands::context_manager::AutoCompactManager::new());
@@ -407,6 +426,8 @@ fn main() {
             get_claude_session_output,
             send_stream_message,
             execute_claude_streaming,
+            answer_user_question,
+            cancel_user_questions,
             list_directory_contents,
             search_files,
             get_hooks_config,

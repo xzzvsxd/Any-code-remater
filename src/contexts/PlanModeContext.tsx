@@ -12,11 +12,19 @@ import {
   useRef,
   type ReactNode,
 } from "react";
+import { api } from "@/lib/api";
 
 export interface PendingPlanApproval {
   plan: string;
   planId: string;
   timestamp: number;
+  /**
+   * 阻塞式 MCP 提交（submit_plan）的桥接请求 id。存在时，审批结果经 api.answerUserQuestion
+   * 回灌唤醒被阻塞的工具调用，CLI 在同一轮据结果继续；不存在时退化为旧的"发新一轮提示"。
+   */
+  requestId?: string;
+  /** 关联会话 id（MCP 提交携带），用于必要时按会话取消。 */
+  sessionId?: string;
 }
 
 export type PlanStatus = 'pending' | 'approved' | 'rejected';
@@ -30,6 +38,10 @@ interface PlanModeContextValue {
   /** 触发计划审批对话框；toolId 优先用作去重键。
    *  auto=true 表示「自动弹出」，同一计划仅允许自动弹一次；用户手动点击触发（auto=false/省略）则始终放行。 */
   triggerPlanApproval: (plan: string, toolId?: string, auto?: boolean) => void;
+  /**
+   * 触发一次「阻塞式 MCP 计划审批」对话框：由后端 ask-user-plan 事件驱动，必然弹出并携带 requestId。
+   */
+  triggerBridgePlan: (requestId: string, sessionId: string, plan: string) => void;
   approvePlan: () => void;
   rejectPlan: () => void;
   closeApprovalDialog: () => void;
@@ -177,6 +189,22 @@ export function PlanModeProvider({
     setShowApprovalDialog(true);
   }, [approvedPlanIds, rejectedPlanIds]);
 
+  // 触发阻塞式 MCP 计划审批：由后端 ask-user-plan 事件驱动，必然弹出并携带 requestId。
+  // 不走去重——每个 submit_plan 调用唯一，且 CLI 正阻塞等待，必须弹。
+  const triggerBridgePlan = useCallback(
+    (requestId: string, sessionId: string, plan: string) => {
+      setPendingApproval({
+        plan,
+        planId: `bridge_${requestId}`,
+        timestamp: Date.now(),
+        requestId,
+        sessionId,
+      });
+      setShowApprovalDialog(true);
+    },
+    [],
+  );
+
   const setSendPromptCallback = useCallback((callback: ((prompt: string) => void) | null) => {
     sendPromptCallbackRef.current = callback;
   }, []);
@@ -184,7 +212,7 @@ export function PlanModeProvider({
   const approvePlan = useCallback(() => {
     if (!pendingApproval) return;
 
-    const { planId } = pendingApproval;
+    const { planId, requestId } = pendingApproval;
     setApprovedPlanIds(prev => {
       const next = new Set(prev);
       next.add(planId);
@@ -197,6 +225,23 @@ export function PlanModeProvider({
     setPendingApproval(null);
     setShowApprovalDialog(false);
 
+    // 路径①：阻塞式 MCP 提交——回灌"已批准"唤醒被阻塞的 submit_plan，CLI 在同一轮开始执行。
+    if (requestId) {
+      const text = "用户已【批准】该计划。请立即开始执行上述计划。";
+      api.answerUserQuestion(requestId, text)
+        .then((hit) => {
+          if (!hit && sendPromptCallbackRef.current) {
+            sendPromptCallbackRef.current("请开始执行上述计划。");
+          }
+        })
+        .catch((e) => {
+          console.error("[PlanMode] approve回灌失败:", e);
+          if (sendPromptCallbackRef.current) sendPromptCallbackRef.current("请开始执行上述计划。");
+        });
+      return;
+    }
+
+    // 路径②：旧的"发新一轮"
     if (sendPromptCallbackRef.current) {
       setTimeout(() => {
         sendPromptCallbackRef.current?.("请开始执行上述计划。");
@@ -207,7 +252,7 @@ export function PlanModeProvider({
   const rejectPlan = useCallback(() => {
     if (!pendingApproval) return;
 
-    const { planId } = pendingApproval;
+    const { planId, requestId } = pendingApproval;
     setRejectedPlanIds(prev => {
       const next = new Set(prev);
       next.add(planId);
@@ -216,6 +261,15 @@ export function PlanModeProvider({
 
     setPendingApproval(null);
     setShowApprovalDialog(false);
+
+    // 路径①：阻塞式 MCP 提交——回灌"已拒绝"唤醒被阻塞的 submit_plan，CLI 据此停下/调整，不会擅自执行。
+    if (requestId) {
+      const text = "用户【拒绝】了该计划。请不要执行，停下来等待用户进一步说明或修改计划后重新提交。";
+      api.answerUserQuestion(requestId, text).catch((e) => {
+        console.error("[PlanMode] reject回灌失败:", e);
+      });
+    }
+    // 旧路径：拒绝不发任何消息（维持原行为）。
   }, [pendingApproval]);
 
   const closeApprovalDialog = useCallback(() => {
@@ -229,6 +283,7 @@ export function PlanModeProvider({
     pendingApproval,
     showApprovalDialog,
     triggerPlanApproval,
+    triggerBridgePlan,
     approvePlan,
     rejectPlan,
     closeApprovalDialog,

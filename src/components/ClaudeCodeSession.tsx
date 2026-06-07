@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { SortableList, SortableDragHandle } from "@/components/ui/sortable-list";
 import { api, type Session, type Project } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { type UnlistenFn } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { FloatingPromptInput, type FloatingPromptInputRef, type ModelType } from "./FloatingPromptInput";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { RevertPromptPicker } from "./RevertPromptPicker";
@@ -231,6 +231,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     rejectPlan,
     closeApprovalDialog,
     setSendPromptCallback,
+    triggerBridgePlan,
   } = usePlanMode();
 
   // 🆕 UserQuestion Context - 用户问答交互
@@ -240,7 +241,65 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     submitAnswers,
     closeQuestionDialog,
     setSendMessageCallback,
+    triggerBridgeQuestion,
   } = useUserQuestion();
+
+  // 🆕 监听阻塞式"向用户提问"事件：后端 ask-user MCP 工具被调用时 emit，
+  // 携带 requestId/sessionId(=本会话 tabId 提示)/questions。命中本标签则弹问答 UI，
+  // 用户提交后经 api.answerUserQuestion 回灌唤醒被阻塞的 CLI 工具调用（同一轮继续）。
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    let disposed = false;
+    (async () => {
+      try {
+        unlisten = await listen<{ requestId: string; sessionId: string; questions: unknown }>(
+          "ask-user-question",
+          (event) => {
+            const { requestId, sessionId, questions } = event.payload || ({} as any);
+            // session_hint 由后端用 tabId 注入；只处理属于本标签的提问，避免多标签串台。
+            if (sessionId && tabIdProp && sessionId !== tabIdProp) return;
+            if (!requestId || !Array.isArray(questions)) return;
+            triggerBridgeQuestion(requestId, sessionId || "", questions as any);
+          }
+        );
+        if (disposed && unlisten) unlisten();
+      } catch (e) {
+        console.error("[ClaudeCodeSession] failed to listen ask-user-question:", e);
+      }
+    })();
+    return () => {
+      disposed = true;
+      if (unlisten) unlisten();
+    };
+  }, [tabIdProp, triggerBridgeQuestion]);
+
+  // 🆕 监听阻塞式"计划审批"事件：后端 submit_plan MCP 工具被调用时 emit ask-user-plan，
+  // 携带 requestId/sessionId(=tabId 提示)/plan。命中本标签则弹审批 UI，
+  // 用户批准/拒绝后经 api.answerUserQuestion 回灌唤醒被阻塞的 submit_plan（同一轮据结果继续）。
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    let disposed = false;
+    (async () => {
+      try {
+        unlisten = await listen<{ requestId: string; sessionId: string; plan: unknown }>(
+          "ask-user-plan",
+          (event) => {
+            const { requestId, sessionId, plan } = event.payload || ({} as any);
+            if (sessionId && tabIdProp && sessionId !== tabIdProp) return;
+            if (!requestId || typeof plan !== "string") return;
+            triggerBridgePlan(requestId, sessionId || "", plan);
+          }
+        );
+        if (disposed && unlisten) unlisten();
+      } catch (e) {
+        console.error("[ClaudeCodeSession] failed to listen ask-user-plan:", e);
+      }
+    })();
+    return () => {
+      disposed = true;
+      if (unlisten) unlisten();
+    };
+  }, [tabIdProp, triggerBridgePlan]);
 
   // 🆕 Execution Engine Config (Codex integration)
   // Load from localStorage to remember user's settings
@@ -862,6 +921,12 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
 
     try {
       setIsCancellingExecution(true);
+      // 🆕 先释放可能正阻塞的"向用户提问"MCP handler：否则 CLI 卡在工具调用处，取消信号难以即时生效。
+      // session_hint 启动时用的是 tabId，这里按 tabId 取消；同时关掉前端问答弹窗。
+      if (tabIdProp) {
+        try { await api.cancelUserQuestions(tabIdProp); } catch { /* 兜底，忽略 */ }
+      }
+      closeQuestionDialog();
       window.dispatchEvent(new CustomEvent('show-toast', {
         detail: {
           message: `正在取消当前 ${engineDisplayNames[executionEngineConfig.engine]} 会话，其他对话不会受影响`,
