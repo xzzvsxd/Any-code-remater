@@ -444,6 +444,18 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     }
   }, [expandedProjects, selectedProject, selectProject, loadProjectSessions]);
 
+  // 工作区理念：同时「打开(聚焦)」的只有一个会话。切换到另一个会话时，关闭上一个——
+  // 但若上一个正在运行(streaming)，则保留它继续后台跑，不关闭(关闭会触发 cleanup 杀进程)。
+  // 这样侧栏不会堆积一大片「已打开」的会话，"打开"≈"聚焦"。
+  const closePrevIfIdle = useCallback((keepTabId: string) => {
+    const prev = tabs.find((tb) => tb.isActive);
+    if (!prev || prev.id === keepTabId) return;
+    if (prev.state === 'streaming') return; // 运行中：保留，后台继续跑
+    // 延后关闭，确保已先切到目标 tab（activeTabId 已更新），避免 forceCloseTab 的自动切换分支干扰。
+    const prevId = prev.id;
+    setTimeout(() => { closeTab(prevId, true).catch(() => { /* ignore */ }); }, 0);
+  }, [tabs, closeTab]);
+
   const openSession = useCallback((session: Session) => {
     // 草稿条目：session.id 即承载它的 tab id。若该 tab 仍存在则切回去（输入框文本由
     // useDraftPersistence 按 draftId 从 localStorage 恢复）；若 tab 已关闭，则新建一个
@@ -452,8 +464,10 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
       const existing = tabs.find((tb) => tb.id === session.id);
       if (existing) {
         switchToTab(existing.id);
+        closePrevIfIdle(existing.id);
       } else {
         const newTabId = createNewTab(undefined, session.project_path);
+        closePrevIfIdle(newTabId);
         // 等输入框挂载后回填草稿正文
         const text = session.first_message || '';
         if (text) {
@@ -469,8 +483,9 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     }
     const result = openSessionInBackground(session);
     switchToTab(result.tabId);
+    closePrevIfIdle(result.tabId);
     navigateTo('claude-tab-manager');
-  }, [openSessionInBackground, switchToTab, navigateTo, tabs, createNewTab]);
+  }, [openSessionInBackground, switchToTab, navigateTo, tabs, createNewTab, closePrevIfIdle]);
 
   const onNewSession = useCallback(() => {
     createNewTab();
@@ -1147,9 +1162,6 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
                       const isDraft = (session as any).is_draft === true;
                       const isActive = activeSessionId === session.id;
                       const isRunning = runningSessionIds.has(session.id);
-                      // 已打开(在标签页中开着)但非聚焦/非运行：也给一层淡淡的区分背景，
-                      // 与「完全没打开的磁盘会话」区分开（用户要求保留区分，不要只剩聚焦/运行有遮罩）。
-                      const isOpen = openTabSessions.some((s) => s.id === session.id);
                       const customTitle = sessionTitles[session.id];
                       const preview = customTitle
                         ? truncateText(customTitle, 40)
@@ -1165,28 +1177,27 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
                             'group/sess relative flex items-center gap-1.5 pl-2 pr-1 py-1.5 rounded-md cursor-pointer transition-all duration-150 overflow-hidden',
                             // 布局重设计：状态只用「背景遮罩 + 左侧竖条」表达，去掉 ring 描边——
                             // 旧设计 ring-inset 会沿圆角描一圈，和左竖条重叠发丑。现在竖条是唯一的状态强调元素。
-                            // 优先级：草稿(红) > 聚焦(橙) > 运行中(白) > 已打开未聚焦(淡橙) > 未打开(无/hover)。
+                            // 优先级：草稿(红) > 聚焦(橙) > 运行中(白) > 普通(无/hover)。
+                            // 注：不再标「已打开未聚焦」——tabs 持久化会跨重启恢复旧标签，导致大量「数据上打开
+                            // 但用户主观没打开」的会话被误标橙，满屏橙色。只高亮真正有意义的三态。
                             isDraft
                               ? 'bg-red-500/10 text-foreground'
                               : isActive
                                 ? 'bg-gradient-to-r from-amber-500/[0.18] to-transparent text-foreground'
                                 : isRunning
                                   ? 'bg-white/[0.06] text-foreground'
-                                  : isOpen
-                                    ? 'bg-amber-500/[0.06] text-foreground/90 hover:bg-amber-500/[0.1]'
-                                    : 'text-muted-foreground/90 hover:text-foreground hover:bg-muted/40'
+                                  : 'text-muted-foreground/90 hover:text-foreground hover:bg-muted/40'
                           )}
                         >
                           {/* 左侧竖条：唯一的状态强调元素，贴左边缘、上下留白避免顶圆角。
-                              草稿红 > 聚焦橙 > 运行中琥珀 > 已打开淡橙，统一用竖条，不再与描边重叠。 */}
-                          {(isDraft || isActive || isRunning || isOpen) && (
+                              草稿红 > 聚焦橙 > 运行中琥珀，三态统一用竖条，不再与描边重叠。 */}
+                          {(isDraft || isActive || isRunning) && (
                             <span className={cn(
                               'absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full',
-                              // 竖条强度随状态递减：草稿红 > 聚焦橙 > 运行中琥珀60% > 已打开未聚焦琥珀35%
+                              // 竖条强度随状态递减：草稿红 > 聚焦橙 > 运行中琥珀60%
                               isDraft ? 'bg-red-500'
                                 : isActive ? 'bg-amber-500'
-                                  : isRunning ? 'bg-amber-500/60'
-                                    : 'bg-amber-500/35'
+                                  : 'bg-amber-500/60'
                             )} />
                           )}
                           {/* 拖拽手柄：仅「最近 N 个」视图可见可用（展开全部时退化纯列表、无拖拽） */}
