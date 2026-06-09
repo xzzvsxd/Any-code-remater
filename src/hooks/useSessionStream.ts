@@ -20,6 +20,7 @@ import type { CodexRateLimits } from '@/types/codex';
 import {
   AsyncQueue,
   converterRegistry,
+  normalizeStreamLines,
   type EngineType,
 } from '@/lib/stream';
 import { codexConverter } from '@/lib/codexConverter';
@@ -395,18 +396,39 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
     const notificationEngine = engine === 'codex' ? 'codex' : engine === 'gemini' ? 'gemini' : 'claude';
 
     // 创建消息队列（新架构核心）
-    messageQueueRef.current = new AsyncQueue<ClaudeStreamMessage>();
+    // 关键（修复 Linux/WebKit「前端卡死、后端仍在跑」）：listen 回调过去在回调体里
+    // 直接 `await processMessage(...)` 同步串行处理每条消息，而 Tauri 事件回调是串行投递的
+    // —— 前一条 await 未完，后续事件全堆在 event loop 里，后端「来一行 emit 一行」高频时
+    // 主线程被淹没，UI/输入完全无响应。现改为：回调只做「转换 + 入队」（同步、瞬时返回），
+    // 真正的处理放到下面独立的消费循环里跑，彻底解耦事件接收与消息处理/渲染。
+    const queue = new AsyncQueue<ClaudeStreamMessage>();
+    messageQueueRef.current = queue;
+
+    // 队列消费循环：串行 for await 取出消息处理（保序），但不再阻塞 listen 回调。
+    // 队列 done() 后循环自然结束；组件卸载时 isMountedRef 兜底跳出。
+    (async () => {
+      try {
+        for await (const message of queue) {
+          if (!isMountedRef.current) break;
+          await processMessage(message, (message as any).__rawPayload ?? '');
+        }
+      } catch (err) {
+        console.error('[useSessionStream] 消息消费循环异常:', err);
+      }
+    })();
 
     // 监听输出（使用新的 Converter 注册中心）
-    const outputUnlisten = await listen<string>(
+    // payload 协议：string（单行，旧格式）或 string[]（批量多行，后端节流合并）。
+    const outputUnlisten = await listen<string | string[]>(
       `${eventPrefix}-output:${sessionId}`,
-      async (event) => {
+      (event) => {
         try {
           if (!isMountedRef.current) return;
 
-          // 使用统一的转换器注册中心
-          const result = converterRegistry.convertLine(event.payload, engine);
-          if (result.message) {
+          // 规整为行数组后逐行转换入队：批量到达也只是循环 enqueue（同步、瞬时），不阻塞回调。
+          for (const rawLine of normalizeStreamLines(event.payload)) {
+            const result = converterRegistry.convertLine(rawLine, engine);
+            if (!result.message) continue;
             // Cache model display name from init messages (engine-specific)
             if (result.message.type === 'system' && result.message.subtype === 'init' && result.message.model) {
               if (engine === 'codex') {
@@ -417,10 +439,10 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
                 cacheModelFromInitMessage(result.message.model);
               }
             }
-            // 加入消息队列
-            messageQueueRef.current?.enqueue(result.message);
-            // 处理消息（含翻译）
-            await processMessage(result.message, event.payload);
+            // 把原始单行 payload 挂到消息上，供消费循环存 rawJsonl（避免再开一条并行队列）。
+            (result.message as any).__rawPayload = rawLine;
+            // 仅入队，瞬时返回，不在回调里做任何耗时处理 —— 这是不卡死的关键。
+            queue.enqueue(result.message);
           }
         } catch (err) {
           console.error('[useSessionStream] Failed to parse message:', err);

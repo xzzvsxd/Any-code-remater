@@ -2121,14 +2121,22 @@ pub fn build_wsl_termination_command(
     pid: u32,
     reason: &str,
 ) -> Result<std::process::Command, String> {
-    let Some(marker) = spec.marker.as_deref().filter(|marker| !marker.trim().is_empty()) else {
+    let Some(marker) = spec
+        .marker
+        .as_deref()
+        .filter(|marker| !marker.trim().is_empty())
+    else {
         return Err(format!(
             "refusing WSL termination without unique marker for host PID {} ({})",
             pid, reason
         ));
     };
 
-    let Some(distro) = spec.distro.as_deref().filter(|distro| !distro.trim().is_empty()) else {
+    let Some(distro) = spec
+        .distro
+        .as_deref()
+        .filter(|distro| !distro.trim().is_empty())
+    else {
         return Err(format!(
             "refusing WSL termination without resolved distro for host PID {} ({})",
             pid, reason
@@ -2259,7 +2267,8 @@ mod tests {
     #[test]
     fn test_wsl_command_spec_preserves_launch_identity() {
         let args = vec!["exec".to_string(), "--json".to_string(), "-".to_string()];
-        let spec = build_wsl_command_spec("codex", &args, Some("C:\\Projects\\demo"), Some("Ubuntu"));
+        let spec =
+            build_wsl_command_spec("codex", &args, Some("C:\\Projects\\demo"), Some("Ubuntu"));
 
         assert_eq!(spec.program, "codex");
         assert_eq!(spec.args, args);
@@ -2280,8 +2289,13 @@ mod tests {
     fn test_marked_wsl_command_spec_uses_unique_marker_for_termination() {
         let args = vec!["exec".to_string(), "--json".to_string(), "-".to_string()];
         let marker = "any-code-codex-test-marker";
-        let spec =
-            build_marked_wsl_command_spec(marker, "codex", &args, Some("C:\\Projects\\demo"), Some("Ubuntu"));
+        let spec = build_marked_wsl_command_spec(
+            marker,
+            "codex",
+            &args,
+            Some("C:\\Projects\\demo"),
+            Some("Ubuntu"),
+        );
 
         assert_eq!(spec.marker.as_deref(), Some(marker));
 
@@ -2316,7 +2330,8 @@ mod tests {
     #[test]
     fn test_unmarked_wsl_termination_is_refused() {
         let args = vec!["exec".to_string(), "--json".to_string(), "-".to_string()];
-        let spec = build_wsl_command_spec("codex", &args, Some("C:\\Projects\\demo"), Some("Ubuntu"));
+        let spec =
+            build_wsl_command_spec("codex", &args, Some("C:\\Projects\\demo"), Some("Ubuntu"));
 
         let err = build_wsl_termination_command(&spec, 12345, "test")
             .expect_err("unmarked WSL specs must not be terminable by command pattern");

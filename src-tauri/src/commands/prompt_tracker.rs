@@ -211,9 +211,7 @@ fn truncate_git_records(
     // Rewind semantics are "restore to the state before prompt #N":
     // delete prompt #N itself and every later prompt, so Git records must
     // follow the same < prompt_index rule as the conversation file.
-    records.retain(|record_index, _| {
-        keep_git_record_before_rewind(*record_index, prompt_index)
-    });
+    records.retain(|record_index, _| keep_git_record_before_rewind(*record_index, prompt_index));
 
     save_git_records(session_id, project_id, &records)?;
     log::info!(
@@ -457,7 +455,11 @@ fn duplicate_claude_session_blocking(session_id: &str, project_id: &str) -> Resu
     }
 
     let new_session_path = project_dir.join(format!("{}.jsonl", new_session_id));
-    let new_content = if out_lines.is_empty() { String::new() } else { out_lines.join("\n") + "\n" };
+    let new_content = if out_lines.is_empty() {
+        String::new()
+    } else {
+        out_lines.join("\n") + "\n"
+    };
     fs::write(&new_session_path, new_content).context("Failed to write duplicated session file")?;
 
     // 复制全部 git 记录
@@ -471,10 +473,17 @@ fn duplicate_claude_session_blocking(session_id: &str, project_id: &str) -> Resu
     let todos_dir = claude_dir.join("todos");
     let todo_src = todos_dir.join(format!("{}.json", session_id));
     if todo_src.exists() {
-        let _ = fs::copy(&todo_src, todos_dir.join(format!("{}.json", new_session_id)));
+        let _ = fs::copy(
+            &todo_src,
+            todos_dir.join(format!("{}.json", new_session_id)),
+        );
     }
 
-    log::info!("[Duplicate] Duplicated session {} -> {}", session_id, new_session_id);
+    log::info!(
+        "[Duplicate] Duplicated session {} -> {}",
+        session_id,
+        new_session_id
+    );
     Ok(new_session_id)
 }
 
@@ -525,8 +534,7 @@ fn branch_session_at_prompt_blocking(
     } else {
         out_lines.join("\n") + "\n"
     };
-    fs::write(&new_session_path, new_content)
-        .context("Failed to write branched session file")?;
+    fs::write(&new_session_path, new_content).context("Failed to write branched session file")?;
 
     // 复制并过滤 git 记录：只保留分叉点之前（index < prompt_index）的记录。
     let mut records = load_git_records(session_id, project_id).unwrap_or_default();
@@ -1469,8 +1477,8 @@ pub async fn get_prompt_list_with_capabilities(
     project_id: String,
 ) -> Result<Vec<PromptRecordWithCapabilities>, String> {
     tokio::task::spawn_blocking(move || {
-        let execution_config =
-            load_execution_config().map_err(|e| format!("Failed to load execution config: {}", e))?;
+        let execution_config = load_execution_config()
+            .map_err(|e| format!("Failed to load execution config: {}", e))?;
         let git_operations_disabled = execution_config.disable_rewind_git_operations;
 
         let prompts = extract_prompts_from_jsonl(&session_id, &project_id)
@@ -1516,8 +1524,8 @@ pub async fn check_rewind_capabilities(
     );
 
     tokio::task::spawn_blocking(move || {
-        let execution_config =
-            load_execution_config().map_err(|e| format!("Failed to load execution config: {}", e))?;
+        let execution_config = load_execution_config()
+            .map_err(|e| format!("Failed to load execution config: {}", e))?;
         let git_operations_disabled = execution_config.disable_rewind_git_operations;
 
         let prompts = extract_prompts_from_jsonl(&session_id, &project_id)

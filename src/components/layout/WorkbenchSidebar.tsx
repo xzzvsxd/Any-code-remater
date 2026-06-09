@@ -407,6 +407,29 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     }, 4000);
     return () => window.clearInterval(timer);
   }, [runningSessionIds]);
+
+  // 运行结束收尾刷新：检测「运行中数量由非空→空」的边沿（会话刚跑完）。
+  // 此刻 runningSessionIds 清空、强制置顶取消，但 diskSessions 仍是运行前旧快照
+  // （last_message_timestamp 未更新），会话会回落到旧时间位置；而 Linux 上 focus 刷新不可靠，
+  // 可能迟迟不触发，表现为「运行完就排到后面、列表里找不到」。这里在跑完后主动补刷新，
+  // 用两段延迟覆盖磁盘落盘延迟（1.5s 抢先 + 5s 兜底），拉到最新时间戳后会话即回到时间倒序最前。
+  const prevRunningSizeRef = useRef(0);
+  useEffect(() => {
+    const prev = prevRunningSizeRef.current;
+    prevRunningSizeRef.current = runningSessionIds.size;
+    if (!(prev > 0 && runningSessionIds.size === 0)) return;
+    const refreshExpanded = () => {
+      if (document.hidden) return;
+      const { expanded, projects: projs, load } = focusRefreshRef.current;
+      projs.forEach((p) => {
+        if (expanded.has(p.id)) load(p, { silent: true }).catch(() => { /* ignore */ });
+      });
+    };
+    const t1 = window.setTimeout(refreshExpanded, 1500);
+    const t2 = window.setTimeout(refreshExpanded, 5000);
+    return () => { window.clearTimeout(t1); window.clearTimeout(t2); };
+  }, [runningSessionIds]);
+
   const onDragStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     draggingRef.current = true;

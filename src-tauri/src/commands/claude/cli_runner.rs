@@ -294,11 +294,8 @@ pub async fn execute_claude_code(
     // 挂载阻塞式"向用户提问 / 计划审批"MCP 工具（真实会话走 one-shot 路径，必须挂在这里才生效）。
     // session_hint 用 tab_id 供前端路由；缺省 "default"。失败不致命。
     args.extend(
-        crate::commands::claude::build_ask_user_args(
-            &app,
-            tab_id.as_deref().unwrap_or("default"),
-        )
-        .await,
+        crate::commands::claude::build_ask_user_args(&app, tab_id.as_deref().unwrap_or("default"))
+            .await,
     );
 
     // Create command
@@ -370,11 +367,8 @@ pub async fn continue_claude_code(
 
     // 挂载阻塞式提问/审批 MCP 工具（one-shot 路径必须挂在这里）。
     args.extend(
-        crate::commands::claude::build_ask_user_args(
-            &app,
-            tab_id.as_deref().unwrap_or("default"),
-        )
-        .await,
+        crate::commands::claude::build_ask_user_args(&app, tab_id.as_deref().unwrap_or("default"))
+            .await,
     );
 
     // Create command
@@ -460,11 +454,8 @@ pub async fn resume_claude_code(
 
     // 挂载阻塞式提问/审批 MCP 工具（one-shot 路径必须挂在这里）。
     args.extend(
-        crate::commands::claude::build_ask_user_args(
-            &app,
-            tab_id.as_deref().unwrap_or("default"),
-        )
-        .await,
+        crate::commands::claude::build_ask_user_args(&app, tab_id.as_deref().unwrap_or("default"))
+            .await,
     );
 
     log::info!("Resume command: claude {}", args.join(" "));
@@ -1076,6 +1067,12 @@ async fn spawn_claude_process(
     #[cfg(windows)]
     let job_object_holder_clone = job_object_holder.clone();
     let stdout_task = tokio::spawn(async move {
+        // emit 批处理器：普通输出行攒批，降低 streaming 期间 IPC 频率（Linux 卡死优化）。
+        let mut batcher = crate::commands::stream_batcher::EmitBatcher::new(
+            app_handle.clone(),
+            "claude-output",
+            tab_id_for_stdout.clone(),
+        );
         let mut lines = stdout_reader.lines();
         while let Ok(Some(line)) = lines.next_line().await {
             // Use trace level to avoid flooding logs in debug mode
@@ -1238,17 +1235,34 @@ async fn spawn_claude_process(
                 let _ = registry_clone.append_live_output(run_id, &line);
             }
 
-            // Emit the line to the frontend with session isolation if we have session ID
-            if let Some(ref session_id) = *session_id_holder_clone.lock().unwrap() {
-                let _ = app_handle.emit(&format!("claude-output:{}", session_id), &line);
+            // emit 输出：普通行攒批降低 IPC 频率；init/result 是前端冷启动/结束依赖的控制消息，即时送达。
+            let sess_event = session_id_holder_clone
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|sid| format!("claude-output:{}", sid));
+            let is_control = serde_json::from_str::<serde_json::Value>(&line)
+                .ok()
+                .map(|v| {
+                    let t = v["type"].as_str().unwrap_or("");
+                    t == "result" || (t == "system" && v["subtype"] == "init")
+                })
+                .unwrap_or(false);
+            if is_control {
+                batcher.flush_with(sess_event.as_deref(), &line);
+            } else {
+                batcher.push(sess_event.as_deref(), line.clone());
             }
-            // 🔒 CRITICAL FIX: 全局事件包含 tab_id，用于前端过滤新建会话的消息
-            let global_payload = serde_json::json!({
-                "tab_id": tab_id_for_stdout,
-                "payload": &line
-            });
-            let _ = app_handle.emit("claude-output", &global_payload);
         }
+        // 循环结束：排空残余缓冲。
+        batcher.flush(
+            session_id_holder_clone
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|sid| format!("claude-output:{}", sid))
+                .as_deref(),
+        );
     });
 
     let app_handle_stderr = app.clone();

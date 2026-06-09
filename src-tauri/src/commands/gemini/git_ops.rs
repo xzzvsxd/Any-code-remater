@@ -369,8 +369,8 @@ pub async fn get_gemini_prompt_list_with_capabilities(
     project_path: String,
 ) -> Result<Vec<PromptRecordWithCapabilities>, String> {
     tokio::task::spawn_blocking(move || {
-        let execution_config =
-            load_execution_config().map_err(|e| format!("Failed to load execution config: {}", e))?;
+        let execution_config = load_execution_config()
+            .map_err(|e| format!("Failed to load execution config: {}", e))?;
         let git_operations_disabled = execution_config.disable_rewind_git_operations;
         let (prompts, git_records) =
             extract_gemini_prompts_with_records(&session_id, &project_path)?;
@@ -396,7 +396,12 @@ pub async fn get_gemini_prompt_list_with_capabilities(
             .collect())
     })
     .await
-    .map_err(|e| format!("get_gemini_prompt_list_with_capabilities task failed: {}", e))?
+    .map_err(|e| {
+        format!(
+            "get_gemini_prompt_list_with_capabilities task failed: {}",
+            e
+        )
+    })?
 }
 
 fn build_prompt_commit_message(
@@ -434,8 +439,8 @@ pub async fn check_gemini_rewind_capabilities(
     );
 
     tokio::task::spawn_blocking(move || {
-        let execution_config =
-            load_execution_config().map_err(|e| format!("Failed to load execution config: {}", e))?;
+        let execution_config = load_execution_config()
+            .map_err(|e| format!("Failed to load execution config: {}", e))?;
         let git_operations_disabled = execution_config.disable_rewind_git_operations;
         let (prompts, git_records) =
             extract_gemini_prompts_with_records(&session_id, &project_path)?;
@@ -825,11 +830,16 @@ fn duplicate_gemini_blocking(session_id: &str, project_path: &str) -> Result<Str
         session_data["sessionId"] = serde_json::Value::String(new_session_id.clone());
     }
 
-    let prefix = if new_session_id.len() >= 8 { &new_session_id[..8] } else { &new_session_id };
+    let prefix = if new_session_id.len() >= 8 {
+        &new_session_id[..8]
+    } else {
+        &new_session_id
+    };
     let new_file = sessions_dir.join(format!("copy-{}.json", prefix));
     let new_content = serde_json::to_string_pretty(&session_data)
         .map_err(|e| format!("Failed to serialize duplicated session: {}", e))?;
-    fs::write(&new_file, new_content).map_err(|e| format!("Failed to write duplicated session: {}", e))?;
+    fs::write(&new_file, new_content)
+        .map_err(|e| format!("Failed to write duplicated session: {}", e))?;
 
     let mut records = load_gemini_git_records(session_id).unwrap_or_default();
     records.session_id = new_session_id.clone();

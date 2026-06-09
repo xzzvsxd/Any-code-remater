@@ -26,6 +26,7 @@ import { cacheCodexModelFromStream, cacheModelFromInitMessage } from '@/lib/mode
 import { notifyAiExecutionComplete } from '@/lib/aiCompletionNotification';
 import { resolveInitialCancelSessionId } from '@/lib/cancelChannel';
 import { persistUiOnlySessionMessage } from '@/lib/uiOnlySessionEvents';
+import { normalizeStreamLines } from '@/lib/stream';
 
 // ============================================================================
 // Type Definitions
@@ -95,6 +96,8 @@ interface UsePromptExecutionConfig {
 
 interface UsePromptExecutionReturn {
   handleSendPrompt: (prompt: string, model: ModelType, maxThinkingTokens?: number) => Promise<void>;
+  /** 本 hook 内部生成、真正传给后端并用于所有事件路由的 tabId（ask-user/plan 事件按此过滤）。 */
+  runTabId: string;
 }
 
 type ClaudeGlobalEventPayload<T> = { tab_id?: string | null; payload: T } | T;
@@ -553,7 +556,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           };
 
           // Helper function to process Codex output
-          const processCodexOutput = async (payload: string) => {
+          const processCodexOutputLine = async (payload: string) => {
             if (!isMountedRef.current) return;
 
             // 🔧 FIX: Deduplicate messages
@@ -642,6 +645,14 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             }
           };
 
+          // 批量协议适配：后端可能把多行 JSONL 合并为 string[] 一次 emit。
+          // 拆行后逐行交给 processCodexOutputLine，调用点无需感知协议差异。
+          const processCodexOutput = async (payload: string | string[]) => {
+            for (const line of normalizeStreamLines(payload)) {
+              await processCodexOutputLine(line);
+            }
+          };
+
           // Helper function to process Codex completion
           const processCodexComplete = async () => {
             const completedSessionId = currentCodexSessionId || codexPendingPromptRecord?.sessionId || null;
@@ -719,7 +730,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
           // Helper function to attach session-specific listeners
           const attachCodexSessionListeners = async (sessionId: string) => {
-            const specificOutputUnlisten = await listen<string>(`codex-output:${sessionId}`, (evt) => {
+            const specificOutputUnlisten = await listen<string | string[]>(`codex-output:${sessionId}`, (evt) => {
               processCodexOutput(evt.payload);
             });
 
@@ -760,7 +771,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           // Listen for Codex JSONL output (global fallback) - REMOVED to prevent cross-session data leakage
           // 问题: 多个标签页都监听全局 'codex-output' 事件,导致消息被多个会话接收
           // 解决: 仅在会话ID未知的早期阶段处理全局事件,且必须验证会话归属
-          const codexOutputUnlisten = await listen<EngineGlobalEventPayload<string>>('codex-output', (evt) => {
+          const codexOutputUnlisten = await listen<EngineGlobalEventPayload<string | string[]>>('codex-output', (evt) => {
             // 🔧 CRITICAL FIX: 只在尚未收到会话ID时处理全局事件
             if (!hasActiveSessionRef.current) return;
             const { tabId: eventTabId, payload } = normalizeEngineGlobalPayload(evt.payload);
@@ -939,7 +950,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           };
 
           // Helper function to process Gemini output
-          const processGeminiOutput = (payload: string) => {
+          const processGeminiOutputLine = (payload: string) => {
             if (!isMountedRef.current) return;
 
             // 🔧 FIX: Deduplicate messages
@@ -1074,6 +1085,13 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             }
           };
 
+          // 批量协议适配：后端可能把多行合并为 string[] 一次 emit。拆行后逐行处理。
+          const processGeminiOutput = (payload: string | string[]) => {
+            for (const line of normalizeStreamLines(payload)) {
+              processGeminiOutputLine(line);
+            }
+          };
+
           // Helper function to process Gemini completion
           const processGeminiComplete = async () => {
             const completedSessionId = currentGeminiSessionId || geminiPendingPromptRecord?.sessionId || null;
@@ -1138,7 +1156,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
           // Helper function to attach session-specific listeners
           const attachGeminiSessionListeners = async (sessionId: string) => {
-            const specificOutputUnlisten = await listen<string>(`gemini-output:${sessionId}`, (evt) => {
+            const specificOutputUnlisten = await listen<string | string[]>(`gemini-output:${sessionId}`, (evt) => {
               processGeminiOutput(evt.payload);
             });
 
@@ -1228,7 +1246,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
           // 🔧 FIX: 移除全局监听器,避免跨会话串流
           // Listen for Gemini output (global fallback) - FIXED to prevent cross-session data leakage
-          const geminiOutputUnlisten = await listen<EngineGlobalEventPayload<string>>('gemini-output', (evt) => {
+          const geminiOutputUnlisten = await listen<EngineGlobalEventPayload<string | string[]>>('gemini-output', (evt) => {
             // 🔧 CRITICAL FIX: 只在尚未收到会话ID时处理全局事件
             if (!hasActiveSessionRef.current) return;
             const { tabId: eventTabId, payload } = normalizeEngineGlobalPayload(evt.payload);
@@ -1326,56 +1344,60 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           // 🔧 FIX: Mark that we've attached session-specific listeners
           hasAttachedSessionListeners = true;
 
-          const specificOutputUnlisten = await listen<string>(`claude-output:${sid}`, async (evt) => {
-            handleStreamMessage(evt.payload, userInputTranslation || undefined);
+          const specificOutputUnlisten = await listen<string | string[]>(`claude-output:${sid}`, async (evt) => {
+            // 批量协议适配：payload 可能是 string（单行）或 string[]（后端节流合并多行）。
+            // 逐行处理，保留原有「流式消息 + user 消息记录」单行逻辑不变。
+            for (const line of normalizeStreamLines(evt.payload)) {
+              handleStreamMessage(line, userInputTranslation || undefined);
 
-            // Handle user message recording in session-specific listener
-            try {
-              const msg = JSON.parse(evt.payload) as ClaudeStreamMessage;
+              // Handle user message recording in session-specific listener
+              try {
+                const msg = JSON.parse(line) as ClaudeStreamMessage;
 
-              // 在收到第一条 user 消息后记录
-              if (msg.type === 'user' && !hasRecordedPrompt && isUserInitiated) {
-                // 检查这是否是我们发送的那条消息（通过内容匹配）
-                let isOurMessage = false;
-                const msgContent: any = msg.message?.content;
+                // 在收到第一条 user 消息后记录
+                if (msg.type === 'user' && !hasRecordedPrompt && isUserInitiated) {
+                  // 检查这是否是我们发送的那条消息（通过内容匹配）
+                  let isOurMessage = false;
+                  const msgContent: any = msg.message?.content;
 
-                if (msgContent) {
-                  if (typeof msgContent === 'string') {
-                    const contentStr = msgContent as string;
-                    isOurMessage = contentStr.includes(prompt) || prompt.includes(contentStr);
-                  } else if (Array.isArray(msgContent)) {
-                    const textContent = msgContent
-                      .filter((item: any) => item.type === 'text')
-                      .map((item: any) => item.text)
-                      .join('');
-                    isOurMessage = textContent.includes(prompt) || prompt.includes(textContent);
+                  if (msgContent) {
+                    if (typeof msgContent === 'string') {
+                      const contentStr = msgContent as string;
+                      isOurMessage = contentStr.includes(prompt) || prompt.includes(contentStr);
+                    } else if (Array.isArray(msgContent)) {
+                      const textContent = msgContent
+                        .filter((item: any) => item.type === 'text')
+                        .map((item: any) => item.text)
+                        .join('');
+                      isOurMessage = textContent.includes(prompt) || prompt.includes(textContent);
+                    }
+                  }
+
+                  if (isOurMessage) {
+                    const projectId = extractedSessionInfo?.projectId || projectPath.replace(/[^a-zA-Z0-9]/g, '-');
+                    // 🔧 FIX: Store Promise to allow processComplete to wait for it
+                    pendingClaudePromptRecordingPromise = (async () => {
+                      try {
+                        // 添加延迟以确保文件写入完成
+                        await new Promise(resolve => setTimeout(resolve, 100));
+
+                        recordedPromptIndex = await api.recordPromptSent(
+                          sid,
+                          projectId,
+                          projectPath,
+                          prompt
+                        );
+                        hasRecordedPrompt = true;
+
+                      } catch (err) {
+                        console.error('[Prompt Revert] [ERROR] Failed to record prompt:', err);
+                      }
+                    })();
                   }
                 }
-
-                if (isOurMessage) {
-                  const projectId = extractedSessionInfo?.projectId || projectPath.replace(/[^a-zA-Z0-9]/g, '-');
-                  // 🔧 FIX: Store Promise to allow processComplete to wait for it
-                  pendingClaudePromptRecordingPromise = (async () => {
-                    try {
-                      // 添加延迟以确保文件写入完成
-                      await new Promise(resolve => setTimeout(resolve, 100));
-
-                      recordedPromptIndex = await api.recordPromptSent(
-                        sid,
-                        projectId,
-                        projectPath,
-                        prompt
-                      );
-                      hasRecordedPrompt = true;
-
-                    } catch (err) {
-                      console.error('[Prompt Revert] [ERROR] Failed to record prompt:', err);
-                    }
-                  })();
-                }
+              } catch {
+                /* ignore parse errors */
               }
-            } catch {
-              /* ignore parse errors */
             }
           });
 
@@ -1497,12 +1519,12 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         // Generic Listeners (Catch-all) - FIXED to prevent cross-session data leakage
         // ====================================================================
         // 🔒 CRITICAL FIX: 全局事件现在格式为 { tab_id: string | null, payload: string }
-        const genericOutputUnlisten = await listen<ClaudeGlobalEventPayload<string>>('claude-output', async (event) => {
+        const genericOutputUnlisten = await listen<ClaudeGlobalEventPayload<string | string[]>>('claude-output', async (event) => {
           // 🔧 CRITICAL FIX: 只在尚未收到会话ID时处理全局事件
           if (!hasActiveSessionRef.current) return;
 
           // 🔒 CRITICAL FIX: 使用 tab_id 过滤消息，这是最可靠的会话隔离方式
-          const { tabId: eventTabId, payload: messagePayload } = normalizeClaudeGlobalPayload(event.payload);
+          const { tabId: eventTabId, payload: rawPayload } = normalizeClaudeGlobalPayload(event.payload);
 
           // 当前 run 发起后，global 事件必须带匹配的 tab_id；缺失 tab_id 的旧式广播不再进入新会话。
           if (!isCurrentRunEventTab(eventTabId)) {
@@ -1510,6 +1532,9 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             return;
           }
 
+          // 批量协议适配：payload 可能是 string（单行）或 string[]（后端节流合并多行），
+          // 逐行执行原有的早期 init/session 隔离逻辑。
+          for (const messagePayload of normalizeStreamLines(rawPayload)) {
           // 🔒 CRITICAL FIX: Session Isolation - 严格隔离全局事件处理
           // 问题: 多个标签页都监听全局 'claude-output',导致消息被多个会话接收
           // 解决: 只在会话ID未知的早期阶段处理全局事件
@@ -1522,10 +1547,10 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
                 } else {
                    // ⚠️ 忽略所有其他消息 - 应该由会话特定监听器处理
 
-                   return;
+                   continue;
                 }
              } catch {
-                return;
+                continue;
              }
           }
 
@@ -1538,7 +1563,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             // 则只处理匹配的消息（解决同一项目下多个会话的串扰问题）
             if (msg.session_id && claudeSessionId && msg.session_id !== claudeSessionId) {
               // 消息来自不同会话，忽略
-              return;
+              continue;
             }
 
             // 🔒 CRITICAL FIX #2: 使用 cwd 字段作为备选验证（不同项目的情况）
@@ -1554,7 +1579,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
               if (msgCwd !== currentPath) {
                 // 消息来自不同项目，忽略
-                return;
+                continue;
               }
             }
 
@@ -1654,6 +1679,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           } catch {
             /* ignore parse errors */
           }
+          } // for messagePayload of lines
         });
 
         // 🔒 CRITICAL FIX: 全局事件现在格式为 { tab_id: string | null, payload: string }
@@ -1963,6 +1989,9 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
   // ============================================================================
 
   return {
-    handleSendPrompt
+    handleSendPrompt,
+    // 暴露本 hook 内部生成、真正传给后端并用于所有事件路由的 tabId。
+    // ask-user / plan 事件按此 id 路由，监听方必须用它过滤（而非外层 tabIdProp，二者不同）。
+    runTabId: tabIdRef.current,
   };
 }

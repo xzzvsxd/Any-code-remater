@@ -76,9 +76,7 @@ fn save_store(store: &DraftSessionStore) -> Result<(), String> {
 
 /// 列出草稿。传 project_id 时只返回该项目的草稿；不传(None/空)返回全部。
 #[tauri::command]
-pub async fn list_draft_sessions(
-    project_id: Option<String>,
-) -> Result<Vec<DraftSession>, String> {
+pub async fn list_draft_sessions(project_id: Option<String>) -> Result<Vec<DraftSession>, String> {
     let store = load_store();
     let mut drafts: Vec<DraftSession> = match project_id {
         Some(pid) if !pid.is_empty() => store

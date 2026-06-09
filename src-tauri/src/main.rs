@@ -31,10 +31,9 @@ use commands::claude::{
     delete_project_permanently,
     delete_session,
     delete_sessions_batch,
+    ensure_bridge_started,
     execute_claude_code,
     execute_claude_streaming,
-    ensure_bridge_started,
-    AskUserBridge,
     find_claude_md_files,
     get_available_tools,
     get_claude_capabilities,
@@ -76,6 +75,7 @@ use commands::claude::{
     update_thinking_mode,
     validate_hook_command,
     validate_permission_config,
+    AskUserBridge,
     ClaudeProcessState,
 };
 use commands::mcp::{
@@ -112,6 +112,7 @@ use commands::mcp::{
 use commands::storage::{init_database, AgentDb};
 
 use commands::clipboard::{read_from_clipboard, save_clipboard_image, write_to_clipboard};
+use commands::draft_sessions::{delete_draft_session, list_draft_sessions, save_draft_session};
 use commands::prompt_tracker::{
     branch_session_at_prompt, check_rewind_capabilities, duplicate_claude_session, get_prompt_list,
     get_prompt_list_with_capabilities, get_unified_prompt_list, mark_prompt_completed,
@@ -125,9 +126,6 @@ use commands::provider::{
 };
 use commands::session_meta::{
     get_session_meta, set_project_order, set_session_order, set_session_title,
-};
-use commands::draft_sessions::{
-    delete_draft_session, list_draft_sessions, save_draft_session,
 };
 use commands::session_search::search_sessions_content;
 use commands::simple_git::{check_and_init_git, check_reset_safety, precise_revert_code};

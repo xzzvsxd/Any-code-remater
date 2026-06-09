@@ -12,11 +12,11 @@
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+use super::cli_runner::{map_model_to_claude_alias, ClaudeProcessState};
+use super::config::get_claude_execution_config;
 use crate::commands::permission_config::{
     build_streaming_execution_args, ClaudeExecutionConfig, ClaudePermissionConfig,
 };
-use super::cli_runner::{map_model_to_claude_alias, ClaudeProcessState};
-use super::config::get_claude_execution_config;
 
 /// 构造 stream-json user 消息包络行（含换行）
 fn build_user_envelope(text: &str) -> Result<String, String> {
@@ -69,11 +69,8 @@ pub async fn execute_claude_streaming(
 
     // 挂载阻塞式提问/审批 MCP 工具（与 one-shot 路径共用同一 helper，逻辑单一来源）。
     args.extend(
-        crate::commands::claude::build_ask_user_args(
-            &app,
-            tab_id.as_deref().unwrap_or("default"),
-        )
-        .await,
+        crate::commands::claude::build_ask_user_args(&app, tab_id.as_deref().unwrap_or("default"))
+            .await,
     );
 
     // 复用 one-shot 的命令构建（stdin/stdout/stderr 均 piped）
@@ -91,9 +88,18 @@ pub async fn execute_claude_streaming(
     let pid = child.id().unwrap_or(0);
     log::info!("[streaming] Spawned persistent Claude PID={}", pid);
 
-    let mut stdin = child.stdin.take().ok_or("[streaming] Failed to get stdin")?;
-    let stdout = child.stdout.take().ok_or("[streaming] Failed to get stdout")?;
-    let stderr = child.stderr.take().ok_or("[streaming] Failed to get stderr")?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or("[streaming] Failed to get stdin")?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("[streaming] Failed to get stdout")?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or("[streaming] Failed to get stderr")?;
 
     // 立即写入首条消息（不关闭 stdin）
     let first_line = build_user_envelope(&prompt)?;
@@ -133,6 +139,12 @@ pub async fn execute_claude_streaming(
     let tab_out = tab_id.clone();
 
     let stdout_task = tokio::spawn(async move {
+        // emit 批处理器：普通输出行攒批，降低 streaming 期间 IPC 频率（Linux 卡死优化）。
+        let mut batcher = crate::commands::stream_batcher::EmitBatcher::new(
+            app_out.clone(),
+            "claude-output",
+            tab_out.clone(),
+        );
         let mut lines = stdout_reader.lines();
         while let Ok(Some(line)) = lines.next_line().await {
             log::trace!("[streaming] stdout: {}", line);
@@ -192,28 +204,37 @@ pub async fn execute_claude_streaming(
                     let _ = reg_out.append_live_output(run_id, &line);
                 }
 
-                // emit 输出（与 one-shot 同样的事件，前端无需区分）
-                if let Some(ref sid) = *sid_out.lock().unwrap() {
-                    let _ = app_out.emit(&format!("claude-output:{}", sid), &line);
-                }
-                let _ = app_out.emit(
-                    "claude-output",
-                    &serde_json::json!({ "tab_id": tab_out, "payload": &line }),
-                );
-
-                // result = 单轮结束：emit complete（进程仍存活，可继续插话）
+                // emit 输出：普通行进批处理器攒批，降低 IPC 频率（修复 Linux 前端卡死）。
+                // result 行是「单轮结束」控制消息，前端据此结束 streaming，必须即时送达。
+                let sess_event = sid_out
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .map(|sid| format!("claude-output:{}", sid));
                 if mtype == "result" {
+                    // 先排空缓冲再立即单独 emit 这条 result，保证零延迟、不被攒批拖住。
+                    batcher.flush_with(sess_event.as_deref(), &line);
                     if let Some(ref sid) = *sid_out.lock().unwrap() {
-                        let _ = app_out
-                            .emit(&format!("claude-complete:{}", sid), true);
+                        let _ = app_out.emit(&format!("claude-complete:{}", sid), true);
                     }
                     let _ = app_out.emit(
                         "claude-complete",
                         &serde_json::json!({ "tab_id": tab_out, "payload": true }),
                     );
+                } else {
+                    batcher.push(sess_event.as_deref(), line.clone());
                 }
             }
         }
+        // 循环结束（进程退出）：排空残余缓冲，避免最后几行丢失。
+        batcher.flush(
+            sid_out
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|sid| format!("claude-output:{}", sid))
+                .as_deref(),
+        );
         log::info!("[streaming] stdout closed (process ending)");
     });
 

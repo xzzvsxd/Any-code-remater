@@ -7,6 +7,9 @@
 // 异步队列
 export { AsyncQueue } from './AsyncQueue';
 
+// 流式 payload 协议适配（单行 string / 批量 string[]）
+export { normalizeStreamLines } from './streamPayload';
+
 // 消息转换器
 export * from './converters';
 

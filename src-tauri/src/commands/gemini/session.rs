@@ -592,8 +592,9 @@ pub async fn cancel_gemini(
 /// 这样既支持斜杠命令，又避免操作系统命令行长度限制（Windows ~8KB, Linux/macOS ~128KB-2MB）
 async fn execute_gemini_process(
     mut cmd: Command,
-    #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
-    wsl_spec: Option<wsl_utils::WslCommandSpec>,
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables))] wsl_spec: Option<
+        wsl_utils::WslCommandSpec,
+    >,
     project_path: String,
     model: String,
     prompt: Option<String>,
@@ -774,6 +775,13 @@ async fn execute_gemini_process(
         // Track tool calls to enrich tool_result payloads (e.g., read_file returning empty output)
         let mut tool_calls: std::collections::HashMap<String, (String, serde_json::Value)> =
             std::collections::HashMap::new();
+        // emit 批处理器：普通输出行攒批，降低 streaming 期间 IPC 频率（Linux 卡死优化）。
+        let gemini_sess_event = format!("gemini-output:{}", session_id_stdout);
+        let mut batcher = crate::commands::stream_batcher::EmitBatcher::new(
+            app_handle_stdout.clone(),
+            "gemini-output",
+            tab_id_for_stdout.clone(),
+        );
 
         while let Ok(Some(line)) = reader.next_line().await {
             if line.trim().is_empty() {
@@ -971,24 +979,25 @@ async fn execute_gemini_process(
 
             let unified_line = serde_json::to_string(&unified_message).unwrap_or(line.clone());
 
-            // Emit to session-specific channel
-            if let Err(e) = app_handle_stdout.emit(
-                &format!("gemini-output:{}", session_id_stdout),
-                &unified_line,
-            ) {
-                log::error!("Failed to emit gemini-output (session): {}", e);
-            }
-
-            // Also emit to global channel for early-session compatibility, scoped by tab_id.
-            let global_payload = serde_json::json!({
-                "tab_id": tab_id_for_stdout,
-                "payload": unified_line,
-            });
-            if let Err(e) = app_handle_stdout.emit("gemini-output", &global_payload) {
-                log::error!("Failed to emit gemini-output (global): {}", e);
+            // emit 输出：普通行攒批；system:init 等控制消息即时送达（前端冷启动依赖）。
+            let is_control = unified_message
+                .get("type")
+                .and_then(|t| t.as_str())
+                .map(|t| {
+                    t == "result"
+                        || (t == "system"
+                            && unified_message.get("subtype").and_then(|s| s.as_str())
+                                == Some("init"))
+                })
+                .unwrap_or(false);
+            if is_control {
+                batcher.flush_with(Some(&gemini_sess_event), &unified_line);
+            } else {
+                batcher.push(Some(&gemini_sess_event), unified_line);
             }
         }
 
+        batcher.flush(Some(&gemini_sess_event));
         log::info!("[Gemini] Stdout closed for session: {}", session_id_stdout);
         // Signal that stdout is done (ignore send error if receiver dropped)
         let _ = stdout_done_tx.send(());

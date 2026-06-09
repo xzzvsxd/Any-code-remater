@@ -1,5 +1,6 @@
 import React from "react";
 import type { ClaudeStreamMessage } from "@/types/claude";
+import { createBatchedUpdater } from "@/lib/stream/batchedStateUpdater";
 
 export interface ToolResultEntry {
   toolUseId: string;
@@ -82,14 +83,43 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({
 
   const toolResults = React.useMemo(() => buildToolResultMap(messages), [messages]);
 
+  // 🚀 性能（修复 Linux/WebKit streaming 渲染风暴）：streaming 期间每条消息一次 setMessages
+  // → 全量重渲染 + 虚拟列表重测，高频时主线程被打满。这里把对外暴露的 setMessages 包一层
+  // rAF 批量合并器：一帧内的多次「函数式更新」折叠成一次 setState（N 条消息 → 1 次渲染）。
+  // - 函数式更新器(prev => next)：入队，下一帧合并 flush。
+  // - 直接赋值/数组(重置、历史加载)：先排空挂起队列再同步应用，避免与待应用增量乱序。
+  const rawSetMessagesRef = React.useRef(setMessages);
+  rawSetMessagesRef.current = setMessages;
+  const batchedRef = React.useRef<ReturnType<typeof createBatchedUpdater<ClaudeStreamMessage[]>>>();
+  if (!batchedRef.current) {
+    batchedRef.current = createBatchedUpdater<ClaudeStreamMessage[]>((updater) =>
+      rawSetMessagesRef.current(updater),
+    );
+  }
+  React.useEffect(() => () => batchedRef.current?.dispose(), []);
+
+  const batchedSetMessages = React.useCallback<
+    React.Dispatch<React.SetStateAction<ClaudeStreamMessage[]>>
+  >((action) => {
+    const batched = batchedRef.current!;
+    if (typeof action === "function") {
+      // 增量更新（streaming 主路径）：入队合并。
+      batched.enqueue(action as (prev: ClaudeStreamMessage[]) => ClaudeStreamMessage[]);
+    } else {
+      // 直接赋值（重置/历史加载/清空）：先 flush 挂起的增量，再同步覆盖，保证最终状态正确。
+      batched.flushNow();
+      rawSetMessagesRef.current(action);
+    }
+  }, []);
+
   // ✅ 性能优化: 操作函数独立缓存，确保引用稳定
   const actionsValue = React.useMemo<MessagesActionsContextValue>(
     () => ({
-      setMessages,
+      setMessages: batchedSetMessages,
       setIsStreaming,
       setFilterConfig,
     }),
-    [setMessages, setIsStreaming, setFilterConfig]
+    [batchedSetMessages, setIsStreaming, setFilterConfig]
   );
 
   // ✅ 性能优化: 数据独立缓存

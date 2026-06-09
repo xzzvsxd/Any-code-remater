@@ -137,8 +137,8 @@ impl Default for AskUserBridge {
 }
 
 /// 提问挂起的最长等待（秒）：超过则返回提示，避免 CLI 永久挂起。
-/// 设得较长（用户可能离开），但有限。会话 cancel 会提前唤醒。
-const ASK_TIMEOUT_SECS: u64 = 1800; // 30 分钟
+/// 5 分钟——足够用户回应，又不会在用户离开时让 CLI 无限期卡死。会话 cancel 会提前唤醒。
+const ASK_TIMEOUT_SECS: u64 = 300; // 5 分钟
 
 /// 启动本地桥接 HTTP 服务（仅 127.0.0.1，系统分配端口）。幂等：已启动则直接返回。
 pub async fn ensure_bridge_started(app: AppHandle, bridge: AskUserBridge) -> Result<u16, String> {
@@ -149,10 +149,7 @@ pub async fn ensure_bridge_started(app: AppHandle, bridge: AskUserBridge) -> Res
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| format!("bind ask-user bridge failed: {}", e))?;
-    let port = listener
-        .local_addr()
-        .map_err(|e| e.to_string())?
-        .port();
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     bridge
         .inner
         .port
@@ -263,8 +260,8 @@ async fn handle_conn(
         body.extend_from_slice(&tmp[..n]);
     }
 
-    let parsed: AskRequestBody = serde_json::from_slice(&body)
-        .map_err(|e| format!("bad ask body: {}", e))?;
+    let parsed: AskRequestBody =
+        serde_json::from_slice(&body).map_err(|e| format!("bad ask body: {}", e))?;
 
     // 注册挂起请求 + emit 给前端
     let (tx, rx) = oneshot::channel::<String>();
@@ -279,7 +276,10 @@ async fn handle_conn(
         );
     }
 
-    let kind = parsed.kind.clone().unwrap_or_else(|| "question".to_string());
+    let kind = parsed
+        .kind
+        .clone()
+        .unwrap_or_else(|| "question".to_string());
     let evt = AskUserQuestionEvent {
         request_id: parsed.request_id.clone(),
         session_id: parsed.session_id.clone(),
@@ -300,21 +300,17 @@ async fn handle_conn(
     }
 
     // 阻塞等答案 / 超时 / 取消
-    let answer = match tokio::time::timeout(
-        std::time::Duration::from_secs(ASK_TIMEOUT_SECS),
-        rx,
-    )
-    .await
-    {
-        Ok(Ok(text)) => text,
-        Ok(Err(_)) => "（提问通道已关闭，未能收集到回答）".to_string(),
-        Err(_) => {
-            // 超时：清理挂起项
-            let mut guard = bridge.inner.pending.lock().await;
-            guard.remove(&parsed.request_id);
-            "（等待用户回答超时，请用户稍后重新触发或直接在对话中回复）".to_string()
-        }
-    };
+    let answer =
+        match tokio::time::timeout(std::time::Duration::from_secs(ASK_TIMEOUT_SECS), rx).await {
+            Ok(Ok(text)) => text,
+            Ok(Err(_)) => "（提问通道已关闭，未能收集到回答）".to_string(),
+            Err(_) => {
+                // 超时：清理挂起项
+                let mut guard = bridge.inner.pending.lock().await;
+                guard.remove(&parsed.request_id);
+                "（等待用户回答超时，请用户稍后重新触发或直接在对话中回复）".to_string()
+            }
+        };
 
     let resp_body = serde_json::json!({ "text": answer }).to_string();
     write_response(&mut stream, 200, &resp_body).await?;
@@ -348,9 +344,7 @@ async fn write_response(
 }
 
 fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|w| w == needle)
+    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 // ---- Tauri 命令 ----
@@ -378,8 +372,7 @@ pub async fn cancel_user_questions(
 
 /// 嵌入的 ask-user MCP server 脚本字节（发布模式提取到磁盘运行）。
 #[cfg(not(debug_assertions))]
-const ASK_USER_MCP_BYTES: &[u8] =
-    include_bytes!("../../../binaries/ask-user-mcp-server.cjs");
+const ASK_USER_MCP_BYTES: &[u8] = include_bytes!("../../../binaries/ask-user-mcp-server.cjs");
 
 /// 解析 ask-user MCP server 脚本路径：dev 用源码树 binaries/，release 提取到 ~/.acemcp/。
 fn resolve_mcp_server_path() -> Result<std::path::PathBuf, String> {
@@ -439,8 +432,11 @@ pub fn write_mcp_config(
     let dir = std::env::temp_dir().join("anycode-askuser");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let cfg_path = dir.join(format!("mcp-{}.json", sanitize_filename(session_hint)));
-    std::fs::write(&cfg_path, serde_json::to_string(&cfg).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    std::fs::write(
+        &cfg_path,
+        serde_json::to_string(&cfg).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
 
     Ok((
         cfg_path,
@@ -454,7 +450,13 @@ pub fn write_mcp_config(
 fn sanitize_filename(s: &str) -> String {
     let cleaned: String = s
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     if cleaned.is_empty() {
         "default".to_string()
@@ -497,7 +499,11 @@ pub async fn build_ask_user_args(app: &AppHandle, session_hint: &str) -> Vec<Str
                  这两个工具会阻塞等待用户在界面上响应后再返回。不要使用内置的 AskUserQuestion / ExitPlanMode，也不要仅用纯文本提问。"
                     .to_string(),
             );
-            log::info!("[ask-user] mounted MCP tools for one-shot: {:?} {:?}", cfg_path, tool_names);
+            log::info!(
+                "[ask-user] mounted MCP tools for one-shot: {:?} {:?}",
+                cfg_path,
+                tool_names
+            );
             args
         }
         Err(e) => {

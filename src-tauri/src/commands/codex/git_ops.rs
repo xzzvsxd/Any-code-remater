@@ -178,8 +178,8 @@ fn extract_codex_prompts_with_records(
         .ok_or_else(|| format!("Session file not found for: {}", session_id))?;
 
     use std::io::{BufRead, BufReader};
-    let file = fs::File::open(&session_file)
-        .map_err(|e| format!("Failed to open session file: {}", e))?;
+    let file =
+        fs::File::open(&session_file).map_err(|e| format!("Failed to open session file: {}", e))?;
     let reader = BufReader::new(file);
 
     let mut prompts: Vec<PromptRecord> = Vec::new();
@@ -342,8 +342,8 @@ pub async fn get_codex_prompt_list_with_capabilities(
     session_id: String,
 ) -> Result<Vec<PromptRecordWithCapabilities>, String> {
     tokio::task::spawn_blocking(move || {
-        let execution_config =
-            load_execution_config().map_err(|e| format!("Failed to load execution config: {}", e))?;
+        let execution_config = load_execution_config()
+            .map_err(|e| format!("Failed to load execution config: {}", e))?;
         let git_operations_disabled = execution_config.disable_rewind_git_operations;
         let (prompts, git_records) = extract_codex_prompts_with_records(&session_id, true)?;
         let records_by_prompt: HashMap<usize, &CodexPromptGitRecord> = git_records
@@ -405,8 +405,8 @@ pub async fn check_codex_rewind_capabilities(
     );
 
     tokio::task::spawn_blocking(move || {
-        let execution_config =
-            load_execution_config().map_err(|e| format!("Failed to load execution config: {}", e))?;
+        let execution_config = load_execution_config()
+            .map_err(|e| format!("Failed to load execution config: {}", e))?;
         let git_operations_disabled = execution_config.disable_rewind_git_operations;
         let (prompts, git_records) = extract_codex_prompts_with_records(&session_id, true)?;
         let prompt = prompts
@@ -735,8 +735,13 @@ fn duplicate_codex_blocking(session_id: &str) -> Result<String, String> {
         .parent()
         .ok_or_else(|| "Session file has no parent directory".to_string())?;
     let new_file = parent.join(format!("rollout-copy-{}.jsonl", new_session_id));
-    let new_content = if out_lines.is_empty() { String::new() } else { out_lines.join("\n") + "\n" };
-    fs::write(&new_file, new_content).map_err(|e| format!("Failed to write duplicated session: {}", e))?;
+    let new_content = if out_lines.is_empty() {
+        String::new()
+    } else {
+        out_lines.join("\n") + "\n"
+    };
+    fs::write(&new_file, new_content)
+        .map_err(|e| format!("Failed to write duplicated session: {}", e))?;
 
     let mut records = load_codex_git_records(session_id).unwrap_or(CodexGitRecords {
         session_id: session_id.to_string(),

@@ -1245,50 +1245,49 @@ async fn execute_codex_process(
     tokio::spawn(async move {
         let mut reader = BufReader::new(stdout).lines();
         let mut done_tx = Some(done_tx);
+        // emit 批处理器：普通输出行攒批，降低 streaming 期间 IPC 频率（Linux 卡死优化）。
+        let codex_sess_event = format!("codex-output:{}", session_id_stdout);
+        let mut batcher = crate::commands::stream_batcher::EmitBatcher::new(
+            app_handle_stdout.clone(),
+            "codex-output",
+            tab_id_for_stdout.clone(),
+        );
         while let Ok(Some(line)) = reader.next_line().await {
             if !line.trim().is_empty() {
                 saw_stdout.store(true, Ordering::Relaxed);
                 // Use trace level to avoid flooding logs in debug mode
                 log::trace!("Codex output: {}", line);
-                // Emit to session-specific channel first (for multi-tab isolation)
-                if let Err(e) =
-                    app_handle_stdout.emit(&format!("codex-output:{}", session_id_stdout), &line)
-                {
-                    log::error!("Failed to emit codex-output (session-specific): {}", e);
-                }
-                // Also emit to global channel for early-session compatibility, scoped by tab_id.
-                let global_payload = serde_json::json!({
-                    "tab_id": tab_id_for_stdout,
-                    "payload": line
-                });
-                if let Err(e) = app_handle_stdout.emit("codex-output", &global_payload) {
-                    log::error!("Failed to emit codex-output (global): {}", e);
-                }
 
                 // Detect turn completion to trigger backend cleanup even if stdout never closes.
-                if done_tx.is_some() {
-                    let is_done_event = serde_json::from_str::<serde_json::Value>(&line)
-                        .ok()
-                        .and_then(|v| {
-                            v.get("type")
-                                .and_then(|t| t.as_str())
-                                .map(|s| s.to_string())
-                        })
-                        .map(|t| matches!(t.as_str(), "turn.completed" | "turn.failed" | "error"))
-                        .unwrap_or(false);
+                let is_done_event = serde_json::from_str::<serde_json::Value>(&line)
+                    .ok()
+                    .and_then(|v| {
+                        v.get("type")
+                            .and_then(|t| t.as_str())
+                            .map(|s| s.to_string())
+                    })
+                    .map(|t| matches!(t.as_str(), "turn.completed" | "turn.failed" | "error"))
+                    .unwrap_or(false);
 
-                    if is_done_event {
-                        log::info!(
-                            "[Codex] Detected completion event on stdout for session: {}",
-                            session_id_stdout
-                        );
-                        if let Some(tx) = done_tx.take() {
-                            let _ = tx.send(());
-                        }
+                // 完成类事件即时 emit（前端据此结束）；普通行攒批。
+                if is_done_event {
+                    batcher.flush_with(Some(&codex_sess_event), &line);
+                } else {
+                    batcher.push(Some(&codex_sess_event), line.clone());
+                }
+
+                if done_tx.is_some() && is_done_event {
+                    log::info!(
+                        "[Codex] Detected completion event on stdout for session: {}",
+                        session_id_stdout
+                    );
+                    if let Some(tx) = done_tx.take() {
+                        let _ = tx.send(());
                     }
                 }
             }
         }
+        batcher.flush(Some(&codex_sess_event));
         log::info!("[Codex] Stdout closed for session: {}", session_id_stdout);
         // Fallback: stdout closed, treat as completion if not already signaled.
         if let Some(tx) = done_tx.take() {

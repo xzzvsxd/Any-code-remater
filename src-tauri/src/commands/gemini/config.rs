@@ -3,8 +3,8 @@
 //! Handles Gemini CLI configuration including authentication methods,
 //! model selection, and user preferences.
 
-use serde::{Deserialize, Serialize};
 use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -307,8 +307,8 @@ fn read_session_info_from_path(path: &Path) -> Result<GeminiSessionInfo, String>
 
     let content =
         fs::read_to_string(path).map_err(|e| format!("Failed to read session file: {}", e))?;
-    let detail: GeminiSessionDetail =
-        serde_json::from_str(&content).map_err(|e| format!("Failed to parse session file: {}", e))?;
+    let detail: GeminiSessionDetail = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse session file: {}", e))?;
     let file_name = path
         .file_name()
         .and_then(|s| s.to_str())

@@ -16,6 +16,7 @@ import { SortableList, SortableDragHandle } from "@/components/ui/sortable-list"
 import { api, type Session, type Project } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { notifyUserInputNeeded } from "@/lib/aiCompletionNotification";
 import { FloatingPromptInput, type FloatingPromptInputRef, type ModelType } from "./FloatingPromptInput";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { RevertPromptPicker } from "./RevertPromptPicker";
@@ -153,7 +154,15 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   const setIsLoading = setIsStreaming;
   const [error, setError] = useState<string | null>(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
-  const [_rawJsonlOutput, setRawJsonlOutput] = useState<string[]>([]); // Kept for hooks, not directly used
+  // rawJsonl 仅用于「复制为 JSONL」等辅助操作，从不参与渲染。过去用 useState，导致 streaming
+  // 期间每条消息都触发一次 ClaudeCodeSession 重渲染（白白放大渲染风暴）。改用 ref 累积 +
+  // 兼容 React.Dispatch 签名的 setter，写入不再触发任何重渲染。
+  const rawJsonlOutputRef = useRef<string[]>([]);
+  const setRawJsonlOutput = useCallback<React.Dispatch<React.SetStateAction<string[]>>>((action) => {
+    rawJsonlOutputRef.current = typeof action === 'function'
+      ? (action as (prev: string[]) => string[])(rawJsonlOutputRef.current)
+      : action;
+  }, []);
   const [isFirstPrompt, setIsFirstPrompt] = useState(!session); // Key state for session continuation
   const [extractedSessionInfo, setExtractedSessionInfo] = useState<{ sessionId: string; projectId: string; engine?: 'claude' | 'codex' | 'gemini' } | null>(null);
   // 🔧 FIX: 标记会话是否不存在（历史记录文件未找到）
@@ -244,62 +253,8 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     triggerBridgeQuestion,
   } = useUserQuestion();
 
-  // 🆕 监听阻塞式"向用户提问"事件：后端 ask-user MCP 工具被调用时 emit，
-  // 携带 requestId/sessionId(=本会话 tabId 提示)/questions。命中本标签则弹问答 UI，
-  // 用户提交后经 api.answerUserQuestion 回灌唤醒被阻塞的 CLI 工具调用（同一轮继续）。
-  useEffect(() => {
-    let unlisten: UnlistenFn | undefined;
-    let disposed = false;
-    (async () => {
-      try {
-        unlisten = await listen<{ requestId: string; sessionId: string; questions: unknown }>(
-          "ask-user-question",
-          (event) => {
-            const { requestId, sessionId, questions } = event.payload || ({} as any);
-            // session_hint 由后端用 tabId 注入；只处理属于本标签的提问，避免多标签串台。
-            if (sessionId && tabIdProp && sessionId !== tabIdProp) return;
-            if (!requestId || !Array.isArray(questions)) return;
-            triggerBridgeQuestion(requestId, sessionId || "", questions as any);
-          }
-        );
-        if (disposed && unlisten) unlisten();
-      } catch (e) {
-        console.error("[ClaudeCodeSession] failed to listen ask-user-question:", e);
-      }
-    })();
-    return () => {
-      disposed = true;
-      if (unlisten) unlisten();
-    };
-  }, [tabIdProp, triggerBridgeQuestion]);
-
-  // 🆕 监听阻塞式"计划审批"事件：后端 submit_plan MCP 工具被调用时 emit ask-user-plan，
-  // 携带 requestId/sessionId(=tabId 提示)/plan。命中本标签则弹审批 UI，
-  // 用户批准/拒绝后经 api.answerUserQuestion 回灌唤醒被阻塞的 submit_plan（同一轮据结果继续）。
-  useEffect(() => {
-    let unlisten: UnlistenFn | undefined;
-    let disposed = false;
-    (async () => {
-      try {
-        unlisten = await listen<{ requestId: string; sessionId: string; plan: unknown }>(
-          "ask-user-plan",
-          (event) => {
-            const { requestId, sessionId, plan } = event.payload || ({} as any);
-            if (sessionId && tabIdProp && sessionId !== tabIdProp) return;
-            if (!requestId || typeof plan !== "string") return;
-            triggerBridgePlan(requestId, sessionId || "", plan);
-          }
-        );
-        if (disposed && unlisten) unlisten();
-      } catch (e) {
-        console.error("[ClaudeCodeSession] failed to listen ask-user-plan:", e);
-      }
-    })();
-    return () => {
-      disposed = true;
-      if (unlisten) unlisten();
-    };
-  }, [tabIdProp, triggerBridgePlan]);
+  // 注：ask-user / ask-user-plan 的事件监听器移至 usePromptExecution 解构之后，
+  // 因为它们需要 hook 暴露的真实 runTabId（后端事件路由用的 id）来过滤，而非外层 tabIdProp。
 
   // 🆕 Execution Engine Config (Codex integration)
   // Load from localStorage to remember user's settings
@@ -616,7 +571,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   }, [executionEngineConfig.engine, effectiveSession?.id]);
 
   // ✅ Refactored: Use custom Hook for prompt execution (AFTER all other Hooks)
-  const { handleSendPrompt } = usePromptExecution({
+  const { handleSendPrompt, runTabId } = usePromptExecution({
     projectPath,
     isLoading,
     claudeSessionId,
@@ -711,6 +666,47 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       lastSubmittedModel: lastSubmittedClaudeModelRef.current,
     });
   }, [effectiveSession?.model, messages, session?.model]);
+
+  // 🆕 监听阻塞式"向用户提问" / "计划审批"事件。关键：用 hook 暴露的 runTabId 过滤
+  // （后端事件路由用的就是这个 id），而非外层 tabIdProp——二者不同，用错会导致事件被永久挡掉、弹窗不出。
+  useEffect(() => {
+    let unQ: UnlistenFn | undefined;
+    let unP: UnlistenFn | undefined;
+    let disposed = false;
+    const matchTab = (sessionId: string) => !sessionId || !runTabId || sessionId === runTabId;
+    (async () => {
+      try {
+        unQ = await listen<{ requestId: string; sessionId: string; questions: unknown }>(
+          "ask-user-question",
+          (event) => {
+            const { requestId, sessionId, questions } = event.payload || ({} as any);
+            if (!matchTab(sessionId)) return;
+            if (!requestId || !Array.isArray(questions)) return;
+            triggerBridgeQuestion(requestId, sessionId || "", questions as any);
+            void notifyUserInputNeeded("question");
+          }
+        );
+        unP = await listen<{ requestId: string; sessionId: string; plan: unknown }>(
+          "ask-user-plan",
+          (event) => {
+            const { requestId, sessionId, plan } = event.payload || ({} as any);
+            if (!matchTab(sessionId)) return;
+            if (!requestId || typeof plan !== "string") return;
+            triggerBridgePlan(requestId, sessionId || "", plan);
+            void notifyUserInputNeeded("plan");
+          }
+        );
+        if (disposed) { unQ?.(); unP?.(); }
+      } catch (e) {
+        console.error("[ClaudeCodeSession] failed to listen ask-user events:", e);
+      }
+    })();
+    return () => {
+      disposed = true;
+      unQ?.();
+      unP?.();
+    };
+  }, [runTabId, triggerBridgeQuestion, triggerBridgePlan]);
 
   // 🆕 方案 B-1: 设置发送提示词回调，用于计划批准后自动执行
   useEffect(() => {
@@ -921,10 +917,10 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
 
     try {
       setIsCancellingExecution(true);
-      // 🆕 先释放可能正阻塞的"向用户提问"MCP handler：否则 CLI 卡在工具调用处，取消信号难以即时生效。
-      // session_hint 启动时用的是 tabId，这里按 tabId 取消；同时关掉前端问答弹窗。
-      if (tabIdProp) {
-        try { await api.cancelUserQuestions(tabIdProp); } catch { /* 兜底，忽略 */ }
+      // 🆕 先释放可能正阻塞的"向用户提问/计划审批"MCP handler：否则 CLI 卡在工具调用处，取消信号难以即时生效。
+      // 后端挂起请求按 runTabId(=session_hint) 存储，必须用它取消；同时关掉前端弹窗。
+      if (runTabId) {
+        try { await api.cancelUserQuestions(runTabId); } catch { /* 兜底，忽略 */ }
       }
       closeQuestionDialog();
       window.dispatchEvent(new CustomEvent('show-toast', {

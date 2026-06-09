@@ -10,9 +10,9 @@ mod project_store;
 mod session_history;
 mod streaming;
 
+pub use self::streaming::execute_claude_streaming;
 pub use models::*;
 pub use paths::*;
-pub use self::streaming::execute_claude_streaming;
 // 阻塞式"向用户提问"MCP 桥接：状态、命令、启动入口
 pub use self::ask_user_bridge::{
     answer_user_question, build_ask_user_args, cancel_user_questions, ensure_bridge_started,
@@ -92,7 +92,10 @@ pub async fn list_projects() -> Result<Vec<Project>, String> {
     let codex_sessions = crate::commands::codex::session::list_codex_sessions()
         .await
         .unwrap_or_else(|e| {
-            log::warn!("list_projects: failed to load Codex sessions for counts: {}", e);
+            log::warn!(
+                "list_projects: failed to load Codex sessions for counts: {}",
+                e
+            );
             Vec::new()
         });
 
