@@ -47,6 +47,7 @@ import { buildQueueStorageKey, loadQueuedPrompts, saveQueuedPrompts } from '@/li
 import { buildPromptIndexByMessage, getPromptIndexForDisplayableMessage, getBranchPromptIndexForDisplayableMessage } from '@/lib/promptIndex';
 import { loadUiOnlySessionMessages, mergeUiOnlySessionMessages, pruneUiOnlySessionMessagesAfter } from '@/lib/uiOnlySessionEvents';
 import { prepareRecentProjects } from '@/lib/recentProjects';
+import { safeRandomUUID } from '@/lib/browserCompat';
 import { SessionHeader } from "./session/SessionHeader";
 import { SessionMessages, type SessionMessagesRef } from "./session/SessionMessages";
 
@@ -1708,7 +1709,7 @@ export const ClaudeCodeSession: React.FC<ClaudeCodeSessionProps> = (props) => {
     if (props.initialProjectPath) {
       return `plan-mode:path:${props.initialProjectPath.replace(/\\/g, '/').toLowerCase()}`;
     }
-    return `plan-mode:instance:${crypto.randomUUID()}`;
+    return `plan-mode:instance:${safeRandomUUID()}`;
   }, [props.planModeStorageKey, props.session?.id, props.initialProjectPath]);
 
   return (

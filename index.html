@@ -5,6 +5,164 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Claude Workbench - Professional Claude CLI Interface</title>
+    <script>
+      (function () {
+        var root = typeof globalThis !== "undefined" ? globalThis : window;
+
+        function uuidV4() {
+          var bytes = typeof Uint8Array !== "undefined" ? new Uint8Array(16) : new Array(16);
+          var cryptoObject = root.crypto;
+
+          if (cryptoObject && typeof cryptoObject.getRandomValues === "function") {
+            try {
+              cryptoObject.getRandomValues(bytes);
+            } catch (_) {
+              fillPseudoRandom(bytes);
+            }
+          } else {
+            fillPseudoRandom(bytes);
+          }
+
+          bytes[6] = (bytes[6] & 15) | 64;
+          bytes[8] = (bytes[8] & 63) | 128;
+
+          var hex = [];
+          for (var index = 0; index < bytes.length; index += 1) {
+            hex[index] = (bytes[index] + 256).toString(16).slice(1);
+          }
+          return (
+            hex.slice(0, 4).join("") + "-" +
+            hex.slice(4, 6).join("") + "-" +
+            hex.slice(6, 8).join("") + "-" +
+            hex.slice(8, 10).join("") + "-" +
+            hex.slice(10, 16).join("")
+          );
+        }
+
+        function fillPseudoRandom(bytes) {
+          var seed = (Date.now() ^ Math.floor(Math.random() * 4294967295)) >>> 0;
+          for (var index = 0; index < bytes.length; index += 1) {
+            seed = (seed * 1664525 + 1013904223) >>> 0;
+            bytes[index] = seed & 255;
+          }
+        }
+
+        function cloneStructuredValue(value, seen) {
+          if (value === null || typeof value !== "object") {
+            return value;
+          }
+
+          if (typeof Date !== "undefined" && value instanceof Date) {
+            return new Date(value.getTime());
+          }
+
+          if (typeof RegExp !== "undefined" && value instanceof RegExp) {
+            return new RegExp(value.source, value.flags);
+          }
+
+          if (typeof WeakMap !== "undefined") {
+            seen = seen || new WeakMap();
+            if (seen.has(value)) {
+              return seen.get(value);
+            }
+          }
+
+          if (Array.isArray(value)) {
+            var arrayOutput = [];
+            if (seen) seen.set(value, arrayOutput);
+            for (var arrayIndex = 0; arrayIndex < value.length; arrayIndex += 1) {
+              arrayOutput[arrayIndex] = cloneStructuredValue(value[arrayIndex], seen);
+            }
+            return arrayOutput;
+          }
+
+          if (typeof Map !== "undefined" && value instanceof Map) {
+            var mapOutput = new Map();
+            if (seen) seen.set(value, mapOutput);
+            value.forEach(function (mapValue, key) {
+              mapOutput.set(cloneStructuredValue(key, seen), cloneStructuredValue(mapValue, seen));
+            });
+            return mapOutput;
+          }
+
+          if (typeof Set !== "undefined" && value instanceof Set) {
+            var setOutput = new Set();
+            if (seen) seen.set(value, setOutput);
+            value.forEach(function (item) {
+              setOutput.add(cloneStructuredValue(item, seen));
+            });
+            return setOutput;
+          }
+
+          var objectOutput = {};
+          if (seen) seen.set(value, objectOutput);
+          var keys = Object.keys(value);
+          if (typeof Object.getOwnPropertySymbols === "function") {
+            keys = keys.concat(Object.getOwnPropertySymbols(value));
+          }
+          for (var keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
+            var key = keys[keyIndex];
+            objectOutput[key] = cloneStructuredValue(value[key], seen);
+          }
+          return objectOutput;
+        }
+
+        if (typeof Object.hasOwn !== "function") {
+          Object.defineProperty(Object, "hasOwn", {
+            configurable: true,
+            writable: true,
+            value: function (object, property) {
+              if (object === null || object === undefined) {
+                throw new TypeError("Cannot convert undefined or null to object");
+              }
+              return Object.prototype.hasOwnProperty.call(Object(object), property);
+            }
+          });
+        }
+
+        if (typeof Array.prototype.at !== "function") {
+          Object.defineProperty(Array.prototype, "at", {
+            configurable: true,
+            writable: true,
+            value: function (index) {
+              if (this === null || this === undefined) {
+                throw new TypeError("Array.prototype.at called on null or undefined");
+              }
+              var object = Object(this);
+              var length = Math.min(Math.max(Number(object.length) || 0, 0), Number.MAX_SAFE_INTEGER || 9007199254740991);
+              var numericIndex = Number(index) || 0;
+              var integerIndex = numericIndex < 0 ? Math.ceil(numericIndex) : Math.floor(numericIndex);
+              var resolvedIndex = integerIndex >= 0 ? integerIndex : length + integerIndex;
+              if (resolvedIndex < 0 || resolvedIndex >= length) return undefined;
+              return object[resolvedIndex];
+            }
+          });
+        }
+
+        if (typeof root.structuredClone !== "function") {
+          Object.defineProperty(root, "structuredClone", {
+            configurable: true,
+            writable: true,
+            value: function (value) {
+              return cloneStructuredValue(value);
+            }
+          });
+        }
+
+        if (root.crypto && typeof root.crypto.randomUUID !== "function") {
+          try {
+            Object.defineProperty(root.crypto, "randomUUID", {
+              configurable: true,
+              writable: true,
+              value: uuidV4
+            });
+          } catch (_) {
+            // Some WebKit builds expose a non-extensible Crypto object. The app
+            // also uses a safe TS helper, so this best-effort branch is enough.
+          }
+        }
+      })();
+    </script>
   </head>
 
   <body>

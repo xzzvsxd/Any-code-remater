@@ -26,7 +26,8 @@ import { cacheCodexModelFromStream, cacheModelFromInitMessage } from '@/lib/mode
 import { notifyAiExecutionComplete } from '@/lib/aiCompletionNotification';
 import { resolveInitialCancelSessionId } from '@/lib/cancelChannel';
 import { persistUiOnlySessionMessage } from '@/lib/uiOnlySessionEvents';
-import { normalizeStreamLines } from '@/lib/stream';
+import { normalizeStreamLines, AsyncQueue } from '@/lib/stream';
+import { safeRandomUUID } from '@/lib/browserCompat';
 
 // ============================================================================
 // Type Definitions
@@ -117,10 +118,7 @@ const stringifyPromptExecutionError = (error: unknown): string => {
 };
 
 const createUiEventId = () => {
-  const randomId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  return `ui-event-${randomId}`;
+  return `ui-event-${safeRandomUUID()}`;
 };
 
 const normalizeClaudeGlobalPayload = <T,>(payload: ClaudeGlobalEventPayload<T>) => {
@@ -192,7 +190,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
   // 🔒 CRITICAL FIX: 生成唯一的 tabId 用于会话隔离
   // 解决问题：新建会话并发时全局事件的消息串扰
   // ============================================================================
-  const tabIdRef = useRef<string>(crypto.randomUUID());
+  const tabIdRef = useRef<string>(safeRandomUUID());
 
   const codexThreadIdRef = useRef<string | null>(null);
 
@@ -543,6 +541,20 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           // 🔧 FIX: Track pending prompt recording Promise to avoid race condition
           let pendingPromptRecordingPromise: Promise<void> | null = null;
 
+          // 🚀 修复 Linux/WebKit「前端卡死、后端仍在跑」（Codex 主发送路径）：见 Claude 路径同款注释。
+          // 回调只把处理逻辑包成 thunk 入队（同步瞬时返回），消费循环串行 await，不阻塞 event loop。
+          const codexTaskQueue = new AsyncQueue<() => Promise<void>>();
+          (async () => {
+            try {
+              for await (const task of codexTaskQueue) {
+                if (!isMountedRef.current) break;
+                await task();
+              }
+            } catch (err) {
+              console.error('[usePromptExecution] Codex 消息消费循环异常:', err);
+            }
+          })();
+
           // Helper function to generate message ID for deduplication
           const getCodexMessageId = (payload: string): string => {
             // Use payload hash as ID since Codex doesn't provide unique message IDs
@@ -638,18 +650,16 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             updateCodexRateLimits(messageRateLimits || converterRateLimits);
 
             if (isTurnCompleted) {
-              // Use setTimeout to ensure message state is updated first
-              setTimeout(() => {
-                processCodexComplete();
-              }, 100);
+              // 入队 complete：排在当前 output thunk 之后执行，确保消息已处理完再收尾（替代原 setTimeout）。
+              codexTaskQueue.enqueue(() => processCodexComplete());
             }
           };
 
           // 批量协议适配：后端可能把多行 JSONL 合并为 string[] 一次 emit。
-          // 拆行后逐行交给 processCodexOutputLine，调用点无需感知协议差异。
-          const processCodexOutput = async (payload: string | string[]) => {
+          // 拆行后逐行入队（瞬时返回），由消费循环串行处理，不在事件回调里 await。
+          const processCodexOutput = (payload: string | string[]) => {
             for (const line of normalizeStreamLines(payload)) {
-              await processCodexOutputLine(line);
+              codexTaskQueue.enqueue(() => processCodexOutputLine(line));
             }
           };
 
@@ -690,6 +700,8 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             await refreshCodexRateLimitsFromHistory();
             await notifyCompletionIfIdle('codex', completedSessionId);
 
+            // 结束消息消费循环
+            codexTaskQueue.done();
             // Process queued prompts
             runNextQueuedPrompt();
           };
@@ -724,6 +736,8 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             // 启动失败时不应保留 pending prompt
             codexPendingPromptRecord = null;
 
+            // 结束消息消费循环
+            codexTaskQueue.done();
             // 继续处理队列（与完成逻辑一致）
             runNextQueuedPrompt();
           };
@@ -734,13 +748,14 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
               processCodexOutput(evt.payload);
             });
 
-            const specificCompleteUnlisten = await listen<boolean>(`codex-complete:${sessionId}`, async () => {
-
-              await processCodexComplete();
+            const specificCompleteUnlisten = await listen<boolean>(`codex-complete:${sessionId}`, () => {
+              // 入队：排在已入队 output 之后收尾。
+              codexTaskQueue.enqueue(() => processCodexComplete());
             });
 
-            const specificErrorUnlisten = await listen<string>(`codex-error:${sessionId}`, async (evt) => {
-              await processCodexError(evt.payload);
+            const specificErrorUnlisten = await listen<string>(`codex-error:${sessionId}`, (evt) => {
+              // 入队：排在已入队 output 之后处理错误。
+              codexTaskQueue.enqueue(() => processCodexError(evt.payload));
             });
 
             // Replace existing listeners with session-specific ones
@@ -811,7 +826,8 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
               setClaudeSessionId(currentCodexSessionId);
             }
 
-            await processCodexError(payload);
+            // 入队：排在已入队 output 之后处理错误。
+            codexTaskQueue.enqueue(() => processCodexError(payload));
           });
 
           // 🔧 FIX: 移除全局完成事件监听器,避免跨会话串流
@@ -829,7 +845,8 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
               return;
             }
 
-            await processCodexComplete();
+            // 入队：排在已入队 output 之后收尾。
+            codexTaskQueue.enqueue(() => processCodexComplete());
           });
 
           unlistenRefs.current = [codexSessionInitUnlisten, codexOutputUnlisten, codexErrorUnlisten, codexCompleteUnlisten];
@@ -844,6 +861,21 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           const processedGeminiMessages = new Set<string>();
           // 🔧 FIX: Track pending prompt recording Promise to avoid race condition
           let pendingGeminiPromptRecordingPromise: Promise<void> | null = null;
+
+          // 🚀 修复 Linux/WebKit「前端卡死、后端仍在跑」（Gemini 主发送路径）：见 Claude 路径同款注释。
+          // processGeminiOutputLine 虽是同步函数，但 delta 合并逻辑重；回调只入队（瞬时返回），
+          // 消费循环串行执行，避免高频事件在回调里连续重活淹没 event loop。
+          const geminiTaskQueue = new AsyncQueue<() => Promise<void>>();
+          (async () => {
+            try {
+              for await (const task of geminiTaskQueue) {
+                if (!isMountedRef.current) break;
+                await task();
+              }
+            } catch (err) {
+              console.error('[usePromptExecution] Gemini 消息消费循环异常:', err);
+            }
+          })();
 
           // Helper function to generate message ID for deduplication
           const getGeminiMessageId = (payload: string): string => {
@@ -1085,10 +1117,11 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             }
           };
 
-          // 批量协议适配：后端可能把多行合并为 string[] 一次 emit。拆行后逐行处理。
+          // 批量协议适配：后端可能把多行合并为 string[] 一次 emit。
+          // 拆行后逐行入队（瞬时返回），由消费循环串行执行，不在事件回调里连续干重活。
           const processGeminiOutput = (payload: string | string[]) => {
             for (const line of normalizeStreamLines(payload)) {
-              processGeminiOutputLine(line);
+              geminiTaskQueue.enqueue(async () => processGeminiOutputLine(line));
             }
           };
 
@@ -1129,6 +1162,8 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             // Clear pending session
             await notifyCompletionIfIdle('gemini', completedSessionId);
 
+            // 结束消息消费循环
+            geminiTaskQueue.done();
             // Process queued prompts
             runNextQueuedPrompt();
           };
@@ -1152,6 +1187,8 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             resetRuntimeState();
             geminiPendingPromptRecord = null;
             pendingGeminiPromptRecordingPromise = null;
+            // 结束消息消费循环
+            geminiTaskQueue.done();
           };
 
           // Helper function to attach session-specific listeners
@@ -1160,13 +1197,14 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
               processGeminiOutput(evt.payload);
             });
 
-            const specificCompleteUnlisten = await listen<boolean>(`gemini-complete:${sessionId}`, async () => {
-
-              await processGeminiComplete();
+            const specificCompleteUnlisten = await listen<boolean>(`gemini-complete:${sessionId}`, () => {
+              // 入队：排在已入队 output 之后收尾。
+              geminiTaskQueue.enqueue(() => processGeminiComplete());
             });
 
             const specificErrorUnlisten = await listen<string>(`gemini-error:${sessionId}`, (evt) => {
-              processGeminiError(evt.payload);
+              // 入队：排在已入队 output 之后处理错误。
+              geminiTaskQueue.enqueue(async () => processGeminiError(evt.payload));
             });
 
             // 🔧 FIX: Append session-specific listeners instead of replacing all
@@ -1269,7 +1307,8 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             if (!isCurrentRunEventTab(eventTabId)) {
               return;
             }
-            processGeminiError(payload);
+            // 入队：排在已入队 output 之后处理错误。
+            geminiTaskQueue.enqueue(async () => processGeminiError(payload));
           });
 
           // 🔧 FIX: 移除全局完成事件监听器,避免跨会话串流
@@ -1287,7 +1326,8 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
               return;
             }
 
-            await processGeminiComplete();
+            // 入队：排在已入队 output 之后收尾。
+            geminiTaskQueue.enqueue(() => processGeminiComplete());
           });
 
           unlistenRefs.current = [geminiSessionInitUnlisten, geminiCliSessionIdUnlisten, geminiOutputUnlisten, geminiErrorUnlisten, geminiCompleteUnlisten];
@@ -1317,6 +1357,24 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         // 🔧 FIX: Track pending prompt recording Promise to avoid race condition
         let pendingClaudePromptRecordingPromise: Promise<void> | null = null;
 
+        // 🚀 修复 Linux/WebKit「前端卡死、后端仍在跑」（主发送路径）：
+        // 过去 output 回调在 Tauri 事件回调体里直接 JSON.parse + await 翻译 + setState 处理每条消息，
+        // 而 Tauri 事件回调是串行投递的——前一条没让出主线程，后续事件全堆在 event loop，
+        // 大块输出（几 MB 单行）同步 parse 多遍时主线程被淹没，UI/输入完全无响应。
+        // 现改为：回调只把「处理逻辑」包成 thunk 入队（同步、瞬时返回），真正的处理放到下面独立的
+        // 消费循环里串行 await（保序但不阻塞 event loop）。与 useSessionStream 的修复同构。
+        const claudeTaskQueue = new AsyncQueue<() => Promise<void>>();
+        (async () => {
+          try {
+            for await (const task of claudeTaskQueue) {
+              if (!isMountedRef.current) break;
+              await task();
+            }
+          } catch (err) {
+            console.error('[usePromptExecution] Claude 消息消费循环异常:', err);
+          }
+        })();
+
         // Helper function to generate message ID for deduplication
         const getClaudeMessageId = (payload: string): string => {
           try {
@@ -1344,70 +1402,77 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           // 🔧 FIX: Mark that we've attached session-specific listeners
           hasAttachedSessionListeners = true;
 
-          const specificOutputUnlisten = await listen<string | string[]>(`claude-output:${sid}`, async (evt) => {
+          const specificOutputUnlisten = await listen<string | string[]>(`claude-output:${sid}`, (evt) => {
             // 批量协议适配：payload 可能是 string（单行）或 string[]（后端节流合并多行）。
-            // 逐行处理，保留原有「流式消息 + user 消息记录」单行逻辑不变。
+            // 回调只逐行入队（同步、瞬时返回），真正处理放到消费循环里，不阻塞 event loop。
             for (const line of normalizeStreamLines(evt.payload)) {
-              handleStreamMessage(line, userInputTranslation || undefined);
+              claudeTaskQueue.enqueue(async () => {
+                await handleStreamMessage(line, userInputTranslation || undefined);
 
-              // Handle user message recording in session-specific listener
-              try {
-                const msg = JSON.parse(line) as ClaudeStreamMessage;
+                // Handle user message recording in session-specific listener
+                try {
+                  const msg = JSON.parse(line) as ClaudeStreamMessage;
 
-                // 在收到第一条 user 消息后记录
-                if (msg.type === 'user' && !hasRecordedPrompt && isUserInitiated) {
-                  // 检查这是否是我们发送的那条消息（通过内容匹配）
-                  let isOurMessage = false;
-                  const msgContent: any = msg.message?.content;
+                  // 在收到第一条 user 消息后记录
+                  if (msg.type === 'user' && !hasRecordedPrompt && isUserInitiated) {
+                    // 检查这是否是我们发送的那条消息（通过内容匹配）
+                    let isOurMessage = false;
+                    const msgContent: any = msg.message?.content;
 
-                  if (msgContent) {
-                    if (typeof msgContent === 'string') {
-                      const contentStr = msgContent as string;
-                      isOurMessage = contentStr.includes(prompt) || prompt.includes(contentStr);
-                    } else if (Array.isArray(msgContent)) {
-                      const textContent = msgContent
-                        .filter((item: any) => item.type === 'text')
-                        .map((item: any) => item.text)
-                        .join('');
-                      isOurMessage = textContent.includes(prompt) || prompt.includes(textContent);
+                    if (msgContent) {
+                      if (typeof msgContent === 'string') {
+                        const contentStr = msgContent as string;
+                        isOurMessage = contentStr.includes(prompt) || prompt.includes(contentStr);
+                      } else if (Array.isArray(msgContent)) {
+                        const textContent = msgContent
+                          .filter((item: any) => item.type === 'text')
+                          .map((item: any) => item.text)
+                          .join('');
+                        isOurMessage = textContent.includes(prompt) || prompt.includes(textContent);
+                      }
+                    }
+
+                    if (isOurMessage) {
+                      const projectId = extractedSessionInfo?.projectId || projectPath.replace(/[^a-zA-Z0-9]/g, '-');
+                      // 🔧 FIX: Store Promise to allow processComplete to wait for it
+                      pendingClaudePromptRecordingPromise = (async () => {
+                        try {
+                          // 添加延迟以确保文件写入完成
+                          await new Promise(resolve => setTimeout(resolve, 100));
+
+                          recordedPromptIndex = await api.recordPromptSent(
+                            sid,
+                            projectId,
+                            projectPath,
+                            prompt
+                          );
+                          hasRecordedPrompt = true;
+
+                        } catch (err) {
+                          console.error('[Prompt Revert] [ERROR] Failed to record prompt:', err);
+                        }
+                      })();
                     }
                   }
-
-                  if (isOurMessage) {
-                    const projectId = extractedSessionInfo?.projectId || projectPath.replace(/[^a-zA-Z0-9]/g, '-');
-                    // 🔧 FIX: Store Promise to allow processComplete to wait for it
-                    pendingClaudePromptRecordingPromise = (async () => {
-                      try {
-                        // 添加延迟以确保文件写入完成
-                        await new Promise(resolve => setTimeout(resolve, 100));
-
-                        recordedPromptIndex = await api.recordPromptSent(
-                          sid,
-                          projectId,
-                          projectPath,
-                          prompt
-                        );
-                        hasRecordedPrompt = true;
-
-                      } catch (err) {
-                        console.error('[Prompt Revert] [ERROR] Failed to record prompt:', err);
-                      }
-                    })();
-                  }
+                } catch {
+                  /* ignore parse errors */
                 }
-              } catch {
-                /* ignore parse errors */
-              }
+              });
             }
           });
 
           const specificErrorUnlisten = await listen<string>(`claude-error:${sid}`, (evt) => {
-            processClaudeError(evt.payload);
+            // 入队：排在已入队的 output thunk 之后执行，保证错误处理不抢在未处理消息前面。
+            claudeTaskQueue.enqueue(async () => {
+              processClaudeError(evt.payload);
+            });
           });
 
           const specificCompleteUnlisten = await listen<boolean>(`claude-complete:${sid}`, () => {
-
-            processComplete();
+            // 入队：complete 排在所有已入队 output 之后，确保收尾前消息全部处理完。
+            claudeTaskQueue.enqueue(async () => {
+              await processComplete();
+            });
           });
 
           // Replace existing unlisten refs with these new ones (after cleaning up)
@@ -1494,6 +1559,8 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           // Reset currentSessionId to allow detection of new session_id
           currentSessionId = null;
           await notifyCompletionIfIdle('claude', completedSessionId);
+          // 结束消息消费循环（已入队的消息会被消费完后自然退出）
+          claudeTaskQueue.done();
           // Process queued prompts after completion
           runNextQueuedPrompt();
         };
@@ -1509,6 +1576,8 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           );
           resetRuntimeState();
           pendingClaudePromptRecordingPromise = null;
+          // 结束消息消费循环
+          claudeTaskQueue.done();
           runNextQueuedPrompt();
         };
 
@@ -1534,7 +1603,9 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
           // 批量协议适配：payload 可能是 string（单行）或 string[]（后端节流合并多行），
           // 逐行执行原有的早期 init/session 隔离逻辑。
+          // 回调只逐行入队（瞬时返回），处理放到消费循环里；thunk 内 continue 改 return（跳过当前行，语义等价）。
           for (const messagePayload of normalizeStreamLines(rawPayload)) {
+          claudeTaskQueue.enqueue(async () => {
           // 🔒 CRITICAL FIX: Session Isolation - 严格隔离全局事件处理
           // 问题: 多个标签页都监听全局 'claude-output',导致消息被多个会话接收
           // 解决: 只在会话ID未知的早期阶段处理全局事件
@@ -1547,10 +1618,10 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
                 } else {
                    // ⚠️ 忽略所有其他消息 - 应该由会话特定监听器处理
 
-                   continue;
+                   return;
                 }
              } catch {
-                continue;
+                return;
              }
           }
 
@@ -1563,7 +1634,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             // 则只处理匹配的消息（解决同一项目下多个会话的串扰问题）
             if (msg.session_id && claudeSessionId && msg.session_id !== claudeSessionId) {
               // 消息来自不同会话，忽略
-              continue;
+              return;
             }
 
             // 🔒 CRITICAL FIX #2: 使用 cwd 字段作为备选验证（不同项目的情况）
@@ -1579,13 +1650,13 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
               if (msgCwd !== currentPath) {
                 // 消息来自不同项目，忽略
-                continue;
+                return;
               }
             }
 
             // Always process the message if we haven't established a session yet
             // Or if it is the init message
-            handleStreamMessage(messagePayload, userInputTranslation || undefined);
+            await handleStreamMessage(messagePayload, userInputTranslation || undefined);
 
             if (msg.type === 'system' && msg.subtype === 'init' && msg.session_id) {
               // Cache model display name from init message for dynamic model selector
@@ -1679,6 +1750,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           } catch {
             /* ignore parse errors */
           }
+          }); // enqueue thunk
           } // for messagePayload of lines
         });
 
@@ -1693,7 +1765,10 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             return;
           }
 
-          processClaudeError(errorPayload);
+          // 入队：排在已入队 output thunk 之后，保证错误处理不抢在未处理消息前面。
+          claudeTaskQueue.enqueue(async () => {
+            processClaudeError(errorPayload);
+          });
         });
 
         // 🔒 CRITICAL FIX: 全局事件现在格式为 { tab_id: string | null, payload: boolean }
@@ -1707,7 +1782,10 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             return;
           }
 
-          processComplete();
+          // 入队：complete 排在所有已入队 output 之后，确保收尾前消息全部处理完。
+          claudeTaskQueue.enqueue(async () => {
+            await processComplete();
+          });
         });
 
         // Store the generic unlisteners for now; they may be replaced later.
