@@ -529,7 +529,7 @@ export const ClaudeStatusIndicator: React.FC<ClaudeStatusIndicatorProps> = ({
                         需要帮助？
                       </p>
                       <p className="text-xs text-muted-foreground mt-1">
-                        请使用以下命令安装 Claude CLI: npm install -g @anthropic/claude
+                        请使用以下命令安装 Claude CLI: npm install -g @anthropic-ai/claude-code
                       </p>
                     </div>
                   </div>

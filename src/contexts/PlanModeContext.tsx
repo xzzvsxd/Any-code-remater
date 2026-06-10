@@ -13,6 +13,10 @@ import {
   type ReactNode,
 } from "react";
 import { api } from "@/lib/api";
+import {
+  enqueuePendingInteraction,
+  shiftPendingInteraction,
+} from "@/lib/pendingInteractionQueue";
 
 export interface PendingPlanApproval {
   plan: string;
@@ -42,8 +46,8 @@ interface PlanModeContextValue {
    * 触发一次「阻塞式 MCP 计划审批」对话框：由后端 ask-user-plan 事件驱动，必然弹出并携带 requestId。
    */
   triggerBridgePlan: (requestId: string, sessionId: string, plan: string) => void;
-  approvePlan: () => void;
-  rejectPlan: () => void;
+  approvePlan: (feedback?: string) => void;
+  rejectPlan: (feedback?: string) => void;
   closeApprovalDialog: () => void;
   getPlanStatus: (planId: string) => PlanStatus;
   isPlanApproved: (planId: string) => boolean;
@@ -113,6 +117,9 @@ export function PlanModeProvider({
   const [isPlanMode, setIsPlanModeInternal] = useState(() => loadPlanMode(storageKey, initialPlanMode));
   const [pendingApproval, setPendingApproval] = useState<PendingPlanApproval | null>(null);
   const [showApprovalDialog, setShowApprovalDialog] = useState(false);
+  const pendingApprovalRef = useRef<PendingPlanApproval | null>(null);
+  const showApprovalDialogRef = useRef(false);
+  const approvalQueueRef = useRef<PendingPlanApproval[]>([]);
   // 已决策集合仅存内存：刷新/重开会话应允许重新审批，避免「内容相似的 plan 被永久跳过」导致审批对话框不弹。
   const [approvedPlanIds, setApprovedPlanIds] = useState<Set<string>>(() => new Set());
   const [rejectedPlanIds, setRejectedPlanIds] = useState<Set<string>>(() => new Set());
@@ -124,6 +131,13 @@ export function PlanModeProvider({
   // 用 ref 而非 state，使其与 widget 生命周期解耦——列表滚动导致 widget 卸载/重挂载时记录仍存活，
   // 从而保证同一计划「只自动弹一次」，滚回来不再自动弹（用户可手动点按钮再弹）。
   const autoTriggeredPlanIdsRef = useRef<Set<string>>(new Set());
+
+  const setActiveApproval = useCallback((approval: PendingPlanApproval | null, visible: boolean) => {
+    pendingApprovalRef.current = approval;
+    showApprovalDialogRef.current = visible;
+    setPendingApproval(approval);
+    setShowApprovalDialog(visible);
+  }, []);
 
   useEffect(() => {
     if (storageKeyRef.current === storageKey) {
@@ -165,6 +179,29 @@ export function PlanModeProvider({
 
   const isPlanRejected = useCallback((planId: string) => rejectedPlanIds.has(planId), [rejectedPlanIds]);
 
+  const activateOrQueueApproval = useCallback((nextApproval: PendingPlanApproval) => {
+    // 不覆盖当前正在等待用户处理的计划。连续 submit_plan / ExitPlanMode
+    // 请求按 planId/requestId 排队，避免第二个计划把第一个 bridge 请求挤掉。
+    const activeApproval = pendingApprovalRef.current;
+    if (activeApproval && showApprovalDialogRef.current) {
+      approvalQueueRef.current = enqueuePendingInteraction(
+        approvalQueueRef.current,
+        activeApproval,
+        nextApproval,
+        plan => plan.planId,
+      );
+      return;
+    }
+
+    setActiveApproval(nextApproval, true);
+  }, [setActiveApproval]);
+
+  const showNextQueuedApproval = useCallback(() => {
+    const { next, rest } = shiftPendingInteraction(approvalQueueRef.current);
+    approvalQueueRef.current = rest;
+    setActiveApproval(next, Boolean(next));
+  }, [setActiveApproval]);
+
   const triggerPlanApproval = useCallback((plan: string, toolId?: string, auto: boolean = false) => {
     const planId = resolvePlanDedupeKey(plan, toolId);
 
@@ -181,35 +218,33 @@ export function PlanModeProvider({
       autoTriggeredPlanIdsRef.current.add(planId);
     }
 
-    setPendingApproval({
+    activateOrQueueApproval({
       plan,
       planId,
       timestamp: Date.now(),
     });
-    setShowApprovalDialog(true);
-  }, [approvedPlanIds, rejectedPlanIds]);
+  }, [approvedPlanIds, rejectedPlanIds, activateOrQueueApproval]);
 
   // 触发阻塞式 MCP 计划审批：由后端 ask-user-plan 事件驱动，必然弹出并携带 requestId。
   // 不走去重——每个 submit_plan 调用唯一，且 CLI 正阻塞等待，必须弹。
   const triggerBridgePlan = useCallback(
     (requestId: string, sessionId: string, plan: string) => {
-      setPendingApproval({
+      activateOrQueueApproval({
         plan,
         planId: `bridge_${requestId}`,
         timestamp: Date.now(),
         requestId,
         sessionId,
       });
-      setShowApprovalDialog(true);
     },
-    [],
+    [activateOrQueueApproval],
   );
 
   const setSendPromptCallback = useCallback((callback: ((prompt: string) => void) | null) => {
     sendPromptCallbackRef.current = callback;
   }, []);
 
-  const approvePlan = useCallback(() => {
+  const approvePlan = useCallback((feedback?: string) => {
     if (!pendingApproval) return;
 
     const { planId, requestId } = pendingApproval;
@@ -222,21 +257,22 @@ export function PlanModeProvider({
     setIsPlanModeInternal(false);
     savePlanMode(storageKeyRef.current, false);
     onPlanModeChange?.(false);
-    setPendingApproval(null);
-    setShowApprovalDialog(false);
+    showNextQueuedApproval();
+
+    const feedbackSuffix = feedback ? `\n\n用户附加说明：${feedback}` : '';
 
     // 路径①：阻塞式 MCP 提交——回灌"已批准"唤醒被阻塞的 submit_plan，CLI 在同一轮开始执行。
     if (requestId) {
-      const text = "用户已【批准】该计划。请立即开始执行上述计划。";
+      const text = `用户已【批准】该计划。请立即开始执行上述计划。${feedbackSuffix}`;
       api.answerUserQuestion(requestId, text)
         .then((hit) => {
           if (!hit && sendPromptCallbackRef.current) {
-            sendPromptCallbackRef.current("请开始执行上述计划。");
+            sendPromptCallbackRef.current(`请开始执行上述计划。${feedbackSuffix}`);
           }
         })
         .catch((e) => {
           console.error("[PlanMode] approve回灌失败:", e);
-          if (sendPromptCallbackRef.current) sendPromptCallbackRef.current("请开始执行上述计划。");
+          if (sendPromptCallbackRef.current) sendPromptCallbackRef.current(`请开始执行上述计划。${feedbackSuffix}`);
         });
       return;
     }
@@ -244,12 +280,12 @@ export function PlanModeProvider({
     // 路径②：旧的"发新一轮"
     if (sendPromptCallbackRef.current) {
       setTimeout(() => {
-        sendPromptCallbackRef.current?.("请开始执行上述计划。");
+        sendPromptCallbackRef.current?.(`请开始执行上述计划。${feedbackSuffix}`);
       }, 100);
     }
-  }, [pendingApproval, onPlanModeChange]);
+  }, [pendingApproval, onPlanModeChange, showNextQueuedApproval]);
 
-  const rejectPlan = useCallback(() => {
+  const rejectPlan = useCallback((feedback?: string) => {
     if (!pendingApproval) return;
 
     const { planId, requestId } = pendingApproval;
@@ -259,22 +295,36 @@ export function PlanModeProvider({
       return next;
     });
 
-    setPendingApproval(null);
-    setShowApprovalDialog(false);
+    showNextQueuedApproval();
+
+    const feedbackSuffix = feedback ? `\n\n用户的修改意见：${feedback}` : '';
 
     // 路径①：阻塞式 MCP 提交——回灌"已拒绝"唤醒被阻塞的 submit_plan，CLI 据此停下/调整，不会擅自执行。
     if (requestId) {
-      const text = "用户【拒绝】了该计划。请不要执行，停下来等待用户进一步说明或修改计划后重新提交。";
+      const text = `用户【拒绝】了该计划。请不要执行，停下来根据用户意见修改计划后重新提交。${feedbackSuffix}`;
       api.answerUserQuestion(requestId, text).catch((e) => {
         console.error("[PlanMode] reject回灌失败:", e);
       });
     }
     // 旧路径：拒绝不发任何消息（维持原行为）。
-  }, [pendingApproval]);
+  }, [pendingApproval, showNextQueuedApproval]);
 
   const closeApprovalDialog = useCallback(() => {
+    // 阻塞式 submit_plan 不能被隐藏，否则后端 handler 会一直等待。
+    if (pendingApprovalRef.current?.requestId) {
+      return;
+    }
+
+    // 如果关闭的是可延后处理的旧 ExitPlanMode，而队列已有 submit_plan，
+    // 立即切到下一项，避免后续计划审批被永久压住。
+    if (approvalQueueRef.current.length > 0) {
+      showNextQueuedApproval();
+      return;
+    }
+
+    showApprovalDialogRef.current = false;
     setShowApprovalDialog(false);
-  }, []);
+  }, [showNextQueuedApproval]);
 
   const value: PlanModeContextValue = {
     isPlanMode,

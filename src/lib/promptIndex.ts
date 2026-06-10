@@ -131,9 +131,11 @@ export function getPromptIndexForDisplayableMessage(
  * 与 revert 的 getPromptIndexForMessageInList 不同：分支允许从 **任意** 消息发起
  * （用户消息、助手最终回复、中断消息），而不仅是 tracked user prompt。
  *
- * 规则：从目标消息位置向前（含自身）回溯，找到最近的一条 tracked user prompt，
- * 返回其 promptIndex —— 即「该消息所属那一轮对话的用户提示词序号」。
- * 分支语义为「在该提示词之前分叉」，因此新分支会包含到「该轮完整问答」为止的历史。
+ * 规则：
+ * - 点在 user prompt 上：返回该 promptIndex，语义为「回到该提示词之前」，用户可重写这一问。
+ * - 点在 assistant / 中断等非 user 节点上：返回所属 user prompt 的下一位，语义为
+ *   「保留到这一轮回复之后」。后端 branch_at_prompt 使用“保留第 N 个 prompt 之前的历史”，
+ *   因此用 previousPromptIndex + 1 才会包含当前助手回复，而不是错误地回到本轮开始前。
  *
  * 找不到（该消息之前没有任何真实用户提示词）时返回 -1，调用方据此隐藏分支按钮。
  */
@@ -143,10 +145,14 @@ export function getBranchPromptIndexForMessageInList(
 ): number {
   if (actualIndex < 0 || actualIndex >= messages.length) return -1;
 
+  if (isTrackedUserPrompt(messages[actualIndex])) {
+    return getPromptIndexForMessageInList(messages, actualIndex);
+  }
+
   // 向前回溯（含自身）找最近的 tracked user prompt
   for (let i = actualIndex; i >= 0; i--) {
     if (isTrackedUserPrompt(messages[i])) {
-      return getPromptIndexForMessageInList(messages, i);
+      return getPromptIndexForMessageInList(messages, i) + 1;
     }
   }
   return -1;

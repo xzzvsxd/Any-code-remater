@@ -339,9 +339,24 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
         const element = document.getElementById(`prompt-${promptIndex}`);
 
         if (element) {
-          // 命中后只做高亮反馈。原先额外调用 element.scrollIntoView 会与虚拟列表的
-          // scrollToIndex 居中定位互相打架，导致二次偏移、定位到错误位置 —— 已移除。
-          // scrollToIndex(align:'center') 已把目标行居中，无需再 scrollIntoView。
+          // 命中后用“容器内精确 delta 校正”对齐真实 DOM 锚点。
+          // 只用 virtualizer.scrollToIndex 时，长消息/折叠工具/图片等动态高度可能让目标
+          // 停在偏上位置；直接 element.scrollIntoView 又会和虚拟列表的窗口滚动互相打架。
+          // 因此这里不调用浏览器全局滚动，而是在父滚动容器内按元素真实 rect 微调到居中。
+          const parent = parentRef.current;
+          if (parent) {
+            const parentRect = parent.getBoundingClientRect();
+            const elementRect = element.getBoundingClientRect();
+            const targetTop =
+              parent.scrollTop
+              + (elementRect.top - parentRect.top)
+              - Math.max(0, (parent.clientHeight - elementRect.height) / 2);
+            parent.scrollTo({
+              top: Math.max(0, targetTop),
+              behavior: 'auto',
+            });
+          }
+
           try {
             element.animate(
               [

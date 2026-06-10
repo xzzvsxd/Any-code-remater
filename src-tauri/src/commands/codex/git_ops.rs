@@ -542,6 +542,14 @@ pub fn truncate_codex_session_to_prompt(
         }
     }
 
+    // prompt_index == 用户提示词总数 表示“保留到当前会话末尾”。
+    // 前端从助手回复处分支时会传所属用户提示词的下一位，确保新分支包含该轮回复，
+    // 而不是错误地回到该轮用户提示词之前。count=0 时仍视为无有效提示词，避免空会话误成功。
+    if !found_target && user_message_count > 0 && user_message_count == prompt_index {
+        truncate_at_line = lines.len();
+        found_target = true;
+    }
+
     if !found_target {
         return Err(format!("Prompt #{} not found in session", prompt_index));
     }
@@ -638,6 +646,13 @@ fn branch_codex_blocking(session_id: &str, prompt_index: usize) -> Result<String
                 user_message_count += 1;
             }
         }
+    }
+
+    // 允许从最后一轮 assistant 回复处分支：前端会传 prompt_index == 用户提示词总数，
+    // 语义为复制完整会话，而不是报 “Prompt #N not found”。
+    if !found_target && user_message_count > 0 && user_message_count == prompt_index {
+        truncate_at_line = lines.len();
+        found_target = true;
     }
 
     if !found_target {

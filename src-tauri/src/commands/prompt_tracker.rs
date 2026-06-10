@@ -292,6 +292,9 @@ fn claude_rewind_capabilities_for_prompt(
 /// 空内容 / Warmup / Skills 消息，只对「真实用户输入」计数。
 ///
 /// 返回该行号（含义为：保留 lines[0..truncate_at_line]，删除该行及之后）。
+/// 当至少存在一条真实用户提示词，且 prompt_index == 真实用户提示词数量时，
+/// 返回 lines.len()，表示保留到会话末尾。
+/// 这用于“从助手回复处分支”：前端会传所属用户提示词的下一位，使分支包含完整当前轮。
 /// 找不到目标时返回 Err（绝不返回 0 以免误清空）。
 fn find_truncate_line(lines: &[&str], prompt_index: usize) -> Result<usize> {
     let mut user_message_count = 0;
@@ -373,6 +376,10 @@ fn find_truncate_line(lines: &[&str], prompt_index: usize) -> Result<usize> {
             return Ok(line_index);
         }
         user_message_count += 1;
+    }
+
+    if user_message_count > 0 && prompt_index == user_message_count {
+        return Ok(lines.len());
     }
 
     if user_message_count == 0 {

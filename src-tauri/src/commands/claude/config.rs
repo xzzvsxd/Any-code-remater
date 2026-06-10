@@ -20,6 +20,104 @@ use crate::commands::permission_config::{
     SAFE_TOOLS,
 };
 
+const CLAUDE_CODE_EFFORT_LEVEL_ENV: &str = "CLAUDE_CODE_EFFORT_LEVEL";
+const LEGACY_CLAUDE_CODE_THINKING_EFFORT_ENV: &str = "CLAUDE_CODE_THINKING_EFFORT";
+const LEGACY_MAX_THINKING_TOKENS_ENV: &str = "MAX_THINKING_TOKENS";
+
+fn normalize_effort_level(effort: Option<String>) -> String {
+    match effort.as_deref() {
+        Some("low") | Some("medium") | Some("high") | Some("xhigh") => effort.unwrap(),
+        // Older Any Code builds used "max"; current Claude Code model config uses "xhigh".
+        Some("max") => "xhigh".to_string(),
+        _ => "high".to_string(),
+    }
+}
+
+fn apply_thinking_mode_settings(
+    settings: &mut serde_json::Value,
+    enabled: bool,
+    effort: Option<String>,
+) -> Result<(), String> {
+    if !settings.is_object() {
+        *settings = serde_json::json!({});
+    }
+
+    let settings_obj = settings.as_object_mut().unwrap();
+    if !settings_obj.contains_key("env") {
+        settings_obj.insert("env".to_string(), serde_json::json!({}));
+    }
+
+    let env_obj = settings_obj
+        .get_mut("env")
+        .unwrap()
+        .as_object_mut()
+        .ok_or("env is not an object")?;
+
+    if enabled {
+        let effort_value = normalize_effort_level(effort);
+        env_obj.insert(
+            CLAUDE_CODE_EFFORT_LEVEL_ENV.to_string(),
+            serde_json::json!(effort_value),
+        );
+    } else {
+        env_obj.remove(CLAUDE_CODE_EFFORT_LEVEL_ENV);
+    }
+
+    // Clean up legacy fields from older Any Code / Claude Code integrations.
+    env_obj.remove(LEGACY_CLAUDE_CODE_THINKING_EFFORT_ENV);
+    env_obj.remove(LEGACY_MAX_THINKING_TOKENS_ENV);
+    settings_obj.remove("alwaysThinkingEnabled");
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thinking_mode_uses_current_effort_env_and_removes_legacy_keys() {
+        let mut settings = serde_json::json!({
+            "env": {
+                "CLAUDE_CODE_THINKING_EFFORT": "max",
+                "MAX_THINKING_TOKENS": "8192",
+                "OTHER_ENV": "keep"
+            },
+            "alwaysThinkingEnabled": true
+        });
+
+        apply_thinking_mode_settings(&mut settings, true, Some("xhigh".to_string())).unwrap();
+
+        let env = settings.get("env").and_then(|v| v.as_object()).unwrap();
+        assert_eq!(
+            env.get("CLAUDE_CODE_EFFORT_LEVEL").and_then(|v| v.as_str()),
+            Some("xhigh")
+        );
+        assert_eq!(env.get("OTHER_ENV").and_then(|v| v.as_str()), Some("keep"));
+        assert!(env.get("CLAUDE_CODE_THINKING_EFFORT").is_none());
+        assert!(env.get("MAX_THINKING_TOKENS").is_none());
+        assert!(settings.get("alwaysThinkingEnabled").is_none());
+    }
+
+    #[test]
+    fn disabling_thinking_mode_clears_current_and_legacy_effort_envs() {
+        let mut settings = serde_json::json!({
+            "env": {
+                "CLAUDE_CODE_EFFORT_LEVEL": "high",
+                "CLAUDE_CODE_THINKING_EFFORT": "max",
+                "MAX_THINKING_TOKENS": "8192"
+            }
+        });
+
+        apply_thinking_mode_settings(&mut settings, false, None).unwrap();
+
+        let env = settings.get("env").and_then(|v| v.as_object()).unwrap();
+        assert!(env.get("CLAUDE_CODE_EFFORT_LEVEL").is_none());
+        assert!(env.get("CLAUDE_CODE_THINKING_EFFORT").is_none());
+        assert!(env.get("MAX_THINKING_TOKENS").is_none());
+    }
+}
+
 #[tauri::command]
 pub async fn get_claude_settings() -> Result<ClaudeSettings, String> {
     log::info!("Reading Claude settings");
@@ -458,8 +556,8 @@ pub async fn save_claude_settings(settings: serde_json::Value) -> Result<String,
     Ok("Settings saved successfully".to_string())
 }
 
-/// Updates the thinking mode in settings.json using Claude 4.6 Adaptive Thinking
-/// Sets CLAUDE_CODE_THINKING_EFFORT env var and cleans up legacy MAX_THINKING_TOKENS
+/// Updates the thinking mode in settings.json using Claude Code effort levels.
+/// Sets CLAUDE_CODE_EFFORT_LEVEL env var and cleans up legacy thinking settings.
 #[tauri::command]
 pub async fn update_thinking_mode(enabled: bool, effort: Option<String>) -> Result<String, String> {
     log::info!(
@@ -481,41 +579,12 @@ pub async fn update_thinking_mode(enabled: bool, effort: Option<String>) -> Resu
         serde_json::json!({})
     };
 
-    // Ensure env object exists
-    if !settings.is_object() {
-        settings = serde_json::json!({});
-    }
-
-    let settings_obj = settings.as_object_mut().unwrap();
-    if !settings_obj.contains_key("env") {
-        settings_obj.insert("env".to_string(), serde_json::json!({}));
-    }
-
-    let env_obj = settings_obj
-        .get_mut("env")
-        .unwrap()
-        .as_object_mut()
-        .ok_or("env is not an object")?;
-
-    // Update CLAUDE_CODE_THINKING_EFFORT (Claude 4.6 Adaptive Thinking)
-    if enabled {
-        let effort_value = effort.unwrap_or_else(|| "high".to_string());
-        env_obj.insert(
-            "CLAUDE_CODE_THINKING_EFFORT".to_string(),
-            serde_json::json!(effort_value),
-        );
-        log::info!("Set CLAUDE_CODE_THINKING_EFFORT to {}", effort_value);
-    } else {
-        env_obj.remove("CLAUDE_CODE_THINKING_EFFORT");
-        log::info!("Removed CLAUDE_CODE_THINKING_EFFORT from env");
-    }
-
-    // Clean up legacy fields
-    env_obj.remove("MAX_THINKING_TOKENS");
-    if settings_obj.contains_key("alwaysThinkingEnabled") {
-        settings_obj.remove("alwaysThinkingEnabled");
-        log::info!("Removed deprecated alwaysThinkingEnabled field");
-    }
+    apply_thinking_mode_settings(&mut settings, enabled, effort)?;
+    log::info!(
+        "{} {} in Claude settings",
+        if enabled { "Set" } else { "Removed" },
+        CLAUDE_CODE_EFFORT_LEVEL_ENV
+    );
 
     // Write back to file
     let json_string = serde_json::to_string_pretty(&settings)

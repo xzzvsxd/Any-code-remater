@@ -1089,6 +1089,10 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
 
   const handlePromptNavigation = useCallback((promptIndex: number) => {
     setShowPromptNavigator(false);
+    // 用户点击历史提示词导航就是明确“查看历史”意图：
+    // 必须立即关闭粘底，否则 useSmartAutoScroll / 流式高度重测会把视图重新拉回底部。
+    setUserScrolled(true);
+    setShouldAutoScroll(false);
 
     // 历史加载中（或首屏消息尚未就位）：暂存目标，等加载完成后再定位。
     if (isHistoryLoading || (isLoading && messages.length === 0)) {
@@ -1099,7 +1103,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     if (sessionMessagesRef.current) {
       sessionMessagesRef.current.scrollToPrompt(promptIndex);
     }
-  }, [isHistoryLoading, isLoading, messages.length]);
+  }, [isHistoryLoading, isLoading, messages.length, setShouldAutoScroll, setUserScrolled]);
 
   // 历史加载完成后，若有暂存的定位目标，补执行一次定位。
   useEffect(() => {
@@ -1110,9 +1114,11 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     pendingPromptNavRef.current = null;
     // 等一帧让 messageGroups 渲染就位再定位
     requestAnimationFrame(() => {
+      setUserScrolled(true);
+      setShouldAutoScroll(false);
       sessionMessagesRef.current?.scrollToPrompt(target);
     });
-  }, [isHistoryLoading, messages.length]);
+  }, [isHistoryLoading, messages.length, setShouldAutoScroll, setUserScrolled]);
 
   const handleRevert = useCallback(async (promptIndex: number, mode: import('@/lib/api').RewindMode = 'both') => {
     if (!effectiveSession) return;
@@ -1678,15 +1684,18 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
           onApprove={approvePlan}
           onReject={rejectPlan}
           continuesAsNewTurn={!supportsStreamJsonInput}
+          canDefer={!pendingApproval?.requestId}
         />
 
         {/* 🆕 User Question Dialog - AskUserQuestion 自动触发 */}
         <AskUserQuestionDialog
           open={showQuestionDialog}
           questions={pendingQuestion?.questions || []}
+          resetKey={pendingQuestion?.questionId}
           onClose={closeQuestionDialog}
           onSubmit={submitAnswers}
           continuesAsNewTurn={!supportsStreamJsonInput}
+          canDefer={!pendingQuestion?.requestId}
         />
       </div>
 

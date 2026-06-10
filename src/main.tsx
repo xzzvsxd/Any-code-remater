@@ -9,9 +9,17 @@ import "./styles.css";
 import "./i18n"; // ✅ i18n 必须同步加载（App 立即需要使用）
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { isSessionWindow } from "./lib/windowManager";
+import { initializeToolRegistry } from "./lib/toolRegistryInit";
 
-// ⚡ 优化：只异步加载 toolRegistry（可以延迟）
-// import { initializeToolRegistry } from "./lib/toolRegistryInit"; // ❌ 改为异步
+// 工具渲染器必须在首帧渲染前注册。
+// 之前异步初始化会导致会话消息先渲染，toolRegistry 暂时为空，update_plan /
+// request_user_input 等已知工具退化成 raw JSON；注册完成后 registry 又不是
+// React state，不会触发已渲染消息重绘，用户就会一直看到 JSON。
+try {
+  initializeToolRegistry();
+} catch (error) {
+  console.error('[main] ToolRegistry initialization failed:', error);
+}
 
 // 🆕 懒加载 SessionWindow 组件（仅在需要时加载）
 const SessionWindow = React.lazy(() => import('./pages/SessionWindow'));
@@ -22,16 +30,6 @@ const AppWrapper: React.FC = () => {
   const isDetachedWindow = isSessionWindow();
 
   React.useEffect(() => {
-    // ⚡ 性能优化：异步加载 toolRegistry（可以延迟，不阻塞 UI）
-    const initializeToolRegistry = async () => {
-      try {
-        const { initializeToolRegistry: init } = await import('./lib/toolRegistryInit');
-        init();
-      } catch (error) {
-        console.error('[AppWrapper] ToolRegistry initialization failed:', error);
-      }
-    };
-
     // 在React应用完全挂载后显示窗口
     const showWindow = async () => {
       try {
@@ -42,9 +40,6 @@ const AppWrapper: React.FC = () => {
         console.error('Failed to show window:', error);
       }
     };
-
-    // 后台异步初始化 toolRegistry（不阻塞）
-    initializeToolRegistry();
 
     // 立即显示窗口（生产模式已优化，不需要长延迟）
     const timer = setTimeout(showWindow, 50);

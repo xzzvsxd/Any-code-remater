@@ -22,7 +22,7 @@ interface SessionWindowState {
   session: Session | null;
   projectPath: string | null;
   tabId: string | null;
-  engine: 'claude' | 'codex' | null;
+  engine: 'claude' | 'codex' | 'gemini' | null;
 }
 
 /**

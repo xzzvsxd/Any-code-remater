@@ -8,7 +8,7 @@
  */
 
 import { useState, useMemo, useEffect } from "react";
-import { HelpCircle, Send, XCircle, CheckCircle, Check } from "lucide-react";
+import { HelpCircle, Send, XCircle, CheckCircle, Check, PenLine } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -35,6 +35,10 @@ export interface AskUserQuestionDialogProps {
   onSubmit: (answers: UserAnswers) => boolean | void;
   /** CLI 不支持流式输入时为 true：回答将作为「新一轮」继续，而非插入当前轮 */
   continuesAsNewTurn?: boolean;
+  /** 当前问题批次的稳定 key；同一个弹窗未关闭但切到下一批问题时用于清空旧选择 */
+  resetKey?: string;
+  /** 是否允许稍后回答；阻塞式 bridge 请求不允许关闭后悬挂 */
+  canDefer?: boolean;
 }
 
 /**
@@ -46,21 +50,30 @@ export function AskUserQuestionDialog({
   onClose,
   onSubmit,
   continuesAsNewTurn = false,
+  resetKey,
+  canDefer = true,
 }: AskUserQuestionDialogProps) {
   // 用户选择的答案
   const [selectedAnswers, setSelectedAnswers] = useState<UserAnswers>({});
+  // 自由输入：每个问题可选"其他"并手写答案
+  const [customInputs, setCustomInputs] = useState<Record<string, string>>({});
+  // 标记哪些问题选择了"自由输入"模式
+  const [usingCustom, setUsingCustom] = useState<Record<string, boolean>>({});
   const safeQuestions = useMemo(() => normalizeQuestions(questions), [questions]);
 
-  // 每次重新打开对话框时清空旧选择，避免「稍后回答」后再次打开仍残留上次选择造成误判。
-  // 关闭瞬间不清空（保留至关闭动画结束），仅在 open 变为 true 时重置。
+  // 每次重新打开对话框，或同一个打开的对话框切换到下一批问题时清空旧选择。
+  // 否则连续 ask-user / request_user_input 会复用上一批选择，造成“第二遍弹了但内容/选择不对”。
   useEffect(() => {
     if (open) {
       setSelectedAnswers({});
+      setCustomInputs({});
+      setUsingCustom({});
     }
-  }, [open]);
+  }, [open, resetKey]);
 
   // 处理单选
   const handleSingleSelect = (questionKey: string, optionLabel: string) => {
+    setUsingCustom(prev => ({ ...prev, [questionKey]: false }));
     setSelectedAnswers(prev => ({
       ...prev,
       [questionKey]: optionLabel,
@@ -69,24 +82,45 @@ export function AskUserQuestionDialog({
 
   // 处理多选
   const handleMultiSelect = (questionKey: string, optionLabel: string, checked: boolean) => {
+    setUsingCustom(prev => ({ ...prev, [questionKey]: false }));
     setSelectedAnswers(prev => {
       const current = prev[questionKey];
       const currentArray = Array.isArray(current) ? current : [];
 
       if (checked) {
-        // 添加到数组
         return {
           ...prev,
           [questionKey]: [...currentArray, optionLabel],
         };
       } else {
-        // 从数组移除
         return {
           ...prev,
           [questionKey]: currentArray.filter(item => item !== optionLabel),
         };
       }
     });
+  };
+
+  // 切换到自由输入模式
+  const handleSwitchToCustom = (questionKey: string) => {
+    setUsingCustom(prev => ({ ...prev, [questionKey]: true }));
+    // 用 customInputs 当前值（可能为空）更新 selectedAnswers
+    const text = customInputs[questionKey]?.trim() || '';
+    setSelectedAnswers(prev => ({
+      ...prev,
+      [questionKey]: text || undefined as any,
+    }));
+  };
+
+  // 更新自由输入文本
+  const handleCustomInputChange = (questionKey: string, text: string) => {
+    setCustomInputs(prev => ({ ...prev, [questionKey]: text }));
+    if (usingCustom[questionKey]) {
+      setSelectedAnswers(prev => ({
+        ...prev,
+        [questionKey]: text.trim() || undefined as any,
+      }));
+    }
   };
 
   // 检查选项是否被选中
@@ -128,7 +162,8 @@ export function AskUserQuestionDialog({
     if (submitted === false) {
       return;
     }
-    onClose();
+    // 父级 submitAnswers 负责关闭当前问题或切到队列里的下一批问题；
+    // 这里不能再调用 onClose，否则会把刚弹出的下一批问题立即隐藏。
     // 重置选择
     setSelectedAnswers({});
   };
@@ -140,8 +175,11 @@ export function AskUserQuestionDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
-      <DialogContent className="sm:max-w-2xl max-h-[88vh] flex flex-col gap-0 p-0 overflow-hidden">
+    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && canDefer && handleClose()}>
+      <DialogContent
+        className="sm:max-w-2xl max-h-[88vh] flex flex-col gap-0 p-0 overflow-hidden"
+        hideCloseButton={!canDefer}
+      >
         {/* 头部 */}
         <DialogHeader className="px-5 pt-5 pb-4 border-b border-border/60">
           <div className="flex items-center gap-3">
@@ -287,6 +325,75 @@ export function AskUserQuestionDialog({
                           <span>可多选</span>
                         </div>
                       )}
+
+                      {/* 自由输入选项：以上都不合适时可手动输入 */}
+                      {!q.multiSelect && (
+                        <div className="mt-1.5">
+                          <div
+                            className={cn(
+                              "px-3 py-2 rounded-md border cursor-pointer transition-colors",
+                              usingCustom[questionKey]
+                                ? "border-blue-500/40 bg-blue-500/10"
+                                : "border-border/50 bg-background hover:bg-muted/50"
+                            )}
+                            onClick={() => handleSwitchToCustom(questionKey)}
+                          >
+                            <div className="flex items-start gap-2.5">
+                              <div
+                                className={cn(
+                                  "flex-shrink-0 mt-0.5 h-4 w-4 rounded-full border-2 flex items-center justify-center transition-colors",
+                                  usingCustom[questionKey]
+                                    ? "bg-blue-500 border-blue-500"
+                                    : "border-muted-foreground/30 bg-background"
+                                )}
+                              >
+                                {usingCustom[questionKey] && (
+                                  <div className="h-1.5 w-1.5 rounded-full bg-white" />
+                                )}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className={cn(
+                                  "text-sm font-medium leading-snug flex items-center gap-1.5",
+                                  usingCustom[questionKey] ? "text-blue-700 dark:text-blue-300" : "text-muted-foreground"
+                                )}>
+                                  <PenLine className="h-3.5 w-3.5" />
+                                  以上都不是，我自己输入
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          {usingCustom[questionKey] && (
+                            <textarea
+                              className="mt-1.5 w-full px-3 py-2 text-sm rounded-md border border-blue-500/30 bg-background resize-none focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+                              rows={2}
+                              placeholder="输入你的答案..."
+                              value={customInputs[questionKey] || ''}
+                              onChange={(e) => handleCustomInputChange(questionKey, e.target.value)}
+                              autoFocus
+                            />
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 无预设选项的纯开放式问题：直接显示输入框 */}
+                  {(!q.options || q.options.length === 0) && (
+                    <div className="pl-6 mt-1">
+                      <textarea
+                        className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background resize-none focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+                        rows={2}
+                        placeholder="输入你的答案..."
+                        value={customInputs[questionKey] || ''}
+                        onChange={(e) => {
+                          const text = e.target.value;
+                          setCustomInputs(prev => ({ ...prev, [questionKey]: text }));
+                          setSelectedAnswers(prev => ({
+                            ...prev,
+                            [questionKey]: text.trim() || undefined as any,
+                          }));
+                        }}
+                      />
                     </div>
                   )}
                 </div>
@@ -304,20 +411,26 @@ export function AskUserQuestionDialog({
                 <CheckCircle className="h-3.5 w-3.5 text-green-600" />
                 <span className="text-green-600 font-medium">已全部回答</span>
               </>
+            ) : !canDefer ? (
+              <span className="text-blue-600 dark:text-blue-400 font-medium">
+                当前轮正在等待你的回答
+              </span>
             ) : (
               <span>已回答 {answeredCount}/{safeQuestions.length}</span>
             )}
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleClose}
-              className="gap-1.5 text-muted-foreground"
-            >
-              <XCircle className="h-4 w-4" />
-              稍后回答
-            </Button>
+            {canDefer && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleClose}
+                className="gap-1.5 text-muted-foreground"
+              >
+                <XCircle className="h-4 w-4" />
+                稍后回答
+              </Button>
+            )}
             <Button
               size="sm"
               onClick={handleSubmit}

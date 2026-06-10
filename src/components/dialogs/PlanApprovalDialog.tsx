@@ -9,7 +9,7 @@
  * - 添加计划分析统计
  */
 
-import { XCircle, FileText, Play, ListChecks } from "lucide-react";
+import { XCircle, FileText, Play, ListChecks, PenLine } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -21,7 +21,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import ReactMarkdown from 'react-markdown';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 export interface PlanApprovalDialogProps {
   /** 是否显示对话框 */
@@ -30,12 +30,14 @@ export interface PlanApprovalDialogProps {
   plan: string;
   /** 关闭对话框 */
   onClose: () => void;
-  /** 批准计划 - 关闭 Plan 模式开始执行 */
-  onApprove: () => void;
-  /** 拒绝计划 - 保持 Plan 模式继续规划 */
-  onReject: () => void;
+  /** 批准计划 - 关闭 Plan 模式开始执行。feedback 为用户附加意见（可选）。 */
+  onApprove: (feedback?: string) => void;
+  /** 拒绝/修改计划 - 保持 Plan 模式。feedback 为拒绝理由或修改意见。 */
+  onReject: (feedback?: string) => void;
   /** CLI 不支持流式输入时为 true：批准将作为「新一轮」继续，而非插入当前轮 */
   continuesAsNewTurn?: boolean;
+  /** 是否允许关闭后稍后处理；阻塞式 bridge 计划审批不允许隐藏后悬挂 */
+  canDefer?: boolean;
 }
 
 /**
@@ -48,15 +50,27 @@ export function PlanApprovalDialog({
   onApprove,
   onReject,
   continuesAsNewTurn = false,
+  canDefer = true,
 }: PlanApprovalDialogProps) {
+  const [feedback, setFeedback] = useState('');
+
+  useEffect(() => {
+    if (open) {
+      setFeedback('');
+    }
+  }, [open, plan]);
+
   const handleApprove = () => {
-    onApprove();
-    onClose();
+    onApprove(feedback.trim() || undefined);
+    // 父级 approvePlan 负责关闭当前计划或切到队列里的下一条计划；
+    // 这里不能再调用 onClose，否则会把刚弹出的下一条计划立即隐藏。
+    setFeedback('');
   };
 
   const handleReject = () => {
-    onReject();
-    onClose();
+    onReject(feedback.trim() || undefined);
+    // 父级 rejectPlan 负责关闭当前计划或切到队列里的下一条计划。
+    setFeedback('');
   };
 
   // 分析计划内容
@@ -75,8 +89,11 @@ export function PlanApprovalDialog({
   }, [plan]);
 
   return (
-    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <DialogContent className="sm:max-w-2xl max-h-[80vh] flex flex-col">
+    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && canDefer && onClose()}>
+      <DialogContent
+        className="sm:max-w-2xl max-h-[80vh] flex flex-col"
+        hideCloseButton={!canDefer}
+      >
         <DialogHeader>
           <div className="flex items-center gap-2">
             <div className="h-10 w-10 rounded-full bg-blue-500/10 flex items-center justify-center">
@@ -134,6 +151,21 @@ export function PlanApprovalDialog({
           </ul>
         </div>
 
+        {/* 用户反馈输入 */}
+        <div className="px-1 mb-3">
+          <div className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1.5">
+            <PenLine className="h-3.5 w-3.5" />
+            修改意见 / 附加说明（可选）
+          </div>
+          <textarea
+            className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background resize-none focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+            rows={2}
+            placeholder="写下修改意见、补充说明，或留空直接操作…"
+            value={feedback}
+            onChange={(e) => setFeedback(e.target.value)}
+          />
+        </div>
+
         <DialogFooter className="gap-2 sm:gap-2">
           <Button
             variant="outline"
@@ -141,7 +173,7 @@ export function PlanApprovalDialog({
             className="gap-2"
           >
             <XCircle className="h-4 w-4" />
-            继续规划
+            {feedback.trim() ? "提交意见并继续规划" : "继续规划"}
           </Button>
           <Button
             onClick={handleApprove}

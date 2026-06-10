@@ -552,7 +552,7 @@ npm run tauri:build-fast
    - 验证安装: `claude --version`
 
 2. **配置 Gemini CLI（可选）** 🆕
-   - 安装 Gemini CLI: `npm install -g @anthropic-ai/claude-code` 或从 [官方仓库](https://github.com/google-gemini/gemini-cli) 安装
+   - 安装 Gemini CLI: `npm install -g @google/gemini-cli` 或从 [官方仓库](https://github.com/google-gemini/gemini-cli) 安装
    - 在应用中选择认证方式：
      - **Google OAuth**（推荐，免费层可用）
      - **API Key**（从 Google AI Studio 获取）

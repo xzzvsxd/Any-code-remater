@@ -754,12 +754,16 @@ export function initializeToolRegistry(): void {
       description: '进入 Plan 模式',
     },
 
-    // AskUserQuestion - 用户问题询问
+    // AskUserQuestion / request_user_input - 用户问题询问
+    // 支持：
+    // - Claude/内置旧名：AskUserQuestion, ask-user-question
+    // - MCP 简写：ask_user
+    // - Codex/工具协议名：request_user_input
     {
       name: 'askuserquestion',
-      pattern: /^ask[-_]?user[-_]?question$/i,
+      pattern: /^(?:ask[-_]?user(?:[-_]?question)?|request[-_]?user[-_]?input)$/i,
       render: createToolAdapter(AskUserQuestionWidget, (props) => ({
-        questions: normalizeQuestions(props.input?.questions),
+        questions: normalizeQuestions(props.input?.questions ?? props.input?.question ?? props.input),
         answers: normalizeAnswers(props.input?.answers || props.result?.content?.answers),
         result: props.result,
         toolId: props.toolId,

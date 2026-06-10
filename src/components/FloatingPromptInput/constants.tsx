@@ -8,8 +8,9 @@ import { getCachedModelNames } from "@/lib/modelNameParser";
  * session metadata still takes precedence when we know the exact model.
  */
 const DEFAULT_MODEL_NAMES: Record<string, string> = {
+  fable: "Claude Fable 5",
   sonnet: "Claude Sonnet 4.6",
-  opus: "Claude Opus 4.7",
+  opus: "Claude Opus 4.8",
 };
 
 /**
@@ -19,6 +20,7 @@ const DEFAULT_MODEL_NAMES: Record<string, string> = {
  */
 export function getModels(): ModelConfig[] {
   const cached = getCachedModelNames();
+  const fableName = cached["fable"] || DEFAULT_MODEL_NAMES.fable;
   const sonnetName = cached["sonnet"] || DEFAULT_MODEL_NAMES.sonnet;
   const opusName = cached["opus"] || DEFAULT_MODEL_NAMES.opus;
   const sonnet1mName = cached["sonnet"]
@@ -29,6 +31,12 @@ export function getModels(): ModelConfig[] {
     : `${DEFAULT_MODEL_NAMES.opus} 1M`;
 
   return [
+    {
+      id: "fable",
+      name: fableName,
+      description: "Most capable model for hardest and longest-running tasks",
+      icon: <Crown className="h-4 w-4" />
+    },
     {
       id: "sonnet",
       name: sonnetName,
@@ -64,8 +72,8 @@ export const MODELS: ModelConfig[] = getModels();
 
 /**
  * Thinking modes configuration
- * Claude 4.6 Adaptive Thinking with effort levels
- * Controls thinking depth via CLAUDE_CODE_THINKING_EFFORT env var
+ * Claude Code adaptive thinking with effort levels.
+ * Controls thinking depth via CLAUDE_CODE_EFFORT_LEVEL env var.
  *
  * Note: Names and descriptions are translation keys that will be resolved at runtime
  */
@@ -99,9 +107,9 @@ export const THINKING_MODES: ThinkingModeConfig[] = [
   },
   {
     id: "adaptive",
-    effort: "max",
-    name: "promptInput.thinkingEffortMax",
-    description: "promptInput.thinkingEffortMaxDesc",
+    effort: "xhigh",
+    name: "promptInput.thinkingEffortXHigh",
+    description: "promptInput.thinkingEffortXHighDesc",
     level: 4,
   }
 ];

@@ -42,13 +42,15 @@ impl Drop for ClaudeProcessState {
 
 /// Maps frontend model IDs to Claude CLI model aliases
 /// Converts frontend-friendly model names to official Claude Code model identifiers
-/// Updated to use Claude 4.6 (released February 2026) as the latest models
+/// Uses Claude Code's model aliases so the CLI resolves to the current model
+/// for each family (for example: fable -> Claude Fable 5).
 pub(super) fn map_model_to_claude_alias(model: &str) -> String {
     match model {
+        "fable" => "fable".to_string(),
         "sonnet1m" => "sonnet[1m]".to_string(),
         "sonnet" => "sonnet".to_string(),
         "opus1m" => "opus[1m]".to_string(),
-        // Use 'opus' alias which automatically resolves to latest Opus (Claude 4.6)
+        // Use 'opus' alias which automatically resolves to latest Opus.
         "opus" => "opus".to_string(),
         // Pass through any other model names unchanged (for future compatibility)
         _ => model.to_string(),

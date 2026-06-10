@@ -46,6 +46,26 @@ mod tests {
         stats.sort_by(|a, b| compare_f64_desc(a.total_cost, b.total_cost));
         stats.sort_by(|a, b| compare_f64_asc(a.total_cost, b.total_cost));
     }
+
+    #[test]
+    fn opus48_pricing_matches_current_claude_model_table() {
+        let pricing = ModelPricing::for_family(ModelFamily::Opus48);
+
+        assert_eq!(pricing.input, 5.0);
+        assert_eq!(pricing.output, 25.0);
+        assert_eq!(pricing.cache_write, 6.25);
+        assert_eq!(pricing.cache_read, 0.50);
+    }
+
+    #[test]
+    fn fable5_pricing_matches_current_claude_model_table() {
+        let pricing = ModelPricing::for_family(ModelFamily::Fable5);
+
+        assert_eq!(pricing.input, 10.0);
+        assert_eq!(pricing.output, 50.0);
+        assert_eq!(pricing.cache_write, 12.5);
+        assert_eq!(pricing.cache_read, 1.0);
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -129,6 +149,7 @@ struct ModelPricing {
 /// Model family enumeration for categorization
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ModelFamily {
+    Fable5,   // Claude Fable 5
     Opus48,   // Claude 4.8 Opus
     Opus47,   // Claude 4.7 Opus
     Opus46,   // Claude 4.6 Opus
@@ -144,12 +165,19 @@ impl ModelPricing {
     /// Get pricing for a specific model family
     const fn for_family(family: ModelFamily) -> Self {
         match family {
+            // Claude 5 Series
+            ModelFamily::Fable5 => ModelPricing {
+                input: 10.0,
+                output: 50.0,
+                cache_write: 12.5,
+                cache_read: 1.0,
+            },
             // Claude 4.8 Series (Latest - 2026)
             ModelFamily::Opus48 => ModelPricing {
-                input: 15.0,
-                output: 75.0,
-                cache_write: 18.75,
-                cache_read: 1.50,
+                input: 5.0,
+                output: 25.0,
+                cache_write: 6.25,
+                cache_read: 0.50,
             },
             // Claude 4.7 Series (Latest - May 2026)
             ModelFamily::Opus47 => ModelPricing {
@@ -229,7 +257,12 @@ fn parse_model_family(model: &str) -> ModelFamily {
     // Priority-based matching (order matters!)
     // Check for specific model families in order from most to least specific
 
-    // Claude 4.8 Series (Latest)
+    // Claude 5 Series
+    if normalized.contains("fable") {
+        return ModelFamily::Fable5;
+    }
+
+    // Claude 4.8 Series
     if normalized.contains("opus") && (normalized.contains("4.8") || normalized.contains("4-8")) {
         return ModelFamily::Opus48;
     }

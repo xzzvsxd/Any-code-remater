@@ -1154,8 +1154,8 @@ export const api = {
   },
 
   /**
-   * Updates the thinking mode using Claude 4.6 Adaptive Thinking
-   * Sets CLAUDE_CODE_THINKING_EFFORT env var in settings.json
+   * Updates the thinking mode using Claude Code effort levels.
+   * Sets CLAUDE_CODE_EFFORT_LEVEL env var in settings.json.
    * @param enabled - Whether to enable adaptive thinking
    * @param effort - Effort level: low, medium, high, max (only used when enabled)
    * @returns Promise resolving when the settings are updated

@@ -23,6 +23,10 @@ import {
 } from "react";
 import { getQuestionIdContent, getQuestionKey, normalizeQuestions } from "@/lib/askUserQuestionUtils";
 import { api } from "@/lib/api";
+import {
+  enqueuePendingInteraction,
+  shiftPendingInteraction,
+} from "@/lib/pendingInteractionQueue";
 
 /**
  * 问题选项接口
@@ -132,11 +136,21 @@ function resolveDedupeKey(questions: Question[], toolId?: string): string {
 export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
   const [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(null);
   const [showQuestionDialog, setShowQuestionDialog] = useState(false);
+  const pendingQuestionRef = useRef<PendingQuestion | null>(null);
+  const showQuestionDialogRef = useRef(false);
+  const questionQueueRef = useRef<PendingQuestion[]>([]);
   // 已回答集合仅存内存：刷新/重开会话应允许重新询问，避免「相同问题被永久吞掉」导致 CLI 卡死。
   const [answeredQuestionIds, setAnsweredQuestionIds] = useState<Set<string>>(() => new Set());
 
   // 发送消息的回调引用
   const sendMessageCallbackRef = useRef<((message: string) => void) | null>(null);
+
+  const setActiveQuestion = useCallback((question: PendingQuestion | null, visible: boolean) => {
+    pendingQuestionRef.current = question;
+    showQuestionDialogRef.current = visible;
+    setPendingQuestion(question);
+    setShowQuestionDialog(visible);
+  }, []);
 
   // 「已自动弹出过」的问题去重集合。
   // 关键：用 ref 而非组件内 state，使其与 widget 生命周期解耦——
@@ -148,6 +162,28 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
   const isQuestionAnswered = useCallback((questionId: string): boolean => {
     return answeredQuestionIds.has(questionId);
   }, [answeredQuestionIds]);
+
+  const activateOrQueueQuestion = useCallback((nextQuestion: PendingQuestion) => {
+    // 当前已有可见弹窗时，不覆盖它；后续问题排队，避免第一个 bridge 请求被覆盖后永远挂起。
+    const activeQuestion = pendingQuestionRef.current;
+    if (activeQuestion && showQuestionDialogRef.current) {
+      questionQueueRef.current = enqueuePendingInteraction(
+        questionQueueRef.current,
+        activeQuestion,
+        nextQuestion,
+        q => q.questionId,
+      );
+      return;
+    }
+
+    setActiveQuestion(nextQuestion, true);
+  }, [setActiveQuestion]);
+
+  const showNextQueuedQuestion = useCallback(() => {
+    const { next, rest } = shiftPendingInteraction(questionQueueRef.current);
+    questionQueueRef.current = rest;
+    setActiveQuestion(next, Boolean(next));
+  }, [setActiveQuestion]);
 
   // 触发问答对话框
   const triggerQuestionDialog = useCallback((questions: Question[], toolId?: string, auto: boolean = false) => {
@@ -168,29 +204,27 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
       autoTriggeredIdsRef.current.add(questionId);
     }
 
-    setPendingQuestion({
+    activateOrQueueQuestion({
       questions: safeQuestions,
       questionId,
       timestamp: Date.now(),
     });
-    setShowQuestionDialog(true);
-  }, [answeredQuestionIds]);
+  }, [answeredQuestionIds, activateOrQueueQuestion]);
 
   // 触发阻塞式 MCP 提问：由后端 ask-user-question 事件驱动，必然弹出并携带 requestId。
   // 不走 answeredQuestionIds / autoTriggered 去重——每个 MCP 调用唯一，且 CLI 正阻塞等待，必须弹。
   const triggerBridgeQuestion = useCallback(
     (requestId: string, sessionId: string, questions: Question[]) => {
       const safeQuestions = normalizeQuestions(questions);
-      setPendingQuestion({
+      activateOrQueueQuestion({
         questions: safeQuestions,
         questionId: `bridge_${requestId}`,
         timestamp: Date.now(),
         requestId,
         sessionId,
       });
-      setShowQuestionDialog(true);
     },
-    [],
+    [activateOrQueueQuestion],
   );
 
   // 设置发送消息回调
@@ -241,8 +275,7 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
         newSet.add(questionId);
         return newSet;
       });
-      setPendingQuestion(null);
-      setShowQuestionDialog(false);
+      showNextQueuedQuestion();
 
       // 回灌唤醒挂起的 handler。失败（已超时/取消）则降级为发新一轮，避免答案丢失。
       api.answerUserQuestion(requestId, message)
@@ -273,8 +306,7 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
       newSet.add(questionId);
       return newSet;
     });
-    setPendingQuestion(null);
-    setShowQuestionDialog(false);
+    showNextQueuedQuestion();
 
     // 延迟发送，确保状态已更新；捕获当前 callback，避免切 tab/卸载时答案静默丢失。
     setTimeout(() => {
@@ -282,13 +314,26 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
     }, 100);
 
     return true;
-  }, [pendingQuestion, formatAnswersAsMessage]);
+  }, [pendingQuestion, formatAnswersAsMessage, showNextQueuedQuestion]);
 
   // 关闭问答对话框（不提交答案）
   const closeQuestionDialog = useCallback(() => {
+    // 阻塞式 bridge 请求不能被隐藏，否则后端 handler 会一直等待。
+    if (pendingQuestionRef.current?.requestId) {
+      return;
+    }
+
+    // 如果关闭的是可延后回答的旧 widget 问题，而队列里已有后续阻塞式请求，
+    // 立即切到下一项，避免“稍后回答”把后续 request_user_input 永久压在队列里。
+    if (questionQueueRef.current.length > 0) {
+      showNextQueuedQuestion();
+      return;
+    }
+
+    showQuestionDialogRef.current = false;
     setShowQuestionDialog(false);
     // 注意：不标记为已回答，用户可以稍后再次触发
-  }, []);
+  }, [showNextQueuedQuestion]);
 
   const value: UserQuestionContextValue = {
     pendingQuestion,

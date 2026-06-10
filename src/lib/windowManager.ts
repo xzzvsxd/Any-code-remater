@@ -206,7 +206,7 @@ export function parseSessionWindowParams(): {
   tabId?: string;
   sessionId?: string;
   projectPath?: string;
-  engine?: 'claude' | 'codex';
+  engine?: 'claude' | 'codex' | 'gemini';
 } {
   const params = new URLSearchParams(window.location.search);
   const windowType = params.get('window');
@@ -221,7 +221,9 @@ export function parseSessionWindowParams(): {
     ? decodeURIComponent(params.get('project_path')!)
     : undefined;
   const engineParam = params.get('engine');
-  const engine = (engineParam === 'claude' || engineParam === 'codex') ? engineParam : undefined;
+  const engine = (engineParam === 'claude' || engineParam === 'codex' || engineParam === 'gemini')
+    ? engineParam
+    : undefined;
   return {
     isSessionWindow: true,
     tabId,

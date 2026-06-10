@@ -72,7 +72,10 @@ function normalizeOptions(value: unknown): Question["options"] {
           rawOption.label,
           toDisplayString(
             rawOption.text,
-            toDisplayString(rawOption.value, `选项 ${optionIndex + 1}`)
+            toDisplayString(
+              rawOption.value,
+              toDisplayString(rawOption.id, `选项 ${optionIndex + 1}`)
+            )
           )
         ),
         description: toDisplayString(rawOption.description) || undefined,

@@ -70,6 +70,7 @@ const FloatingPromptInputInner = (
     if (!modelStr) return null;
 
     const lowerModel = modelStr.toLowerCase();
+    if (lowerModel.includes("fable")) return "fable";
     if (lowerModel.includes("opus") && lowerModel.includes("1m")) return "opus1m";
     if (lowerModel.includes("opus")) return "opus";
     if (lowerModel.includes("sonnet") && lowerModel.includes("1m")) return "sonnet1m";
@@ -142,15 +143,25 @@ const FloatingPromptInputInner = (
     }
   }, []);
 
+  const parseThinkingEffort = (effort: unknown): ThinkingEffort | null => {
+    if (typeof effort !== 'string') return null;
+    if (effort === 'max') return 'xhigh'; // legacy value from older Any Code builds
+    if (['low', 'medium', 'high', 'xhigh'].includes(effort)) return effort as ThinkingEffort;
+    return null;
+  };
+
   // Initialize thinking mode from settings.json (source of truth)
-  // Claude 4.6: Read CLAUDE_CODE_THINKING_EFFORT from settings.json env
+  // Claude Code: Read CLAUDE_CODE_EFFORT_LEVEL from settings.json env.
+  // Keep legacy CLAUDE_CODE_THINKING_EFFORT/MAX_THINKING_TOKENS migration support.
   useEffect(() => {
     const initThinkingMode = async () => {
       try {
         const settings = await api.getClaudeSettings();
-        const effort = settings?.env?.CLAUDE_CODE_THINKING_EFFORT;
-        if (effort && ['low', 'medium', 'high', 'max'].includes(effort)) {
-          dispatch({ type: "SET_THINKING_MODE", payload: { mode: 'adaptive', effort: effort as ThinkingEffort } });
+        const effort = parseThinkingEffort(
+          settings?.env?.CLAUDE_CODE_EFFORT_LEVEL ?? settings?.env?.CLAUDE_CODE_THINKING_EFFORT
+        );
+        if (effort) {
+          dispatch({ type: "SET_THINKING_MODE", payload: { mode: 'adaptive', effort } });
           localStorage.setItem('thinking_mode', 'adaptive');
           localStorage.setItem('thinking_effort', effort);
         } else {
@@ -169,9 +180,9 @@ const FloatingPromptInputInner = (
         console.error('[ThinkingMode] Failed to read settings, falling back to localStorage:', error);
         try {
           const stored = localStorage.getItem('thinking_mode');
-          const storedEffort = localStorage.getItem('thinking_effort');
+          const storedEffort = parseThinkingEffort(localStorage.getItem('thinking_effort'));
           if (stored === 'adaptive' && storedEffort) {
-            dispatch({ type: "SET_THINKING_MODE", payload: { mode: 'adaptive', effort: storedEffort as ThinkingEffort } });
+            dispatch({ type: "SET_THINKING_MODE", payload: { mode: 'adaptive', effort: storedEffort } });
           } else {
             dispatch({ type: "SET_THINKING_MODE", payload: { mode: 'off' } });
           }
@@ -400,12 +411,13 @@ const FloatingPromptInputInner = (
 
         if (envVars && typeof envVars === 'object') {
           const customModel = envVars.ANTHROPIC_MODEL ||
+                             envVars.ANTHROPIC_DEFAULT_FABLE_MODEL ||
                              envVars.ANTHROPIC_DEFAULT_SONNET_MODEL ||
                              envVars.ANTHROPIC_DEFAULT_OPUS_MODEL;
 
           if (customModel && typeof customModel === 'string') {
-            // Check if it's a built-in model ID (sonnet, opus, sonnet1m)
-            const isBuiltInModel = ['sonnet', 'opus', 'sonnet1m', 'opus1m'].includes(customModel.toLowerCase());
+            // Check if it's a built-in model ID (fable, sonnet, opus, sonnet1m, opus1m)
+            const isBuiltInModel = ['fable', 'sonnet', 'opus', 'sonnet1m', 'opus1m'].includes(customModel.toLowerCase());
 
             if (!isBuiltInModel) {
               // This is a custom model - add it to the list
@@ -440,8 +452,8 @@ const FloatingPromptInputInner = (
     appendPrompt: (text: string) => dispatch({ type: "APPEND_PROMPT", payload: text }),
   }));
 
-  // Toggle thinking mode - cycle through: off → high → max → low → medium → off
-  const EFFORT_CYCLE: (ThinkingEffort | 'off')[] = ['off', 'high', 'max', 'low', 'medium'];
+  // Toggle thinking mode - cycle through: off → high → xhigh → low → medium → off
+  const EFFORT_CYCLE: (ThinkingEffort | 'off')[] = ['off', 'high', 'xhigh', 'low', 'medium'];
 
   const handleToggleThinkingMode = useCallback(async () => {
     const currentMode = state.selectedThinkingMode;

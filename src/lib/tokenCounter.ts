@@ -3,7 +3,7 @@
  *
  * 鍩轰簬Claude瀹樻柟Token Count API鐨勫噯纭畉oken璁＄畻鏈嶅姟
  * 鏀寔鎵€鏈夋秷鎭被鍨嬪拰Claude妯″瀷鐨勭簿纭畉oken缁熻鍜屾垚鏈绠? *
- * 2026骞存渶鏂板畼鏂瑰畾浠峰拰Claude 4.7/4.6绯诲垪妯″瀷鏀寔
+ * 2026 Claude model pricing and context-window support
  */
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -14,30 +14,37 @@ import { api } from './api';
 // 鈿狅笍 WARNING: This pricing table MUST be kept in sync with:
 //    src-tauri/src/commands/usage.rs::ModelPricing
 // Source: https://docs.claude.com/en/docs/about-claude/models/overview
-// Last Updated: May 2026
+// Last Updated: June 2026
 // ============================================================================
 
 export const CLAUDE_PRICING = {
+  // Claude 5 Series
+  'claude-fable-5': {
+    input: 10.0,
+    output: 50.0,
+    cache_write: 12.5,
+    cache_read: 1.0,
+  },
   // Claude 4.8 Series (Latest - 2026)
   'claude-opus-4-8': {
-    input: 15.0,
-    output: 75.0,
-    cache_write: 18.75,
-    cache_read: 1.50,
+    input: 5.0,
+    output: 25.0,
+    cache_write: 6.25,
+    cache_read: 0.50,
   },
   // Claude 4.7 Series
   'claude-opus-4-7': {
-    input: 15.0,
-    output: 75.0,
-    cache_write: 18.75,
-    cache_read: 1.50,
+    input: 5.0,
+    output: 25.0,
+    cache_write: 6.25,
+    cache_read: 0.50,
   },
   // Claude 4.6 Series
   'claude-opus-4-6': {
-    input: 15.0,
-    output: 75.0,
-    cache_write: 18.75,
-    cache_read: 1.50,
+    input: 5.0,
+    output: 25.0,
+    cache_write: 6.25,
+    cache_read: 0.50,
   },
   'claude-sonnet-4-6': {
     input: 3.0,
@@ -95,7 +102,7 @@ export const CLAUDE_PRICING = {
     cache_write: 18.75,
     cache_read: 1.50,
   },
-  // 榛樿鍊?(浣跨敤鏈€鏂?Sonnet 4.6 瀹氫环)
+  // Default fallback (latest Sonnet pricing)
   'default': {
     input: 3.0,
     output: 15.0,
@@ -111,6 +118,8 @@ export const CLAUDE_PRICING = {
 // ============================================================================
 
 export const CLAUDE_CONTEXT_WINDOWS = {
+  // Claude 5 Series
+  'claude-fable-5': 1000000,
   // Claude 4.8 Series
   'claude-opus-4-8': 200000,
   'claude-opus-4-8[1m]': 1000000,
@@ -314,6 +323,7 @@ export function getContextWindowSize(model?: string, engine?: string): number {
   return CLAUDE_CONTEXT_WINDOWS['default'];
 }
 export const MODEL_ALIASES = {
+  'fable': 'claude-fable-5',
   'opus': 'claude-opus-4-8',
   'opus1m': 'claude-opus-4-8[1m]',
   'opus4.8': 'claude-opus-4-8',
@@ -495,7 +505,12 @@ export class TokenCounterService {
 
     // Priority-based matching (order matters! MUST match backend logic)
 
-    // Claude 4.8 Series (Latest)
+    // Claude 5 Series
+    if (normalized.includes('fable')) {
+      return 'claude-fable-5';
+    }
+
+    // Claude 4.8 Series
     if (normalized.includes('opus') && (normalized.includes('4.8') || normalized.includes('4-8'))) {
       return 'claude-opus-4-8';
     }

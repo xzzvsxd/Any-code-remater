@@ -24,7 +24,21 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   // Claude Models (Anthropic)
   // ============================================================================
 
-  // Claude 4.7 / 4.6 Series
+  // Claude 5 Series
+  'claude-fable-5': {
+    input: 10.0,
+    output: 50.0,
+    cacheWrite: 12.5,
+    cacheRead: 1.0
+  },
+
+  // Claude 4.8 / 4.7 / 4.6 Series
+  'claude-opus-4.8': {
+    input: 5.0,
+    output: 25.0,
+    cacheWrite: 6.25,
+    cacheRead: 0.50
+  },
   'claude-opus-4.7': {
     input: 5.0,
     output: 25.0,
@@ -426,7 +440,15 @@ export function getPricingForModel(model?: string, engine?: string): ModelPricin
   // Claude Models (Anthropic)
   // ============================================================================
 
-  // Claude 4.7 Series (Latest)
+  // Claude 5 Series
+  if (normalized.includes('fable')) {
+    return MODEL_PRICING['claude-fable-5'];
+  }
+
+  // Claude 4.8 / 4.7 Series
+  if (normalized.includes('opus') && (normalized.includes('4.8') || normalized.includes('4-8'))) {
+    return MODEL_PRICING['claude-opus-4.8'];
+  }
   if (normalized.includes('opus') && (normalized.includes('4.7') || normalized.includes('4-7'))) {
     return MODEL_PRICING['claude-opus-4.7'];
   }
@@ -463,7 +485,7 @@ export function getPricingForModel(model?: string, engine?: string): ModelPricin
     return MODEL_PRICING['claude-haiku-4.5']; // Default to latest
   }
   if (normalized.includes('opus')) {
-    return MODEL_PRICING['claude-opus-4.7']; // Default to latest
+    return MODEL_PRICING['claude-opus-4.8']; // Default to latest
   }
   if (normalized.includes('sonnet')) {
     return MODEL_PRICING['claude-sonnet-4.6']; // Default to latest

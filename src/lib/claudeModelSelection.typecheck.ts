@@ -10,7 +10,7 @@ const expectEqual = (actual: unknown, expected: unknown, label: string) => {
 };
 
 const initMessages: ClaudeStreamMessage[] = [
-  { type: 'system', subtype: 'init', model: 'claude-opus-4-7-20260201' },
+  { type: 'system', subtype: 'init', model: 'claude-opus-4-8-20260601' },
 ];
 
 expectEqual(
@@ -19,7 +19,7 @@ expectEqual(
     messages: initMessages,
     lastSubmittedModel: 'sonnet',
   }),
-  'claude-opus-4-7-20260201',
+  'claude-opus-4-8-20260601',
   'continuation prefers runtime init model over default sonnet'
 );
 
@@ -34,6 +34,7 @@ expectEqual(
   'continuation falls back to saved session model'
 );
 
-expectEqual(formatClaudeModelLabel('claude-opus-4-7-20260201'), 'Claude Opus 4.7', 'full model label');
-expectEqual(formatClaudeModelLabel('opus1m'), 'Claude Opus 4.7 1M', 'alias model label');
+expectEqual(formatClaudeModelLabel('claude-opus-4-8-20260601'), 'Claude Opus 4.8', 'full model label');
+expectEqual(formatClaudeModelLabel('opus1m'), 'Claude Opus 4.8 1M', 'alias model label');
+expectEqual(formatClaudeModelLabel('fable'), 'Claude Fable 5', 'fable alias label');
 expectEqual(formatClaudeModelLabel('my-custom-model'), 'my-custom-model', 'custom model label');
