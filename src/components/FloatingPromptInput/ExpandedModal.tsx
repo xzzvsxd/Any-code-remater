@@ -1,4 +1,4 @@
-import React, { forwardRef, useState, useEffect } from "react";
+import React, { forwardRef, useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { createPortal } from "react-dom";
 import { Minimize2, X, Wand2, ChevronDown, Code2, Zap, Settings, ZoomIn } from "lucide-react";
@@ -14,7 +14,8 @@ import { CodexReasoningLevelSelector, type CodexReasoningLevel } from "./CodexRe
 import { GeminiModelSelector } from "./GeminiModelSelector";
 import { ThinkingModeToggle } from "./ThinkingModeToggle";
 import { PlanModeToggle } from "./PlanModeToggle";
-import { ModelType, ModelConfig, ThinkingEffort } from "./types";
+import { ModelType, ModelConfig, ThinkingEffort, type ExecutionStatusInfo } from "./types";
+import { resolvePromptActionButtonState, shouldSubmitPromptFromEnterKey } from "./promptActionButtonState";
 
 interface ExpandedModalProps {
   prompt: string;
@@ -49,6 +50,9 @@ interface ExpandedModalProps {
   onDragOver: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
   onSend: () => void;
+  isLoading: boolean;
+  executionStatus?: ExecutionStatusInfo;
+  onCancel: () => void;
 }
 
 /**
@@ -126,9 +130,45 @@ export const ExpandedModal = forwardRef<HTMLTextAreaElement, ExpandedModalProps>
   onDragLeave,
   onDragOver,
   onDrop,
-  onSend
+  onSend,
+  isLoading,
+  executionStatus,
+  onCancel
 }, ref) => {
   const [lightboxImage, setLightboxImage] = useState<{ src: string; alt?: string } | null>(null);
+  const [isComposing, setIsComposing] = useState(false);
+  const compositionEndTimeRef = useRef(0);
+  const canCancelExecution = !executionStatus || executionStatus.canCancel;
+  const isCancellingExecution = executionStatus?.isCancelling === true;
+  const actionButtonState = resolvePromptActionButtonState({
+    isLoading,
+    prompt,
+    hasAttachments: imageAttachments.length > 0,
+    disabled,
+    canCancelExecution,
+    isCancellingExecution,
+  });
+
+  const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (shouldSubmitPromptFromEnterKey({
+      key: e.key,
+      shiftKey: e.shiftKey,
+      ctrlKey: e.ctrlKey,
+      metaKey: e.metaKey,
+      isExpanded: true,
+      isFilePickerOpen: false,
+      actionMode: actionButtonState.mode,
+      actionDisabled: actionButtonState.disabled,
+      isComposing,
+      nativeIsComposing: e.nativeEvent.isComposing,
+      keyCode: e.nativeEvent.keyCode,
+      which: (e.nativeEvent as any).which,
+      timeSinceCompositionEndMs: Date.now() - compositionEndTimeRef.current,
+    })) {
+      e.preventDefault();
+      onSend();
+    }
+  };
 
   return (
     <>
@@ -226,6 +266,12 @@ export const ExpandedModal = forwardRef<HTMLTextAreaElement, ExpandedModalProps>
           value={prompt}
           onChange={onTextChange}
           onPaste={onPaste}
+          onKeyDown={handleTextareaKeyDown}
+          onCompositionStart={() => setIsComposing(true)}
+          onCompositionEnd={() => {
+            setIsComposing(false);
+            compositionEndTimeRef.current = Date.now();
+          }}
           placeholder="输入您的提示词..."
           className="min-h-[240px] max-h-[600px] resize-none overflow-y-auto"
           disabled={disabled}
@@ -391,13 +437,37 @@ export const ExpandedModal = forwardRef<HTMLTextAreaElement, ExpandedModalProps>
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <Button
-              onClick={onSend}
-              disabled={(!prompt.trim() && imageAttachments.length === 0) || disabled}
-              size="default"
-            >
-              发送
-            </Button>
+            {actionButtonState.mode === 'cancel' ? (
+              <div className="flex flex-col items-end gap-1">
+                <Button
+                  onClick={onCancel}
+                  variant="destructive"
+                  size="default"
+                  disabled={actionButtonState.disabled}
+                  title={
+                    !canCancelExecution
+                      ? '正在启动进程，拿到当前会话 ID 后即可安全取消'
+                      : '只取消当前会话，不影响其他对话'
+                  }
+                  className="bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700 text-white font-medium disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {isCancellingExecution ? '取消中...' : '取消'}
+                </Button>
+                {!canCancelExecution && (
+                  <span className="max-w-44 text-[10px] leading-tight text-muted-foreground text-right">
+                    启动中，等待会话 ID...
+                  </span>
+                )}
+              </div>
+            ) : (
+              <Button
+                onClick={onSend}
+                disabled={actionButtonState.disabled}
+                size="default"
+              >
+                发送
+              </Button>
+            )}
           </div>
         </div>
       </motion.div>

@@ -26,6 +26,7 @@ import { InputArea } from "./InputArea";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { ControlBar } from "./ControlBar";
 import { ExpandedModal } from "./ExpandedModal";
+import { resolvePromptActionButtonState, shouldSubmitPromptFromEnterKey } from "./promptActionButtonState";
 
 // Re-export types for external use
 export type { FloatingPromptInputRef, FloatingPromptInputProps, ThinkingMode, ModelType, ExecutionStatusInfo } from "./types";
@@ -620,22 +621,52 @@ const FloatingPromptInputInner = (
       return;
     }
 
-    // 🔧 输入法兼容：组合输入时忽略 Enter 键
-    // 支持：Mac 中文输入法、Windows 注音/倉頡/拼音、Linux IBus/Fcitx 等
-    if (e.key === "Enter" && !e.shiftKey && !state.isExpanded && !showFilePicker) {
-      // 多重检查确保不在 IME 组合输入中：
-      // 1. React 状态追踪的 isComposing
-      // 2. 原生事件的 isComposing 属性
-      // 3. keyCode === 229 是 IME 处理中的标准信号（兼容各种输入法）
-      // 4. compositionend 后的冷却期（某些输入法需要较长时间）
+    if (e.key === "Enter") {
       const timeSinceCompositionEnd = Date.now() - compositionEndTimeRef.current;
-      const inCooldown = timeSinceCompositionEnd < 200; // 200ms 冷却期（增加以兼容更多输入法）
-      const isIMEProcessing = e.nativeEvent.keyCode === 229 || (e.nativeEvent as any).which === 229;
+      const actionButtonState = resolvePromptActionButtonState({
+        isLoading,
+        prompt: state.prompt,
+        hasAttachments: imageAttachments.length > 0,
+        disabled,
+        canCancelExecution: !executionStatus || executionStatus.canCancel,
+        isCancellingExecution: executionStatus?.isCancelling === true,
+      });
 
-      if (!isComposing && !e.nativeEvent.isComposing && !isIMEProcessing && !inCooldown) {
+      if (shouldSubmitPromptFromEnterKey({
+        key: e.key,
+        shiftKey: e.shiftKey,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        isExpanded: state.isExpanded,
+        isFilePickerOpen: showFilePicker,
+        actionMode: actionButtonState.mode,
+        actionDisabled: actionButtonState.disabled,
+        isComposing,
+        nativeIsComposing: e.nativeEvent.isComposing,
+        keyCode: e.nativeEvent.keyCode,
+        which: (e.nativeEvent as any).which,
+        timeSinceCompositionEndMs: timeSinceCompositionEnd,
+      })) {
         e.preventDefault();
         dismissSuggestion(); // 🆕 发送时清除建议
         handleSend();
+        return;
+      }
+
+      // 紧凑输入框里 Enter 的语义是“提交”。当当前动作是取消（运行中且输入为空）
+      // 时不要误提交，也不要插入一个看不见的换行把“空输入”变成草稿噪音。
+      if (
+        !state.isExpanded &&
+        !e.shiftKey &&
+        !showFilePicker &&
+        actionButtonState.mode === 'cancel' &&
+        !isComposing &&
+        !e.nativeEvent.isComposing &&
+        e.nativeEvent.keyCode !== 229 &&
+        (e.nativeEvent as any).which !== 229 &&
+        timeSinceCompositionEnd >= 200
+      ) {
+        e.preventDefault();
       }
     }
   };
@@ -679,6 +710,9 @@ const FloatingPromptInputInner = (
             onDragOver={handleDrag}
             onDrop={handleDrop}
             onSend={handleSend}
+            isLoading={isLoading}
+            executionStatus={executionStatus}
+            onCancel={onCancel || (() => {})}
           />
         )}
       </AnimatePresence>
