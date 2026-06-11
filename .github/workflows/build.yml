@@ -79,9 +79,13 @@ jobs:
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
+        # Release packaging must not fail after artifacts were built just because
+        # the cache post-save step hit a transient Windows/runner cache error.
+        continue-on-error: true
         with:
           workspaces: './src-tauri -> target'
           key: ${{ env.CI_CACHE_VERSION }}-${{ env.CACHE_SCOPE }}-${{ env.RUST_TARGET }}-rust-${{ steps.cache-keys.outputs.rust_deps_key }}
+          save-if: ${{ false }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -279,9 +283,13 @@ jobs:
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
+        # Release packaging must not fail after artifacts were built just because
+        # the cache post-save step hit a transient runner cache error.
+        continue-on-error: true
         with:
           workspaces: './src-tauri -> target'
           key: ${{ env.CI_CACHE_VERSION }}-${{ env.CACHE_SCOPE }}-${{ env.RUST_TARGET }}-rust-${{ steps.cache-keys.outputs.rust_deps_key }}
+          save-if: ${{ false }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -379,9 +387,13 @@ jobs:
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
+        # Release packaging must not fail after artifacts were built just because
+        # the cache post-save step hit a transient runner cache error.
+        continue-on-error: true
         with:
           workspaces: './src-tauri -> target'
           key: ${{ env.CI_CACHE_VERSION }}-${{ env.CACHE_SCOPE }}-${{ env.RUST_TARGET }}-rust-${{ steps.cache-keys.outputs.rust_deps_key }}
+          save-if: ${{ false }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
