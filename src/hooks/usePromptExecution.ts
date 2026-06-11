@@ -28,6 +28,7 @@ import { resolveInitialCancelSessionId } from '@/lib/cancelChannel';
 import { persistUiOnlySessionMessage } from '@/lib/uiOnlySessionEvents';
 import { normalizeStreamLines, AsyncQueue } from '@/lib/stream';
 import { safeRandomUUID } from '@/lib/browserCompat';
+import { resolveClaudeExecutionMode, shouldAcceptClaudeGlobalMessage } from '@/lib/claudeExecutionRouting';
 
 // ============================================================================
 // Type Definitions
@@ -193,6 +194,12 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
   const tabIdRef = useRef<string>(safeRandomUUID());
 
   const codexThreadIdRef = useRef<string | null>(null);
+  const latestClaudeExecutionStateRef = useRef({
+    effectiveSessionId: effectiveSession?.id ?? null,
+    extractedSessionId: extractedSessionInfo?.sessionId ?? null,
+    claudeSessionId,
+    isFirstPrompt,
+  });
 
   const cleanupRuntimeListeners = useCallback(() => {
     unlistenRefs.current.forEach((unlisten) => {
@@ -229,6 +236,15 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
       codexThreadIdRef.current = sessionId;
     }
   }, [executionEngine, extractedSessionInfo?.sessionId, effectiveSession?.id]);
+
+  useEffect(() => {
+    latestClaudeExecutionStateRef.current = {
+      effectiveSessionId: effectiveSession?.id ?? null,
+      extractedSessionId: extractedSessionInfo?.sessionId ?? null,
+      claudeSessionId,
+      isFirstPrompt,
+    };
+  }, [effectiveSession?.id, extractedSessionInfo?.sessionId, claudeSessionId, isFirstPrompt]);
 
   const updateCodexRateLimits = useCallback((incoming?: CodexRateLimits | null) => {
     if (!incoming || !setCodexRateLimits) {
@@ -504,6 +520,11 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
       // For resuming sessions, ensure we have the session ID
       if (effectiveSession && executionEngine === 'claude' && !claudeSessionId) {
         setClaudeSessionId(effectiveSession.id);
+        latestClaudeExecutionStateRef.current = {
+          ...latestClaudeExecutionStateRef.current,
+          effectiveSessionId: effectiveSession.id,
+          claudeSessionId: effectiveSession.id,
+        };
       }
 
       // ========================================================================
@@ -1605,153 +1626,125 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           // 逐行执行原有的早期 init/session 隔离逻辑。
           // 回调只逐行入队（瞬时返回），处理放到消费循环里；thunk 内 continue 改 return（跳过当前行，语义等价）。
           for (const messagePayload of normalizeStreamLines(rawPayload)) {
-          claudeTaskQueue.enqueue(async () => {
-          // 🔒 CRITICAL FIX: Session Isolation - 严格隔离全局事件处理
-          // 问题: 多个标签页都监听全局 'claude-output',导致消息被多个会话接收
-          // 解决: 只在会话ID未知的早期阶段处理全局事件
-          if (hasAttachedSessionListeners) {
-             try {
+            claudeTaskQueue.enqueue(async () => {
+              // Attempt to extract session_id on the fly (for the very first init)
+              try {
                 const msg = JSON.parse(messagePayload) as ClaudeStreamMessage;
-                // 只处理新会话的 init 消息(session_id 不同)
-                if (msg.type === 'system' && msg.subtype === 'init' && msg.session_id && msg.session_id !== currentSessionId) {
-                   // Fall through to processing below
-                } else {
-                   // ⚠️ 忽略所有其他消息 - 应该由会话特定监听器处理
 
-                   return;
-                }
-             } catch {
-                return;
-             }
-          }
-
-          // Attempt to extract session_id on the fly (for the very first init)
-          try {
-            const msg = JSON.parse(messagePayload) as ClaudeStreamMessage;
-
-            // 🔒 CRITICAL FIX #1: 使用 session_id 验证消息是否属于当前会话
-            // 这是最重要的检查：如果消息包含 session_id，且我们已经有 claudeSessionId，
-            // 则只处理匹配的消息（解决同一项目下多个会话的串扰问题）
-            if (msg.session_id && claudeSessionId && msg.session_id !== claudeSessionId) {
-              // 消息来自不同会话，忽略
-              return;
-            }
-
-            // 🔒 CRITICAL FIX #2: 使用 cwd 字段作为备选验证（不同项目的情况）
-            // 多会话并发时，不同项目的消息会通过全局事件广播
-            // 通过检查 cwd 确保只处理属于当前项目的消息
-            if (typeof msg.cwd === 'string' && msg.cwd && !claudeSessionId) {
-              // 只有在还没有 session_id 时才使用 cwd 检查
-              const normalizePath = (p: unknown) => typeof p === 'string'
-                ? p.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '')
-                : '';
-              const msgCwd = normalizePath(msg.cwd);
-              const currentPath = normalizePath(projectPath);
-
-              if (msgCwd !== currentPath) {
-                // 消息来自不同项目，忽略
-                return;
-              }
-            }
-
-            // Always process the message if we haven't established a session yet
-            // Or if it is the init message
-            await handleStreamMessage(messagePayload, userInputTranslation || undefined);
-
-            if (msg.type === 'system' && msg.subtype === 'init' && msg.session_id) {
-              // Cache model display name from init message for dynamic model selector
-              if (msg.model) {
-                cacheModelFromInitMessage(msg.model);
-              }
-
-              if (!currentSessionId || currentSessionId !== msg.session_id) {
-                currentSessionId = msg.session_id;
-                bindCancelSessionId(msg.session_id);
-                setClaudeSessionId(msg.session_id);
-
-                // Claude 在 plan/continue/resume 场景下可能切换到新的 session_id。
-                // 这里不能只在“首次为空”时写入，否则标签页和本地持久化会保留旧会话，
-                // 随后切换页面或重开应用时就会表现为“会话丢失”。
-                const projectId = extractedSessionInfo?.projectId || projectPath.replace(/[^a-zA-Z0-9]/g, '-');
-                if (!extractedSessionInfo || extractedSessionInfo.sessionId !== msg.session_id) {
-                  setExtractedSessionInfo({ sessionId: msg.session_id, projectId, engine: 'claude' });
+                if (!shouldAcceptClaudeGlobalMessage({
+                  currentTabId: tabIdRef.current,
+                  eventTabId,
+                  hasAttachedSessionListeners,
+                  currentSessionId,
+                  message: msg,
+                })) {
+                  return;
                 }
 
-                // Record prompt after system:init (user message already written to JSONL)
-                if (!hasRecordedPrompt && isUserInitiated) {
-                  const projectId = projectPath.replace(/[^a-zA-Z0-9]/g, '-');
-                  // 🔧 FIX: Store Promise to allow processComplete to wait for it
-                  pendingClaudePromptRecordingPromise = (async () => {
-                    try {
-                      // Delay 200ms to ensure file is written
-                      await new Promise(resolve => setTimeout(resolve, 200));
+                // Always process the message if we haven't established a session yet
+                // Or if it is the init message
+                await handleStreamMessage(messagePayload, userInputTranslation || undefined);
 
-                      recordedPromptIndex = await api.recordPromptSent(
-                        msg.session_id,
-                        projectId,
-                        projectPath,
-                        prompt
-                      );
-                      hasRecordedPrompt = true;
-
-                    } catch (err) {
-                      console.error('[Prompt Revert] [ERROR] Failed to record prompt:', err);
-                    }
-                  })();
-                }
-
-                // Switch to session-specific listeners
-                await attachSessionSpecificListeners(msg.session_id);
-              }
-            }
-
-            // Record after first user message (user message already written to JSONL)
-            // This ensures backend can correctly read and calculate index
-            if (msg.type === 'user' && !hasRecordedPrompt && isUserInitiated && currentSessionId) {
-              // 检查这是否是我们发送的那条消息（通过内容匹配）
-              let isOurMessage = false;
-              const msgContent: any = msg.message?.content;
-
-              if (msgContent) {
-                if (typeof msgContent === 'string') {
-                  const contentStr = msgContent as string;
-                  isOurMessage = contentStr.includes(prompt) || prompt.includes(contentStr);
-                } else if (Array.isArray(msgContent)) {
-                  const textContent = msgContent
-                    .filter((item: any) => item.type === 'text')
-                    .map((item: any) => item.text)
-                    .join('');
-                  isOurMessage = textContent.includes(prompt) || prompt.includes(textContent);
-                }
-              }
-
-              if (isOurMessage) {
-                const projectId = extractedSessionInfo?.projectId || projectPath.replace(/[^a-zA-Z0-9]/g, '-');
-                // 🔧 FIX: Store Promise to allow processComplete to wait for it
-                pendingClaudePromptRecordingPromise = (async () => {
-                  try {
-                    // 添加延迟以确保文件写入完成
-                    await new Promise(resolve => setTimeout(resolve, 100));
-
-                    recordedPromptIndex = await api.recordPromptSent(
-                      currentSessionId,
-                      projectId,
-                      projectPath,
-                      prompt
-                    );
-                    hasRecordedPrompt = true;
-
-                  } catch (err) {
-                    console.error('[Prompt Revert] [ERROR] Failed to record prompt:', err);
+                if (msg.type === 'system' && msg.subtype === 'init' && msg.session_id) {
+                  // Cache model display name from init message for dynamic model selector
+                  if (msg.model) {
+                    cacheModelFromInitMessage(msg.model);
                   }
-                })();
+
+                  if (!currentSessionId || currentSessionId !== msg.session_id) {
+                    currentSessionId = msg.session_id;
+                    bindCancelSessionId(msg.session_id);
+                    setClaudeSessionId(msg.session_id);
+
+                    // Claude 在 plan/continue/resume 场景下可能切换到新的 session_id。
+                    // 这里不能只在“首次为空”时写入，否则标签页和本地持久化会保留旧会话，
+                    // 随后切换页面或重开应用时就会表现为“会话丢失”。
+                    const projectId = extractedSessionInfo?.projectId || projectPath.replace(/[^a-zA-Z0-9]/g, '-');
+                    latestClaudeExecutionStateRef.current = {
+                      ...latestClaudeExecutionStateRef.current,
+                      extractedSessionId: msg.session_id,
+                      claudeSessionId: msg.session_id,
+                      isFirstPrompt: false,
+                    };
+                    if (!extractedSessionInfo || extractedSessionInfo.sessionId !== msg.session_id) {
+                      setExtractedSessionInfo({ sessionId: msg.session_id, projectId, engine: 'claude' });
+                    }
+
+                    // Record prompt after system:init (user message already written to JSONL)
+                    if (!hasRecordedPrompt && isUserInitiated) {
+                      const projectId = projectPath.replace(/[^a-zA-Z0-9]/g, '-');
+                      // 🔧 FIX: Store Promise to allow processComplete to wait for it
+                      pendingClaudePromptRecordingPromise = (async () => {
+                        try {
+                          // Delay 200ms to ensure file is written
+                          await new Promise(resolve => setTimeout(resolve, 200));
+
+                          recordedPromptIndex = await api.recordPromptSent(
+                            msg.session_id,
+                            projectId,
+                            projectPath,
+                            prompt
+                          );
+                          hasRecordedPrompt = true;
+
+                        } catch (err) {
+                          console.error('[Prompt Revert] [ERROR] Failed to record prompt:', err);
+                        }
+                      })();
+                    }
+
+                    // Switch to session-specific listeners
+                    await attachSessionSpecificListeners(msg.session_id);
+                  }
+                }
+
+                // Record after first user message (user message already written to JSONL)
+                // This ensures backend can correctly read and calculate index
+                if (msg.type === 'user' && !hasRecordedPrompt && isUserInitiated && currentSessionId) {
+                  // 检查这是否是我们发送的那条消息（通过内容匹配）
+                  let isOurMessage = false;
+                  const msgContent: any = msg.message?.content;
+
+                  if (msgContent) {
+                    if (typeof msgContent === 'string') {
+                      const contentStr = msgContent as string;
+                      isOurMessage = contentStr.includes(prompt) || prompt.includes(contentStr);
+                    } else if (Array.isArray(msgContent)) {
+                      const textContent = msgContent
+                        .filter((item: any) => item.type === 'text')
+                        .map((item: any) => item.text)
+                        .join('');
+                      isOurMessage = textContent.includes(prompt) || prompt.includes(textContent);
+                    }
+                  }
+
+                  if (isOurMessage) {
+                    const projectId = extractedSessionInfo?.projectId || projectPath.replace(/[^a-zA-Z0-9]/g, '-');
+                    // 🔧 FIX: Store Promise to allow processComplete to wait for it
+                    pendingClaudePromptRecordingPromise = (async () => {
+                      try {
+                        // 添加延迟以确保文件写入完成
+                        await new Promise(resolve => setTimeout(resolve, 100));
+
+                        recordedPromptIndex = await api.recordPromptSent(
+                          currentSessionId,
+                          projectId,
+                          projectPath,
+                          prompt
+                        );
+                        hasRecordedPrompt = true;
+
+                      } catch (err) {
+                        console.error('[Prompt Revert] [ERROR] Failed to record prompt:', err);
+                      }
+                    })();
+                  }
+                }
+              } catch {
+                /* ignore parse errors */
               }
-            }
-          } catch {
-            /* ignore parse errors */
+            }); // enqueue thunk
           }
-          }); // enqueue thunk
-          } // for messagePayload of lines
         });
 
         // 🔒 CRITICAL FIX: 全局事件现在格式为 { tab_id: string | null, payload: string }
@@ -1994,10 +1987,11 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         const currentPlanMode = isPlanModeRef.current;
         // 🔒 CRITICAL FIX: 传递 tabId 用于全局事件过滤
         const tabId = tabIdRef.current;
-        if (effectiveSession && !isFirstPrompt) {
+        const claudeExecutionMode = resolveClaudeExecutionMode(latestClaudeExecutionStateRef.current);
+        if (claudeExecutionMode.mode === 'resume') {
           // Resume existing session
           try {
-            await api.resumeClaudeCode(projectPath, effectiveSession.id, processedPrompt, model, currentPlanMode, maxThinkingTokens, tabId);
+            await api.resumeClaudeCode(projectPath, claudeExecutionMode.sessionId, processedPrompt, model, currentPlanMode, maxThinkingTokens, tabId);
           } catch (resumeError) {
             console.warn('[usePromptExecution] Resume failed, falling back to continue mode:', resumeError);
             // Fallback to continue mode if resume fails
@@ -2006,6 +2000,10 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         } else {
           // Start new session
           setIsFirstPrompt(false);
+          latestClaudeExecutionStateRef.current = {
+            ...latestClaudeExecutionStateRef.current,
+            isFirstPrompt: false,
+          };
           await api.executeClaudeCode(projectPath, processedPrompt, model, currentPlanMode, maxThinkingTokens, tabId);
         }
       }
