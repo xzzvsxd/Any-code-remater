@@ -20,6 +20,7 @@ import { SessionToolbar } from "@/components/SessionToolbar";
 import { ContextWindowIndicator } from "@/components/widgets/ContextWindowIndicator";
 import { ModelType, ModelConfig, ThinkingEffort, type ExecutionStatusInfo } from "./types";
 import { resolveSelectedModelName } from "./resolveModelName";
+import { resolvePromptActionButtonState } from "./promptActionButtonState";
 import type { CodexRateLimits } from "@/types/codex";
 
 interface ControlBarProps {
@@ -96,6 +97,14 @@ export const ControlBar: React.FC<ControlBarProps> = ({
   const { t } = useTranslation();
   const canCancelExecution = !executionStatus || executionStatus.canCancel;
   const isCancellingExecution = executionStatus?.isCancelling === true;
+  const actionButtonState = resolvePromptActionButtonState({
+    isLoading,
+    prompt,
+    hasAttachments,
+    disabled,
+    canCancelExecution,
+    isCancellingExecution,
+  });
 
   // 解析 Claude 引擎下用于上下文窗口计算的真实模型名。
   // custom 模型的 'custom' 字面量会丢失真实模型 ID（如 claude-opus-4-8[1m]），
@@ -376,13 +385,13 @@ export const ControlBar: React.FC<ControlBarProps> = ({
       </DropdownMenu>
 
       {/* Send/Cancel Button */}
-      {isLoading ? (
+      {actionButtonState.mode === 'cancel' ? (
         <div className="flex flex-col items-end gap-1">
           <Button
             onClick={onCancel}
             variant="destructive"
             size="default"
-            disabled={disabled || !canCancelExecution || isCancellingExecution}
+            disabled={actionButtonState.disabled}
             title={
               !canCancelExecution
                 ? '正在启动进程，拿到当前会话 ID 后即可安全取消'
@@ -401,7 +410,7 @@ export const ControlBar: React.FC<ControlBarProps> = ({
       ) : (
         <Button
           onClick={onSend}
-          disabled={(!prompt.trim() && !hasAttachments) || disabled}
+          disabled={actionButtonState.disabled}
           size="default"
           className="h-8 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-sm transition-all duration-200"
         >
