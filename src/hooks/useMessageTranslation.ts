@@ -21,6 +21,7 @@ interface UseMessageTranslationConfig {
   isMountedRef: React.MutableRefObject<boolean>;
   lastTranslationResult?: TranslationResult;
   onMessagesUpdate: (updater: (prev: ClaudeStreamMessage[]) => ClaudeStreamMessage[]) => void;
+  onMessageAppend?: (message: ClaudeStreamMessage) => void;
 }
 
 interface UseMessageTranslationReturn {
@@ -36,7 +37,7 @@ interface UseMessageTranslationReturn {
 }
 
 export function useMessageTranslation(config: UseMessageTranslationConfig): UseMessageTranslationReturn {
-  const { isMountedRef, lastTranslationResult, onMessagesUpdate } = config;
+  const { isMountedRef, lastTranslationResult, onMessagesUpdate, onMessageAppend } = config;
 
   // Translation states
   const [translationEnabled, setTranslationEnabled] = useState(false);
@@ -382,7 +383,11 @@ export function useMessageTranslation(config: UseMessageTranslationConfig): UseM
           }
         }
 
-        onMessagesUpdate((prev) => [...prev, processedMessage]);
+        if (onMessageAppend) {
+          onMessageAppend(processedMessage);
+        } else {
+          onMessagesUpdate((prev) => [...prev, processedMessage]);
+        }
       } catch (usageError) {
         console.warn('[useMessageTranslation] Error normalizing usage data, adding message without usage:', usageError);
         // Remove problematic usage data and add message anyway
@@ -391,12 +396,16 @@ export function useMessageTranslation(config: UseMessageTranslationConfig): UseM
         if (safeMessage.message) {
           delete safeMessage.message.usage;
         }
-        onMessagesUpdate((prev) => [...prev, safeMessage]);
+        if (onMessageAppend) {
+          onMessageAppend(safeMessage);
+        } else {
+          onMessagesUpdate((prev) => [...prev, safeMessage]);
+        }
       }
     } catch (err) {
       console.error('[useMessageTranslation] Failed to parse message:', err, payload);
     }
-  }, [isMountedRef, lastTranslationResult, onMessagesUpdate]);
+  }, [isMountedRef, lastTranslationResult, onMessagesUpdate, onMessageAppend]);
 
   /**
    * 初始化渐进式翻译（后台翻译历史消息）

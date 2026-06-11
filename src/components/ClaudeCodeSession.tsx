@@ -146,6 +146,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   const {
     messages,
     setMessages,
+    appendMessage,
     isStreaming,
     setIsStreaming,
     filterConfig,
@@ -163,6 +164,9 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     rawJsonlOutputRef.current = typeof action === 'function'
       ? (action as (prev: string[]) => string[])(rawJsonlOutputRef.current)
       : action;
+  }, []);
+  const appendRawJsonlOutput = useCallback((payload: string) => {
+    rawJsonlOutputRef.current.push(payload);
   }, []);
   const [isFirstPrompt, setIsFirstPrompt] = useState(!session); // Key state for session continuation
   const [extractedSessionInfo, setExtractedSessionInfo] = useState<{ sessionId: string; projectId: string; engine?: 'claude' | 'codex' | 'gemini' } | null>(null);
@@ -471,7 +475,8 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   } = useMessageTranslation({
     isMountedRef,
     lastTranslationResult: lastTranslationResult || undefined,
-    onMessagesUpdate: setMessages
+    onMessagesUpdate: setMessages,
+    onMessageAppend: appendMessage
   });
 
   // 🔧 FIX: 处理会话历史不存在的情况，重置到初始状态
@@ -499,6 +504,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     setError,
     setMessages,
     setRawJsonlOutput,
+    appendRawJsonlOutput,
     setClaudeSessionId,
     setCancelSessionId,
     setCodexRateLimits,
@@ -595,10 +601,12 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     setIsLoading,
     setError,
     setMessages,
+    appendMessage,
     setClaudeSessionId,
     setLastTranslationResult,
     setQueuedPrompts,
     setRawJsonlOutput,
+    appendRawJsonlOutput,
     setExtractedSessionInfo,
     setIsFirstPrompt,
     setCodexRateLimits,
@@ -968,7 +976,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
         timestamp: new Date().toISOString(),
         receivedAt: new Date().toISOString()
       };
-      setMessages(prev => [...prev, cancelMessage]);
+      appendMessage(cancelMessage);
       window.dispatchEvent(new CustomEvent('show-toast', {
         detail: {
           message: `已取消当前 ${engineDisplayNames[executionEngineConfig.engine]} 会话`,
@@ -989,7 +997,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
         timestamp: new Date().toISOString(),
         receivedAt: new Date().toISOString()
       };
-      setMessages(prev => [...prev, errorMessage]);
+      appendMessage(errorMessage);
       
       // Clean up listeners anyway
       unlistenRefs.current.forEach(unlisten => unlisten && typeof unlisten === 'function' && unlisten());

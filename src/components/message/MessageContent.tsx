@@ -9,6 +9,7 @@ import { copyTextToClipboard } from "@/lib/clipboard";
 import { useTypewriter } from "@/hooks/useTypewriter";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { checkSyntaxHighlightSupport } from "@/lib/syntaxHighlightCompat";
+import { shouldRenderCodeBlockAsPlainText } from "@/lib/markdownRenderSafety";
 
 interface CodeBlockRendererProps {
   language: string;
@@ -99,8 +100,9 @@ const CodeBlockRenderer: React.FC<CodeBlockRendererProps> = ({ language, code, s
   const buttonLabel =
     copyState === 'success' ? '已复制!' : copyState === 'error' ? '复制失败' : '复制';
 
-  // 如果浏览器不支持语法高亮所需特性，降级为纯文本显示
-  if (!supportsSyntaxHighlight) {
+  // 如果浏览器不支持语法高亮所需特性，或代码块过大，降级为纯文本显示。
+  // 超大代码块继续走 Prism 在 Linux WebKit 下容易形成长任务并拖白屏。
+  if (!supportsSyntaxHighlight || shouldRenderCodeBlockAsPlainText(code)) {
     return (
       <PlainTextCodeBlock
         language={language}

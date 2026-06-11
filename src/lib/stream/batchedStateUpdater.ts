@@ -15,6 +15,21 @@
 
 type FunctionalUpdater<T> = (prev: T) => T;
 
+interface BatchedUpdaterOptions {
+  /**
+   * 单帧最多折叠多少个通用函数式更新。
+   *
+   * 这些 updater 可能内部做 `prev => [...prev, item]`，每个都会复制数组。
+   * Linux WebKit 下如果一帧内折叠几百/几千个，会形成长任务并把前端拖到白屏。
+   */
+  maxUpdatesPerFrame?: number;
+}
+
+interface BatchedAppendUpdaterOptions {
+  /** 单帧最多追加多少个 item；剩余 item 延后到下一帧，避免单帧长任务。 */
+  maxItemsPerFrame?: number;
+}
+
 export interface BatchedUpdater<T> {
   /** 入队一个函数式更新器，在下一帧合并 flush。 */
   enqueue: (updater: FunctionalUpdater<T>) => void;
@@ -24,6 +39,35 @@ export interface BatchedUpdater<T> {
   dispose: () => void;
 }
 
+export interface BatchedAppendUpdater<T> {
+  /** 入队一个 append-only item，在下一帧用一次 concat 批量追加。 */
+  enqueue: (item: T) => void;
+  /** 批量入队 append-only items。 */
+  enqueueAll: (items: T[]) => void;
+  /** 立即同步 flush 当前所有待追加项。 */
+  flushNow: () => void;
+  /** 取消挂起任务并清空队列。 */
+  dispose: () => void;
+}
+
+const DEFAULT_MAX_UPDATES_PER_FRAME = 64;
+const DEFAULT_MAX_APPEND_ITEMS_PER_FRAME = 128;
+
+const requestFrame = (callback: FrameRequestCallback): number => {
+  if (typeof requestAnimationFrame === 'function') {
+    return requestAnimationFrame(callback);
+  }
+  return globalThis.setTimeout(() => callback(performance.now()), 16) as unknown as number;
+};
+
+const cancelFrame = (id: number) => {
+  if (typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(id);
+    return;
+  }
+  clearTimeout(id);
+};
+
 /**
  * 创建一个绑定到指定 React setState 的 rAF 批量合并器。
  *
@@ -31,15 +75,51 @@ export interface BatchedUpdater<T> {
  */
 export function createBatchedUpdater<T>(
   setState: (updater: FunctionalUpdater<T>) => void,
+  options: BatchedUpdaterOptions = {},
 ): BatchedUpdater<T> {
   let pending: FunctionalUpdater<T>[] = [];
   let rafId: number | null = null;
+  const maxUpdatesPerFrame = Math.max(
+    1,
+    options.maxUpdatesPerFrame ?? DEFAULT_MAX_UPDATES_PER_FRAME,
+  );
+
+  const schedule = () => {
+    if (rafId === null) {
+      rafId = requestFrame(flush);
+    }
+  };
 
   const flush = () => {
     rafId = null;
     if (pending.length === 0) return;
     // 取出本帧累积的所有更新器，按入队顺序折叠成一次 setState：
     // setState(prev => updaterN(...updater2(updater1(prev))))。
+    const batch = pending.splice(0, maxUpdatesPerFrame);
+    setState((prev) => {
+      let next = prev;
+      for (let i = 0; i < batch.length; i++) {
+        next = batch[i](next);
+      }
+      return next;
+    });
+
+    if (pending.length > 0) {
+      schedule();
+    }
+  };
+
+  const enqueue = (updater: FunctionalUpdater<T>) => {
+    pending.push(updater);
+    schedule();
+  };
+
+  const flushNow = () => {
+    if (rafId !== null) {
+      cancelFrame(rafId);
+      rafId = null;
+    }
+    if (pending.length === 0) return;
     const batch = pending;
     pending = [];
     setState((prev) => {
@@ -51,28 +131,81 @@ export function createBatchedUpdater<T>(
     });
   };
 
-  const enqueue = (updater: FunctionalUpdater<T>) => {
-    pending.push(updater);
-    if (rafId === null) {
-      rafId = requestAnimationFrame(flush);
-    }
-  };
-
-  const flushNow = () => {
-    if (rafId !== null) {
-      cancelAnimationFrame(rafId);
-      rafId = null;
-    }
-    flush();
-  };
-
   const dispose = () => {
     if (rafId !== null) {
-      cancelAnimationFrame(rafId);
+      cancelFrame(rafId);
       rafId = null;
     }
     pending = [];
   };
 
   return { enqueue, flushNow, dispose };
+}
+
+/**
+ * append-only 批量合并器。
+ *
+ * 与通用函数式 updater 不同，streaming 主路径大多只是追加消息：
+ * `prev => [...prev, message]`。如果照通用 updater 折叠，仍会在一帧内反复复制数组。
+ * 本合并器把 N 个 append 合并为一次 `prev.concat(batch)`，把 N 次数组复制降为 1 次。
+ */
+export function createBatchedAppendUpdater<T>(
+  setState: (updater: (prev: T[]) => T[]) => void,
+  options: BatchedAppendUpdaterOptions = {},
+): BatchedAppendUpdater<T> {
+  let pending: T[] = [];
+  let rafId: number | null = null;
+  const maxItemsPerFrame = Math.max(
+    1,
+    options.maxItemsPerFrame ?? DEFAULT_MAX_APPEND_ITEMS_PER_FRAME,
+  );
+
+  const schedule = () => {
+    if (rafId === null) {
+      rafId = requestFrame(flush);
+    }
+  };
+
+  const flush = () => {
+    rafId = null;
+    if (pending.length === 0) return;
+    const batch = pending.splice(0, maxItemsPerFrame);
+    setState((prev) => prev.concat(batch));
+
+    if (pending.length > 0) {
+      schedule();
+    }
+  };
+
+  const enqueue = (item: T) => {
+    pending.push(item);
+    schedule();
+  };
+
+  const enqueueAll = (items: T[]) => {
+    if (items.length === 0) return;
+    pending.push(...items);
+    schedule();
+  };
+
+  const flushNow = () => {
+    if (rafId !== null) {
+      cancelFrame(rafId);
+      rafId = null;
+    }
+    if (pending.length === 0) return;
+    const batch = pending;
+    pending = [];
+    setState((prev) => prev.concat(batch));
+  };
+
+  const dispose = () => {
+    if (rafId !== null) {
+      cancelFrame(rafId);
+      rafId = null;
+    }
+    pending = [];
+  };
+
+  return { enqueue, enqueueAll, flushNow, dispose };
 }

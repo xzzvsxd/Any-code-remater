@@ -82,10 +82,12 @@ interface UsePromptExecutionConfig {
   setIsLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   setMessages: React.Dispatch<React.SetStateAction<ClaudeStreamMessage[]>>;
+  appendMessage: (message: ClaudeStreamMessage) => void;
   setClaudeSessionId: (id: string | null) => void;
   setLastTranslationResult: (result: TranslationResult | null) => void;
   setQueuedPrompts: React.Dispatch<React.SetStateAction<QueuedPrompt[]>>;
   setRawJsonlOutput: React.Dispatch<React.SetStateAction<string[]>>;
+  appendRawJsonlOutput: (payload: string) => void;
   setExtractedSessionInfo: React.Dispatch<React.SetStateAction<{ sessionId: string; projectId: string; engine?: 'claude' | 'codex' | 'gemini' } | null>>;
   setIsFirstPrompt: (isFirst: boolean) => void;
   setCodexRateLimits?: React.Dispatch<React.SetStateAction<CodexRateLimits | null>>;
@@ -166,10 +168,12 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
     setIsLoading,
     setError,
     setMessages,
+    appendMessage,
     setClaudeSessionId,
     setLastTranslationResult,
     setQueuedPrompts,
     setRawJsonlOutput,
+    appendRawJsonlOutput,
     setExtractedSessionInfo,
     setIsFirstPrompt,
     setCodexRateLimits,
@@ -391,7 +395,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         message,
       });
 
-      setMessages(prev => [...prev, message]);
+      appendMessage(message);
     };
 
     try {
@@ -616,8 +620,8 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
               if (message.model) {
                 cacheCodexModelFromStream(message.model);
               }
-              setMessages(prev => [...prev, message]);
-              setRawJsonlOutput((prev) => [...prev, payload]);
+              appendMessage(message);
+              appendRawJsonlOutput(payload);
 
               // Extract and save Codex thread_id from thread.started for session resuming
               // NOTE: claudeSessionId is already set to the backend channel ID in codex-session-init handler
@@ -1118,7 +1122,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
                   const message = convertGeminiToClaudeMessage(data);
                   return message ? [...prev, message] : prev;
                 });
-                setRawJsonlOutput((prev) => [...prev, payload]);
+                appendRawJsonlOutput(payload);
                 return;
               }
 
@@ -1126,8 +1130,8 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
               const message = convertGeminiToClaudeMessage(data);
 
               if (message) {
-                setMessages(prev => [...prev, message]);
-                setRawJsonlOutput((prev) => [...prev, payload]);
+                appendMessage(message);
+                appendRawJsonlOutput(payload);
 
                 // 🔧 NOTE: Session ID handling moved to gemini-cli-session-id event listener
                 // The init message from gemini-output may contain backend's temporary ID (gemini-{uuid})
@@ -1518,7 +1522,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             processedClaudeMessages.add(messageId);
 
             // Store raw JSONL
-            setRawJsonlOutput((prev) => [...prev, payload]);
+            appendRawJsonlOutput(payload);
 
             const message = JSON.parse(payload) as ClaudeStreamMessage;
 
@@ -1844,7 +1848,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             ...(executionEngine === 'codex' ? { engine: 'codex' as const } : {}),
             ...(executionEngine === 'gemini' ? { engine: 'gemini' as const } : {})
           };
-          setMessages(prev => [...prev, commandMessage]);
+          appendMessage(commandMessage);
         } else {
           // 普通用户消息
           const userMessage: ClaudeStreamMessage = {
@@ -1867,7 +1871,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
               translatedText: userInputTranslation.translatedText
             } : undefined
           };
-          setMessages(prev => [...prev, userMessage]);
+          appendMessage(userMessage);
         }
       }
 
@@ -2047,10 +2051,12 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
     setIsLoading,
     setError,
     setMessages,
+    appendMessage,
     setClaudeSessionId,
     setLastTranslationResult,
     setQueuedPrompts,
     setRawJsonlOutput,
+    appendRawJsonlOutput,
     setExtractedSessionInfo,
     setIsFirstPrompt,
     setCancelSessionId,

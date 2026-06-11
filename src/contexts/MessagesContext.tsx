@@ -1,6 +1,6 @@
 import React from "react";
 import type { ClaudeStreamMessage } from "@/types/claude";
-import { createBatchedUpdater } from "@/lib/stream/batchedStateUpdater";
+import { createBatchedAppendUpdater, createBatchedUpdater } from "@/lib/stream/batchedStateUpdater";
 
 export interface ToolResultEntry {
   toolUseId: string;
@@ -25,6 +25,8 @@ interface MessagesDataContextValue {
 
 interface MessagesActionsContextValue {
   setMessages: React.Dispatch<React.SetStateAction<ClaudeStreamMessage[]>>;
+  appendMessage: (message: ClaudeStreamMessage) => void;
+  appendMessages: (messages: ClaudeStreamMessage[]) => void;
   setIsStreaming: React.Dispatch<React.SetStateAction<boolean>>;
   setFilterConfig: React.Dispatch<React.SetStateAction<MessageFilterConfig>>;
 }
@@ -96,30 +98,56 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({
       rawSetMessagesRef.current(updater),
     );
   }
-  React.useEffect(() => () => batchedRef.current?.dispose(), []);
+  const appendBatchedRef = React.useRef<ReturnType<typeof createBatchedAppendUpdater<ClaudeStreamMessage>>>();
+  if (!appendBatchedRef.current) {
+    appendBatchedRef.current = createBatchedAppendUpdater<ClaudeStreamMessage>((updater) =>
+      rawSetMessagesRef.current(updater),
+    );
+  }
+  React.useEffect(() => () => {
+    batchedRef.current?.dispose();
+    appendBatchedRef.current?.dispose();
+  }, []);
 
   const batchedSetMessages = React.useCallback<
     React.Dispatch<React.SetStateAction<ClaudeStreamMessage[]>>
   >((action) => {
     const batched = batchedRef.current!;
+    const appendBatched = appendBatchedRef.current!;
     if (typeof action === "function") {
-      // 增量更新（streaming 主路径）：入队合并。
+      // 通用函数式更新可能依赖当前完整数组；先排空 append-only 队列，保持调用顺序。
+      appendBatched.flushNow();
       batched.enqueue(action as (prev: ClaudeStreamMessage[]) => ClaudeStreamMessage[]);
     } else {
       // 直接赋值（重置/历史加载/清空）：先 flush 挂起的增量，再同步覆盖，保证最终状态正确。
       batched.flushNow();
+      appendBatched.flushNow();
       rawSetMessagesRef.current(action);
     }
+  }, []);
+
+  const appendMessage = React.useCallback((message: ClaudeStreamMessage) => {
+    // append-only 更新排在任何已入队通用更新之后，避免流式 delta/merge 与 append 乱序。
+    batchedRef.current!.flushNow();
+    appendBatchedRef.current!.enqueue(message);
+  }, []);
+
+  const appendMessages = React.useCallback((messages: ClaudeStreamMessage[]) => {
+    if (messages.length === 0) return;
+    batchedRef.current!.flushNow();
+    appendBatchedRef.current!.enqueueAll(messages);
   }, []);
 
   // ✅ 性能优化: 操作函数独立缓存，确保引用稳定
   const actionsValue = React.useMemo<MessagesActionsContextValue>(
     () => ({
       setMessages: batchedSetMessages,
+      appendMessage,
+      appendMessages,
       setIsStreaming,
       setFilterConfig,
     }),
-    [batchedSetMessages, setIsStreaming, setFilterConfig]
+    [batchedSetMessages, appendMessage, appendMessages, setIsStreaming, setFilterConfig]
   );
 
   // ✅ 性能优化: 数据独立缓存

@@ -74,6 +74,7 @@ interface UseSessionStreamConfig {
   setError: (error: string | null) => void;
   setMessages: React.Dispatch<React.SetStateAction<ClaudeStreamMessage[]>>;
   setRawJsonlOutput: React.Dispatch<React.SetStateAction<string[]>>;
+  appendRawJsonlOutput: (payload: string) => void;
   setClaudeSessionId: (sessionId: string) => void;
   setCancelSessionId?: (sessionId: string | null) => void;
   setCodexRateLimits?: React.Dispatch<React.SetStateAction<CodexRateLimits | null>>;
@@ -147,6 +148,7 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
     setError,
     setMessages,
     setRawJsonlOutput,
+    appendRawJsonlOutput,
     setClaudeSessionId,
     setCancelSessionId,
     setCodexRateLimits,
@@ -180,11 +182,11 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
     if (!isMountedRef.current) return;
 
     // 存储原始 JSONL
-    setRawJsonlOutput(prev => [...prev, rawPayload]);
+    appendRawJsonlOutput(rawPayload);
 
     // 通过翻译中间件处理
     await processMessageWithTranslation(message, rawPayload);
-  }, [isMountedRef, setRawJsonlOutput, processMessageWithTranslation]);
+  }, [isMountedRef, appendRawJsonlOutput, processMessageWithTranslation]);
 
   /**
    * 加载会话历史
