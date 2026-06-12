@@ -26,7 +26,7 @@ import { cacheCodexModelFromStream, cacheModelFromInitMessage } from '@/lib/mode
 import { notifyAiExecutionComplete } from '@/lib/aiCompletionNotification';
 import { resolveInitialCancelSessionId } from '@/lib/cancelChannel';
 import { persistUiOnlySessionMessage } from '@/lib/uiOnlySessionEvents';
-import { normalizeStreamLines, AsyncQueue } from '@/lib/stream';
+import { normalizeStreamLines, AsyncQueue, consumeYielding } from '@/lib/stream';
 import { safeRandomUUID } from '@/lib/browserCompat';
 import { resolveClaudeExecutionMode, shouldAcceptClaudeGlobalMessage } from '@/lib/claudeExecutionRouting';
 
@@ -571,10 +571,11 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           const codexTaskQueue = new AsyncQueue<() => Promise<void>>();
           (async () => {
             try {
-              for await (const task of codexTaskQueue) {
-                if (!isMountedRef.current) break;
-                await task();
-              }
+              await consumeYielding(
+                codexTaskQueue,
+                (task) => task(),
+                () => isMountedRef.current,
+              );
             } catch (err) {
               console.error('[usePromptExecution] Codex 消息消费循环异常:', err);
             }
@@ -893,10 +894,11 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           const geminiTaskQueue = new AsyncQueue<() => Promise<void>>();
           (async () => {
             try {
-              for await (const task of geminiTaskQueue) {
-                if (!isMountedRef.current) break;
-                await task();
-              }
+              await consumeYielding(
+                geminiTaskQueue,
+                (task) => task(),
+                () => isMountedRef.current,
+              );
             } catch (err) {
               console.error('[usePromptExecution] Gemini 消息消费循环异常:', err);
             }
@@ -1391,10 +1393,11 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         const claudeTaskQueue = new AsyncQueue<() => Promise<void>>();
         (async () => {
           try {
-            for await (const task of claudeTaskQueue) {
-              if (!isMountedRef.current) break;
-              await task();
-            }
+            await consumeYielding(
+              claudeTaskQueue,
+              (task) => task(),
+              () => isMountedRef.current,
+            );
           } catch (err) {
             console.error('[usePromptExecution] Claude 消息消费循环异常:', err);
           }

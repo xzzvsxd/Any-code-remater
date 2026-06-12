@@ -7,6 +7,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ClaudeStreamMessage } from '@/types/claude';
+import {
+  shouldFollowResizeToBottom,
+  shouldRunStickyAutoScroll,
+} from './smartAutoScrollPolicy';
 
 interface SmartAutoScrollConfig {
   /** 可显示的消息列表（用于触发滚动） */
@@ -257,7 +261,10 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
     const contentEl = scrollElement.firstElementChild;
     if (contentEl) {
       contentObserver = new ResizeObserver(() => {
-        if (autoScrollEnabledRef.current) {
+        if (shouldFollowResizeToBottom({
+          isLoading,
+          autoScrollEnabled: autoScrollEnabledRef.current,
+        })) {
           performAutoScroll();
         }
       });
@@ -273,7 +280,7 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
       scrollElement.removeEventListener('keydown', handleKeyDown);
       scrollElement.removeEventListener('scroll', handleScroll);
     };
-  }, []);
+  }, [isLoading]);
 
   /**
    * 统一的粘底驱动：由「真实新内容」驱动（依赖 lastMessageHash），而非每帧无脑 slam。
@@ -283,7 +290,12 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
    * 循环很快 settle 并退出，不再有"一直闪"。
    */
   useEffect(() => {
-    if (displayableMessages.length === 0 || !shouldAutoScroll || userScrolled) {
+    if (!shouldRunStickyAutoScroll({
+      messageCount: displayableMessages.length,
+      isLoading,
+      shouldAutoScroll,
+      userScrolled,
+    })) {
       return;
     }
 

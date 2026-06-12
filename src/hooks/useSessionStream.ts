@@ -19,6 +19,7 @@ import type { ClaudeStreamMessage } from '@/types/claude';
 import type { CodexRateLimits } from '@/types/codex';
 import {
   AsyncQueue,
+  consumeYielding,
   converterRegistry,
   normalizeStreamLines,
   type EngineType,
@@ -410,10 +411,11 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
     // 队列 done() 后循环自然结束；组件卸载时 isMountedRef 兜底跳出。
     (async () => {
       try {
-        for await (const message of queue) {
-          if (!isMountedRef.current) break;
-          await processMessage(message, (message as any).__rawPayload ?? '');
-        }
+        await consumeYielding(
+          queue,
+          (message) => processMessage(message, (message as any).__rawPayload ?? ''),
+          () => isMountedRef.current,
+        );
       } catch (err) {
         console.error('[useSessionStream] 消息消费循环异常:', err);
       }

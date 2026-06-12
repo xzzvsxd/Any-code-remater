@@ -10,6 +10,15 @@ export { AsyncQueue } from './AsyncQueue';
 // 流式 payload 协议适配（单行 string / 批量 string[]）
 export { normalizeStreamLines } from './streamPayload';
 
+// 协作式队列消费，防止高频 streaming task 在 microtask 链上饿死 UI。
+export {
+  consumeYielding,
+  shouldYieldTaskConsumer,
+  yieldToEventLoop,
+  type ConsumeYieldingOptions,
+  type TaskConsumerBudget,
+} from './yieldingTaskConsumer';
+
 // 消息转换器
 export * from './converters';
 

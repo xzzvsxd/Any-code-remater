@@ -1,7 +1,7 @@
 {
   "name": "any-code",
   "private": true,
-  "version": "5.29.32",
+  "version": "5.29.33",
   "license": "AGPL-3.0",
   "type": "module",
   "scripts": {
@@ -14,9 +14,10 @@
     "tauri:build-fast": "tauri build --profile dev-release",
     "tauri:dev": "tauri dev",
     "typecheck": "tsc --noEmit",
-    "validate": "npm run typecheck && npm run check:nsis-upgrade && npm run check:release-rust-cache",
+    "validate": "npm run typecheck && npm run check:nsis-upgrade && npm run check:release-rust-cache && npm run check:stream-batcher-targeted-emit",
     "check:nsis-upgrade": "node scripts/check-nsis-upgrade-mode.mjs",
-    "check:release-rust-cache": "node scripts/check-release-rust-cache-mode.mjs"
+    "check:release-rust-cache": "node scripts/check-release-rust-cache-mode.mjs",
+    "check:stream-batcher-targeted-emit": "node scripts/check-stream-batcher-targeted-emit.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.30",

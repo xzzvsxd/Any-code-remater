@@ -13,7 +13,7 @@
 
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, EventTarget, Manager};
 
 /// 批处理窗口：缓冲达到该行数即 flush。
 const MAX_BATCH_LINES: usize = 64;
@@ -73,12 +73,28 @@ impl EmitBatcher {
     }
 
     fn emit_lines(&self, session_event: Option<&str>, lines: &[String]) {
+        let target = self.target_window_label();
+        let target_event = EventTarget::webview_window(target);
+
         if let Some(ev) = session_event {
-            let _ = self.app.emit(ev, lines);
+            let _ = self.app.emit_to(target_event.clone(), ev, lines);
         }
-        let _ = self.app.emit(
+
+        let _ = self.app.emit_to(
+            target_event,
             &self.global_event,
             &serde_json::json!({ "tab_id": self.tab_id, "payload": lines }),
         );
+    }
+
+    fn target_window_label(&self) -> String {
+        if let Some(tab_id) = self.tab_id.as_deref() {
+            let session_label = format!("session-window-{}", tab_id);
+            if self.app.get_webview_window(&session_label).is_some() {
+                return session_label;
+            }
+        }
+
+        "main".to_string()
     }
 }

@@ -7,6 +7,8 @@ import type { MessageGroup } from "@/lib/subagentGrouping";
 import { useSession } from "@/contexts/SessionContext";
 import { CliProcessingIndicator } from "./CliProcessingIndicator";
 import type { ExecutionStatusInfo } from "@/components/FloatingPromptInput/types";
+import { evaluateBottomScrollFrame } from "./bottomScrollStabilizer";
+import { shouldPreserveScrollAnchorOnMeasuredSizeChange } from "./virtualizerScrollAdjustmentPolicy";
 
 /**
  * ✅ MeasurableItem: 自动监听高度变化的虚拟列表项
@@ -129,6 +131,14 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
   // 已测量行的真实高度缓存（key -> 高度）。estimateSize 优先返回缓存值，
   // 使未在窗口内的行也能用「上次测得的真实高度」占位，而非粗估，避免重测时整列跳动。
   const measuredHeightsRef = useRef<Map<string, number>>(new Map());
+  const bottomScrollRafRef = useRef<number>(0);
+  const cancelBottomScrollLoop = () => {
+    if (bottomScrollRafRef.current) {
+      cancelAnimationFrame(bottomScrollRafRef.current);
+      bottomScrollRafRef.current = 0;
+    }
+  };
+
   /**
    * ✅ OPTIMIZED: Virtual list configuration for improved performance
    */
@@ -212,15 +222,37 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
     },
   });
 
+  rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item) => {
+    const el = parentRef.current;
+    const scrollOffset = el?.scrollTop ?? rowVirtualizer.scrollOffset ?? 0;
+    const clientHeight = el?.clientHeight ?? rowVirtualizer.scrollRect?.height ?? 0;
+    const scrollHeight = el?.scrollHeight ?? rowVirtualizer.getTotalSize();
+    const distanceFromBottom = Math.max(0, scrollHeight - scrollOffset - clientHeight);
+
+    return shouldPreserveScrollAnchorOnMeasuredSizeChange({
+      itemStart: item.start,
+      scrollOffset,
+      distanceFromBottom,
+      bottomSettleActive: bottomScrollRafRef.current !== 0,
+    });
+  };
+
   // 切换会话时清空高度缓存：不同会话的消息 key 可能因 index 复用而碰撞，
   // 旧高度会污染新会话首屏布局。会话切换不频繁，清空成本可忽略。
   useEffect(() => {
     measuredHeightsRef.current.clear();
   }, [sessionId]);
 
+  useEffect(() => {
+    return () => {
+      cancelBottomScrollLoop();
+    };
+  }, []);
+
   useImperativeHandle(ref, () => ({
     scrollToBottom: () => {
       if (messageGroups.length === 0) return;
+      cancelBottomScrollLoop();
 
       // Use virtualizer's scrollToIndex for reliable scrolling to the last item
       rowVirtualizer.scrollToIndex(messageGroups.length - 1, {
@@ -245,34 +277,45 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
         if (!el) return;
 
         const { scrollTop, scrollHeight, clientHeight } = el;
-        const atBottom = scrollHeight - scrollTop - clientHeight <= 1;
-        const heightStable = scrollHeight === lastScrollHeight;
+        const decision = evaluateBottomScrollFrame({
+          scrollTop,
+          scrollHeight,
+          clientHeight,
+          lastScrollHeight,
+          stableCount,
+          stableFrames: STABLE_FRAMES,
+        });
         lastScrollHeight = scrollHeight;
+        stableCount = decision.nextStableCount;
 
-        if (!atBottom) {
+        if (!decision.atBottom) {
           // 仍未贴底：用虚拟列表把末项顶进窗口，并直接钉到底，双保险。
           rowVirtualizer.scrollToIndex(messageGroups.length - 1, { align: 'end', behavior: 'auto' });
-          el.scrollTop = scrollHeight;
-          stableCount = 0;
-        } else if (heightStable) {
-          // 已贴底且高度不再变化：累计稳定帧
-          stableCount += 1;
-        } else {
-          // 已贴底但高度仍在重测：保持贴底，等高度稳定
-          el.scrollTop = scrollHeight;
-          stableCount = 0;
         }
 
-        if (stableCount >= STABLE_FRAMES) return; // 稳定落底，结束
-        if (performance.now() - startTs > MAX_DURATION) return; // 超时兜底
+        if (decision.shouldWriteScrollTop) {
+          // 只写合法最大 scrollTop；不要写 scrollHeight 让浏览器 clamp，避免 WebKit 上来回修正。
+          el.scrollTop = decision.targetScrollTop;
+        }
+
+        if (decision.done) {
+          bottomScrollRafRef.current = 0;
+          return; // 稳定落底，结束
+        }
+        if (performance.now() - startTs > MAX_DURATION) {
+          bottomScrollRafRef.current = 0;
+          return; // 超时兜底
+        }
         rafId = requestAnimationFrame(step);
+        bottomScrollRafRef.current = rafId;
       };
 
       rafId = requestAnimationFrame(step);
-      void rafId;
+      bottomScrollRafRef.current = rafId;
     },
     scrollToTop: () => {
       if (messageGroups.length === 0) return;
+      cancelBottomScrollLoop();
 
       // 用虚拟列表 scrollToIndex(0) 而非裸 scrollTo({top:0,smooth})：
       // 顶部 item 真实高度与估算不符会触发高度重测、改变 totalSize，smooth 动画期间会被"顶飞/中断"。
