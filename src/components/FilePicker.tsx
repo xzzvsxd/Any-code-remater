@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import type { FileEntry } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { resolveFilePickerKeyboardAction } from "./FilePickerKeyboardPolicy";
 
 // Global caches that persist across component instances
 const globalDirectoryCache = new Map<string, FileEntry[]>();
@@ -185,37 +186,42 @@ export const FilePicker: React.FC<FilePickerProps> = ({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const displayEntries = searchQuery.trim() ? searchResults : entries;
+      const action = resolveFilePickerKeyboardAction({
+        key: e.key,
+        shiftKey: e.shiftKey,
+      });
       
       // ⚡ 修复：只处理文件选择器相关的按键，使用 capture 阶段确保优先执行
-      switch (e.key) {
-        case 'Escape':
+      switch (action) {
+        case 'close':
           e.preventDefault();
           e.stopPropagation();
           onClose();
           break;
           
-        case 'Enter':
+        case 'select':
           e.preventDefault();
           e.stopPropagation();
-          // Enter always selects the current item (file or directory)
+          // Tab selects the current item (file or directory). Plain Enter is
+          // reserved by the prompt input for submitting the prompt.
           if (displayEntries.length > 0 && selectedIndex < displayEntries.length) {
             onSelect(displayEntries[selectedIndex]);
           }
           break;
           
-        case 'ArrowUp':
+        case 'previous':
           e.preventDefault();
           e.stopPropagation();
           setSelectedIndex(prev => Math.max(0, prev - 1));
           break;
           
-        case 'ArrowDown':
+        case 'next':
           e.preventDefault();
           e.stopPropagation();
           setSelectedIndex(prev => Math.min(displayEntries.length - 1, prev + 1));
           break;
           
-        case 'ArrowRight':
+        case 'enter-directory':
           e.preventDefault();
           e.stopPropagation();
           // Right arrow enters directories
@@ -227,7 +233,7 @@ export const FilePicker: React.FC<FilePickerProps> = ({
           }
           break;
           
-        case 'ArrowLeft':
+        case 'back':
           e.preventDefault();
           e.stopPropagation();
           // Left arrow goes back to parent directory
@@ -530,7 +536,7 @@ export const FilePicker: React.FC<FilePickerProps> = ({
           {hoveredEntry ? (
             "目录:单击进入 双击选中 • 文件:双击选中"
           ) : (
-            "↑↓ 导航 • Enter 选择 • → 进入目录 • ← 返回 • Esc 关闭"
+            "↑↓ 导航 • Tab 选择 • → 进入目录 • ← 返回 • Esc 关闭"
           )}
         </p>
       </div>

@@ -255,7 +255,7 @@ export const SlashCommandMenu: React.FC<SlashCommandMenuProps> = ({
         <div className="flex items-center justify-between text-[10px] text-muted-foreground/60">
           <span>
             <kbd className="px-1 py-0.5 bg-muted rounded text-[9px]">↑↓</kbd> 导航
-            <kbd className="px-1 py-0.5 bg-muted rounded text-[9px] ml-2">Enter</kbd> 选择
+            <kbd className="px-1 py-0.5 bg-muted rounded text-[9px] ml-2">Tab</kbd> 选择
             <kbd className="px-1 py-0.5 bg-muted rounded text-[9px] ml-2">Esc</kbd> 关闭
           </span>
           <span>{flatCommands.length} 个命令</span>

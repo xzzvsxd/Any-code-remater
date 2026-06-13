@@ -12,6 +12,7 @@ import {
   filterSlashCommands,
 } from '../slashCommands';
 import { GEMINI_BUILT_IN_SLASH_COMMANDS } from '../geminiSlashCommands';
+import { resolveSlashCommandMenuKeyboardAction } from '../slashCommandKeyboardPolicy';
 
 /** 执行引擎类型 */
 type ExecutionEngine = 'claude' | 'gemini' | 'codex';
@@ -145,24 +146,28 @@ export function useSlashCommandMenu({
   // 处理键盘事件
   const handleKeyDown = useCallback((e: React.KeyboardEvent): boolean => {
     if (!isOpen) return false;
+    const action = resolveSlashCommandMenuKeyboardAction({
+      key: e.key,
+      shiftKey: e.shiftKey,
+      hasSelectedCommand: Boolean(filteredCommands[selectedIndex]),
+    });
 
-    switch (e.key) {
-      case 'ArrowUp':
+    switch (action) {
+      case 'previous':
         e.preventDefault();
         setSelectedIndex(prev =>
           prev > 0 ? prev - 1 : filteredCommands.length - 1
         );
         return true;
 
-      case 'ArrowDown':
+      case 'next':
         e.preventDefault();
         setSelectedIndex(prev =>
           prev < filteredCommands.length - 1 ? prev + 1 : 0
         );
         return true;
 
-      case 'Enter':
-        // 仅当菜单打开时拦截 Enter
+      case 'select':
         if (filteredCommands[selectedIndex]) {
           e.preventDefault();
           selectCommand(filteredCommands[selectedIndex]);
@@ -170,16 +175,7 @@ export function useSlashCommandMenu({
         }
         return false;
 
-      case 'Tab':
-        // Tab 也可以选择
-        if (filteredCommands[selectedIndex]) {
-          e.preventDefault();
-          selectCommand(filteredCommands[selectedIndex]);
-          return true;
-        }
-        return false;
-
-      case 'Escape':
+      case 'close':
         e.preventDefault();
         closeMenu();
         return true;

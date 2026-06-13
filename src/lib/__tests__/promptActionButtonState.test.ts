@@ -109,11 +109,11 @@ describe('prompt Enter submit shortcut', () => {
     })).toBe(false);
   });
 
-  test('does not submit compact prompt while a file picker owns Enter', () => {
+  test('submits compact prompt on plain Enter even while the file picker is open', () => {
     expect(shouldSubmitPromptFromEnterKey({
       ...base,
       isFilePickerOpen: true,
-    })).toBe(false);
+    })).toBe(true);
   });
 
   test('does not submit compact prompt on Shift+Enter', () => {
@@ -171,6 +171,10 @@ describe('prompt Enter submit shortcut', () => {
     expect(shouldSuppressPromptEnterNewline({
       ...base,
       isFilePickerOpen: false,
+    })).toBe(true);
+    expect(shouldSuppressPromptEnterNewline({
+      ...base,
+      isFilePickerOpen: true,
     })).toBe(true);
     expect(shouldSuppressPromptEnterNewline({
       ...base,

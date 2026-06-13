@@ -60,7 +60,6 @@ export function resolvePromptActionButtonState(input: PromptActionButtonStateInp
 export function shouldSubmitPromptFromEnterKey(input: PromptEnterSubmitInput): boolean {
   if (input.key !== 'Enter') return false;
   if (input.shiftKey) return false;
-  if (input.isFilePickerOpen) return false;
   if (input.actionMode !== 'send' || input.actionDisabled) return false;
 
   const isIMEProcessing =
@@ -77,7 +76,6 @@ export function shouldSubmitPromptFromEnterKey(input: PromptEnterSubmitInput): b
 export function shouldSuppressPromptEnterNewline(input: PromptEnterNewlineInput): boolean {
   if (input.key !== 'Enter') return false;
   if (input.shiftKey) return false;
-  if (input.isFilePickerOpen) return false;
 
   const isIMEProcessing =
     input.isComposing ||
