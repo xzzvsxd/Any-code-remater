@@ -288,8 +288,17 @@ fn main() {
             let conn = init_database(&app.handle()).expect("Failed to initialize database");
             app.manage(AgentDb(Mutex::new(conn)));
 
-            // Initialize process registry
-            app.manage(ProcessRegistryState::default());
+            // Initialize process registry and restore any Claude CLI runs that
+            // survived an app restart (Linux crash/forced close path).
+            let process_registry = ProcessRegistryState::with_app_handle(&app.handle())
+                .unwrap_or_else(|e| {
+                    log::warn!(
+                        "Failed to initialize persisted process registry (falling back to memory-only): {}",
+                        e
+                    );
+                    ProcessRegistryState::default()
+                });
+            app.manage(process_registry);
 
             // Initialize Claude process state
             app.manage(ClaudeProcessState::default());

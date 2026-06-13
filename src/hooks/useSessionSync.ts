@@ -2,6 +2,11 @@ import { useEffect, useRef } from 'react';
 import { useTabs } from './useTabs';
 import { listen } from '@tauri-apps/api/event';
 import { api } from '@/lib/api';
+import {
+  collectRunningSessionUpdates,
+  shouldQueryRunningSessions,
+  type SessionSyncReason,
+} from '@/lib/sessionSync';
 
 /**
  * useSessionSync - Hybrid session state sync (event-driven + fallback polling)
@@ -35,69 +40,23 @@ export const useSessionSync = () => {
     let intervalId: ReturnType<typeof setInterval> | undefined;
     let cancelled = false;
 
-    // 归一化路径：与 Layer 1 事件层保持一致，用于无 sessionId 新会话按 project_path 兜底比对。
-    const normalizePath = (p?: string) =>
-      p?.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '') || '';
-
-    const syncRunningState = async () => {
+    const syncRunningState = async (reason: SessionSyncReason) => {
       if (cancelled) return;
 
-      // 空闲快速返回：无任何 streaming tab 时无需打扰后端。
-      // 这样把周期间隔降到 8s 提速纠正的同时，空闲期几乎零开销（不发起 IPC）。
       const currentTabs = tabsRef.current;
-      const hasStreamingTab = currentTabs.some((t) => t.state === 'streaming');
-      if (!hasStreamingTab) return;
+      if (!shouldQueryRunningSessions(currentTabs, reason)) return;
 
       try {
         const activeSessions = await api.listRunningClaudeSessions();
         if (cancelled) return;
 
-        // 后端真实运行中的会话：同时建 sessionId 集合与 projectPath 集合。
-        // projectPath 集合用于无 sessionId 的新会话兜底判断（拿到 id 前的运行窗口期）。
-        const runningSessionIds = new Set<string>();
-        const runningProjectPaths = new Set<string>();
-        for (const s of activeSessions) {
-          if ('process_type' in s && s.process_type && 'ClaudeSession' in s.process_type) {
-            const sessionId = (s.process_type as any).ClaudeSession.session_id;
-            if (sessionId) {
-              runningSessionIds.add(sessionId);
-            }
-          }
-          const projectPath = (s as any).project_path;
-          if (projectPath) {
-            runningProjectPaths.add(normalizePath(projectPath));
-          }
-        }
-
-        // Reconcile tab states with actual running sessions
-        for (const tab of currentTabs) {
-          if (tab.session?.id) {
-            // 已落盘/已拿到 sessionId 的会话：按 sessionId 精确对账。
-            const isRunning = runningSessionIds.has(tab.session.id);
-            if (isRunning && tab.state !== 'streaming') {
-              // Session is running but tab shows idle -> correct to streaming
-              console.debug('[SessionSync] Sync: marking tab as streaming:', tab.id, tab.session.id);
-              updateTabStreamingStatusRef.current(tab.id, true, tab.session.id);
-            } else if (!isRunning && tab.state === 'streaming') {
-              // Session stopped but tab still shows streaming -> correct to idle
-              console.debug('[SessionSync] Sync: marking tab as idle:', tab.id, tab.session.id);
-              updateTabStreamingStatusRef.current(tab.id, false, null);
-            }
-            continue;
-          }
-
-          // 漏洞 A 修复：无 sessionId 但仍标记 streaming 的 tab —— 这只能是"新会话拿到 id 前的运行窗口期"。
-          // 若该新会话在拿到 sessionId 前就异常终结（进程秒退 / init 失败 / 崩溃），tab.session 永远为空，
-          // 旧逻辑（if (!tab.session?.id) continue）会永久跳过它 → 侧栏靠 tab.id 兜底的临时条目永久"运行中"。
-          // 这里改为按 project_path 兜底判断：该项目路径下后端已无任何运行中的 Claude 会话 → 拨回 idle。
-          if (tab.state === 'streaming') {
-            const tabPath = normalizePath(tab.session?.project_path || tab.projectPath);
-            // 无路径可判定时保守不动（交给事件层 / 下次对账），避免误杀真正刚起步、路径尚未就绪的会话。
-            if (tabPath && !runningProjectPaths.has(tabPath)) {
-              console.debug('[SessionSync] Sync: clearing stale streaming on session-less tab:', tab.id);
-              updateTabStreamingStatusRef.current(tab.id, false, null);
-            }
-          }
+        for (const update of collectRunningSessionUpdates(currentTabs, activeSessions)) {
+          console.debug('[SessionSync] Sync: applying running-state update:', update);
+          updateTabStreamingStatusRef.current(
+            update.tabId,
+            update.isStreaming,
+            update.sessionId,
+          );
         }
       } catch (error) {
         console.error('[SessionSync] Failed to sync running sessions:', error);
@@ -105,11 +64,11 @@ export const useSessionSync = () => {
     };
 
     // Initial sync after a short delay to let tabs be restored from localStorage
-    const initialTimer = setTimeout(syncRunningState, 1000);
+    const initialTimer = setTimeout(() => syncRunningState('initial'), 1000);
 
     // 漏洞 C 修复：周期对账间隔从 30s 降到 8s 提速纠正"虚假运行中"残留。
-    // 配合 syncRunningState 内的"无 streaming tab 即快速返回"，空闲期不发起 IPC，提速不增空转开销。
-    intervalId = setInterval(syncRunningState, 8000);
+    // 配合 syncRunningState 内的 periodic 快速返回，空闲期不发起 IPC，提速不增空转开销。
+    intervalId = setInterval(() => syncRunningState('periodic'), 8000);
 
     return () => {
       cancelled = true;

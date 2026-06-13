@@ -80,6 +80,8 @@ pub async fn execute_claude_streaming(
         &project_path,
         Some(&mapped_model),
     )?;
+    let run_marker = crate::process::new_claude_run_marker();
+    cmd.env(crate::process::CLAUDE_RUN_MARKER_ENV, &run_marker);
 
     let mut child = cmd
         .spawn()
@@ -137,6 +139,7 @@ pub async fn execute_claude_streaming(
     let model_for_reg = model.clone();
     let prompt_for_reg = prompt.clone();
     let tab_out = tab_id.clone();
+    let run_marker_for_reg = run_marker.clone();
 
     let stdout_task = tokio::spawn(async move {
         // emit 批处理器：普通输出行攒批，降低 streaming 期间 IPC 频率（Linux 卡死优化）。
@@ -163,22 +166,23 @@ pub async fn execute_claude_streaming(
                         if run_id_holder_is_empty(&rid_out) {
                             #[cfg(windows)]
                             let job = None;
-                            #[cfg(windows)]
-                            let reg = reg_out.register_claude_session_with_job(
+                            let reg = reg_out.register_claude_session_with_job_and_marker(
                                 sid.to_string(),
                                 pid,
                                 project_for_reg.clone(),
                                 prompt_for_reg.clone(),
                                 model_for_reg.clone(),
-                                job,
-                            );
-                            #[cfg(not(windows))]
-                            let reg = reg_out.register_claude_session(
-                                sid.to_string(),
-                                pid,
-                                project_for_reg.clone(),
-                                prompt_for_reg.clone(),
-                                model_for_reg.clone(),
+                                Some(run_marker_for_reg.clone()),
+                                {
+                                    #[cfg(windows)]
+                                    {
+                                        job
+                                    }
+                                    #[cfg(not(windows))]
+                                    {
+                                        None
+                                    }
+                                },
                             );
                             if let Ok(run_id) = reg {
                                 *rid_out.lock().unwrap() = Some(run_id);
@@ -211,7 +215,8 @@ pub async fn execute_claude_streaming(
                     .unwrap()
                     .as_ref()
                     .map(|sid| format!("claude-output:{}", sid));
-                let is_control = mtype == "result" || (mtype == "system" && msg["subtype"] == "init");
+                let is_control =
+                    mtype == "result" || (mtype == "system" && msg["subtype"] == "init");
                 if is_control {
                     // 先排空缓冲再立即单独 emit init/result，保证零延迟、不被攒批拖住。
                     // init 必须继续走 global 控制事件：前端正是靠它拿到真实 session_id，

@@ -898,6 +898,17 @@ async fn spawn_claude_process(
         prompt.clone()
     };
 
+    // 给本应用启动的 Claude 进程打唯一环境标记。应用重启后只恢复带有该
+    // marker 的 PID，避免把用户手动运行的 claude/node 进程误认成任务。
+    let run_marker = crate::process::new_claude_run_marker();
+    cmd.env(crate::process::CLAUDE_RUN_MARKER_ENV, &run_marker);
+    if let Some(initial_sid) = initial_session_id
+        .as_ref()
+        .filter(|sid| !sid.trim().is_empty())
+    {
+        cmd.env(crate::process::CLAUDE_SESSION_ID_ENV, initial_sid);
+    }
+
     // Spawn the process
     let mut child = cmd
         .spawn()
@@ -1018,6 +1029,7 @@ async fn spawn_claude_process(
     }
 
     let registry = app.state::<crate::process::ProcessRegistryState>();
+    let run_marker_for_register = run_marker.clone();
 
     if let Some(initial_sid) = initial_session_id
         .as_ref()
@@ -1028,12 +1040,13 @@ async fn spawn_claude_process(
         #[cfg(not(windows))]
         let job_object_for_register: Option<()> = None;
 
-        match registry.0.register_claude_session_with_job(
+        match registry.0.register_claude_session_with_job_and_marker(
             initial_sid.clone(),
             pid,
             project_path.clone(),
             prompt.clone(),
             model.clone(),
+            Some(run_marker.clone()),
             job_object_for_register,
         ) {
             Ok(run_id) => {
@@ -1063,6 +1076,7 @@ async fn spawn_claude_process(
     let project_path_clone = project_path.clone();
     let prompt_clone = prompt.clone();
     let model_clone = model.clone();
+    let run_marker_clone = run_marker_for_register.clone();
     // 🔒 CRITICAL FIX: 克隆 tab_id 用于事件发送
     let tab_id_for_stdout = tab_id.clone();
     // 🔧 FIX: Clone job_object_holder for passing to register_claude_session
@@ -1133,12 +1147,13 @@ async fn spawn_claude_process(
                             #[cfg(not(windows))]
                             let job_object_for_register: Option<()> = None;
 
-                            match registry_clone.register_claude_session_with_job(
+                            match registry_clone.register_claude_session_with_job_and_marker(
                                 claude_session_id.to_string(),
                                 pid,
                                 project_path_clone.clone(),
                                 prompt_clone.clone(),
                                 model_clone.clone(),
+                                Some(run_marker_clone.clone()),
                                 job_object_for_register,
                             ) {
                                 Ok(run_id) => {

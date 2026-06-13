@@ -1,4 +1,7 @@
-use super::JobObject;
+use super::{
+    ClaudeProcessProbe, JobObject, PersistedClaudeRun, PersistedClaudeRunStore,
+    SystemClaudeProcessProbe,
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -56,6 +59,7 @@ pub struct ProcessHandle {
     pub info: ProcessInfo,
     pub child: Arc<Mutex<Option<Child>>>,
     pub live_output: Arc<Mutex<String>>,
+    pub restored_from_persistence: bool,
     /// 持久化流式会话的 stdin 写入端（仅流式模式下存在）。
     /// 用于"随时插话"：向常驻进程写入新的 stream-json user 消息，而不重启进程。
     pub stream_stdin: Arc<tokio::sync::Mutex<Option<ChildStdin>>>,
@@ -67,6 +71,7 @@ pub struct ProcessHandle {
 pub struct ProcessRegistry {
     processes: Arc<Mutex<HashMap<i64, ProcessHandle>>>, // run_id -> ProcessHandle
     next_id: Arc<Mutex<i64>>, // Auto-incrementing ID for non-agent processes
+    persisted_store: Option<Arc<PersistedClaudeRunStore>>,
 }
 
 impl ProcessRegistry {
@@ -74,6 +79,15 @@ impl ProcessRegistry {
         Self {
             processes: Arc::new(Mutex::new(HashMap::new())),
             next_id: Arc::new(Mutex::new(1000000)), // Start at high number to avoid conflicts
+            persisted_store: None,
+        }
+    }
+
+    pub fn with_persisted_store(store: Arc<PersistedClaudeRunStore>) -> Self {
+        Self {
+            processes: Arc::new(Mutex::new(HashMap::new())),
+            next_id: Arc::new(Mutex::new(1000000)),
+            persisted_store: Some(store),
         }
     }
 
@@ -83,6 +97,79 @@ impl ProcessRegistry {
         let id = *next_id;
         *next_id += 1;
         Ok(id)
+    }
+
+    fn bump_next_id_at_least(&self, minimum_next_id: i64) -> Result<(), String> {
+        let mut next_id = self.next_id.lock().map_err(|e| e.to_string())?;
+        if *next_id < minimum_next_id {
+            *next_id = minimum_next_id;
+        }
+        Ok(())
+    }
+
+    fn persist_claude_run(&self, info: &ProcessInfo, marker: Option<String>) {
+        let Some(store) = &self.persisted_store else {
+            return;
+        };
+        let Some(marker) = marker.filter(|m| !m.trim().is_empty()) else {
+            log::debug!(
+                "Skipping persisted Claude run for PID {} because no process marker was provided",
+                info.pid
+            );
+            return;
+        };
+        let ProcessType::ClaudeSession { session_id } = &info.process_type else {
+            return;
+        };
+
+        if let Err(e) = store.upsert(PersistedClaudeRun {
+            run_id: info.run_id,
+            session_id: session_id.clone(),
+            pid: info.pid,
+            started_at: info.started_at.clone(),
+            project_path: info.project_path.clone(),
+            task: info.task.clone(),
+            model: info.model.clone(),
+            marker,
+        }) {
+            log::warn!("Failed to persist running Claude session: {}", e);
+        }
+    }
+
+    fn remove_persisted_claude_run(&self, run_id: i64) {
+        if let Some(store) = &self.persisted_store {
+            if let Err(e) = store.remove(run_id) {
+                log::warn!(
+                    "Failed to remove persisted Claude session {}: {}",
+                    run_id,
+                    e
+                );
+            }
+        }
+    }
+
+    fn update_persisted_claude_session_id(&self, run_id: i64, session_id: String) {
+        if let Some(store) = &self.persisted_store {
+            if let Err(e) = store.update_session_id(run_id, session_id) {
+                log::warn!(
+                    "Failed to update persisted Claude session id for run {}: {}",
+                    run_id,
+                    e
+                );
+            }
+        }
+    }
+
+    fn recovered_process_handle(info: ProcessInfo) -> ProcessHandle {
+        ProcessHandle {
+            info,
+            child: Arc::new(Mutex::new(None)),
+            live_output: Arc::new(Mutex::new(String::new())),
+            restored_from_persistence: true,
+            stream_stdin: Arc::new(tokio::sync::Mutex::new(None)),
+            #[cfg(windows)]
+            job_object: None,
+        }
     }
 
     /// Register a new running agent process
@@ -154,6 +241,28 @@ impl ProcessRegistry {
         model: String,
         pre_created_job: Option<Arc<JobObject>>,
     ) -> Result<i64, String> {
+        self.register_claude_session_with_job_and_marker(
+            session_id,
+            pid,
+            project_path,
+            task,
+            model,
+            None,
+            pre_created_job,
+        )
+    }
+
+    #[cfg(windows)]
+    pub fn register_claude_session_with_job_and_marker(
+        &self,
+        session_id: String,
+        pid: u32,
+        project_path: String,
+        task: String,
+        model: String,
+        run_marker: Option<String>,
+        pre_created_job: Option<Arc<JobObject>>,
+    ) -> Result<i64, String> {
         let run_id = self.generate_id()?;
 
         let process_info = ProcessInfo {
@@ -203,14 +312,18 @@ impl ProcessRegistry {
         };
 
         let process_handle = ProcessHandle {
-            info: process_info,
+            info: process_info.clone(),
             child: Arc::new(Mutex::new(None)),
             live_output: Arc::new(Mutex::new(String::new())),
+            restored_from_persistence: false,
             stream_stdin: Arc::new(tokio::sync::Mutex::new(None)),
             job_object,
         };
 
         processes.insert(run_id, process_handle);
+        drop(processes);
+
+        self.persist_claude_run(&process_info, run_marker);
         Ok(run_id)
     }
 
@@ -223,6 +336,28 @@ impl ProcessRegistry {
         project_path: String,
         task: String,
         model: String,
+        _pre_created_job: Option<()>,
+    ) -> Result<i64, String> {
+        self.register_claude_session_with_job_and_marker(
+            session_id,
+            pid,
+            project_path,
+            task,
+            model,
+            None,
+            _pre_created_job,
+        )
+    }
+
+    #[cfg(not(windows))]
+    pub fn register_claude_session_with_job_and_marker(
+        &self,
+        session_id: String,
+        pid: u32,
+        project_path: String,
+        task: String,
+        model: String,
+        run_marker: Option<String>,
         _pre_created_job: Option<()>,
     ) -> Result<i64, String> {
         let run_id = self.generate_id()?;
@@ -240,13 +375,17 @@ impl ProcessRegistry {
         let mut processes = self.processes.lock().map_err(|e| e.to_string())?;
 
         let process_handle = ProcessHandle {
-            info: process_info,
+            info: process_info.clone(),
             child: Arc::new(Mutex::new(None)),
             live_output: Arc::new(Mutex::new(String::new())),
+            restored_from_persistence: false,
             stream_stdin: Arc::new(tokio::sync::Mutex::new(None)),
         };
 
         processes.insert(run_id, process_handle);
+        drop(processes);
+
+        self.persist_claude_run(&process_info, run_marker);
         Ok(run_id)
     }
 
@@ -292,6 +431,7 @@ impl ProcessRegistry {
             info: process_info,
             child: Arc::new(Mutex::new(Some(child))),
             live_output: Arc::new(Mutex::new(String::new())),
+            restored_from_persistence: false,
             stream_stdin: Arc::new(tokio::sync::Mutex::new(None)),
             #[cfg(windows)]
             job_object,
@@ -301,8 +441,93 @@ impl ProcessRegistry {
         Ok(())
     }
 
+    pub fn restore_persisted_claude_sessions(&self) -> Result<usize, String> {
+        self.restore_persisted_claude_sessions_with_probe(&SystemClaudeProcessProbe)
+    }
+
+    pub fn restore_persisted_claude_sessions_with_probe(
+        &self,
+        probe: &dyn ClaudeProcessProbe,
+    ) -> Result<usize, String> {
+        let Some(store) = self.persisted_store.clone() else {
+            return Ok(0);
+        };
+
+        let records = store.load_all()?;
+        if records.is_empty() {
+            return Ok(0);
+        }
+
+        let mut restored = 0usize;
+        let mut max_run_id = 0i64;
+
+        for record in records {
+            max_run_id = max_run_id.max(record.run_id);
+
+            let existing_is_current_run = {
+                let processes = self.processes.lock().map_err(|e| e.to_string())?;
+                processes
+                    .get(&record.run_id)
+                    .map(|handle| !handle.restored_from_persistence)
+                    .unwrap_or(false)
+            };
+
+            if existing_is_current_run {
+                // The current app instance already has the authoritative
+                // in-memory lifecycle for this run. Do not re-probe it here:
+                // some platforms (notably Windows) cannot safely verify
+                // another process' environment marker, but the live registry
+                // remains valid until the wait task unregisters it.
+                continue;
+            }
+
+            if !probe.is_expected_claude_process(record.pid, &record.marker) {
+                log::info!(
+                    "Dropping stale persisted Claude session run_id={} pid={}",
+                    record.run_id,
+                    record.pid
+                );
+                store.remove(record.run_id)?;
+                let mut processes = self.processes.lock().map_err(|e| e.to_string())?;
+                processes.remove(&record.run_id);
+                continue;
+            }
+
+            let mut processes = self.processes.lock().map_err(|e| e.to_string())?;
+            if let std::collections::hash_map::Entry::Vacant(entry) = processes.entry(record.run_id)
+            {
+                let info = ProcessInfo {
+                    run_id: record.run_id,
+                    process_type: ProcessType::ClaudeSession {
+                        session_id: record.session_id.clone(),
+                    },
+                    pid: record.pid,
+                    started_at: record.started_at.clone(),
+                    project_path: record.project_path.clone(),
+                    task: record.task.clone(),
+                    model: record.model.clone(),
+                };
+                entry.insert(Self::recovered_process_handle(info));
+                restored += 1;
+                log::info!(
+                    "Restored running Claude session run_id={} pid={} session_id={}",
+                    record.run_id,
+                    record.pid,
+                    record.session_id
+                );
+            }
+        }
+
+        if max_run_id > 0 {
+            self.bump_next_id_at_least(max_run_id + 1)?;
+        }
+
+        Ok(restored)
+    }
+
     /// Get all running Claude sessions
     pub fn get_running_claude_sessions(&self) -> Result<Vec<ProcessInfo>, String> {
+        self.restore_persisted_claude_sessions()?;
         let processes = self.processes.lock().map_err(|e| e.to_string())?;
         Ok(processes
             .values()
@@ -318,6 +543,7 @@ impl ProcessRegistry {
         &self,
         session_id: &str,
     ) -> Result<Option<ProcessInfo>, String> {
+        self.restore_persisted_claude_sessions()?;
         let processes = self.processes.lock().map_err(|e| e.to_string())?;
         Ok(processes
             .values()
@@ -342,6 +568,7 @@ impl ProcessRegistry {
         match &mut handle.info.process_type {
             ProcessType::ClaudeSession { session_id: sid } => {
                 *sid = session_id;
+                self.update_persisted_claude_session_id(run_id, sid.clone());
                 Ok(())
             }
             _ => Err(format!("Process {} is not a Claude session", run_id)),
@@ -353,6 +580,8 @@ impl ProcessRegistry {
     pub fn unregister_process(&self, run_id: i64) -> Result<(), String> {
         let mut processes = self.processes.lock().map_err(|e| e.to_string())?;
         processes.remove(&run_id);
+        drop(processes);
+        self.remove_persisted_claude_run(run_id);
         Ok(())
     }
 
@@ -737,6 +966,9 @@ impl ProcessRegistry {
                 processes.remove(run_id);
             }
         }
+        for run_id in &finished_runs {
+            self.remove_persisted_claude_run(*run_id);
+        }
 
         Ok(finished_runs)
     }
@@ -794,6 +1026,17 @@ impl ProcessRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    struct StaticProbe {
+        expected: bool,
+    }
+
+    impl ClaudeProcessProbe for StaticProbe {
+        fn is_expected_claude_process(&self, _pid: u32, _marker: &str) -> bool {
+            self.expected
+        }
+    }
 
     #[test]
     fn trim_live_output_buffer_handles_multibyte_boundaries() {
@@ -813,6 +1056,169 @@ mod tests {
         trim_live_output_buffer(&mut buffer);
         assert_eq!(buffer, "hello\nworld");
     }
+
+    #[test]
+    fn restore_persisted_alive_claude_sessions_repopulates_empty_registry() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(PersistedClaudeRunStore::new(
+            temp_dir.path().join("running-claude-sessions.json"),
+        ));
+
+        store
+            .upsert(PersistedClaudeRun {
+                run_id: 4242,
+                session_id: "session-alive".to_string(),
+                pid: 12345,
+                started_at: Utc::now(),
+                project_path: PathBuf::from("/tmp/project").display().to_string(),
+                task: "long task".to_string(),
+                model: "sonnet".to_string(),
+                marker: "marker-alive".to_string(),
+            })
+            .unwrap();
+
+        let registry = ProcessRegistry::with_persisted_store(store);
+        registry
+            .restore_persisted_claude_sessions_with_probe(&StaticProbe { expected: true })
+            .unwrap();
+
+        let session = registry.get_process(4242).unwrap().unwrap();
+        assert_eq!(session.run_id, 4242);
+        assert_eq!(session.pid, 12345);
+        assert_eq!(session.project_path, "/tmp/project");
+        assert_eq!(session.task, "long task");
+        assert_eq!(session.model, "sonnet");
+        assert!(matches!(
+            &session.process_type,
+            ProcessType::ClaudeSession { session_id } if session_id == "session-alive"
+        ));
+    }
+
+    #[test]
+    fn restore_persisted_dead_claude_sessions_drops_stale_records() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(PersistedClaudeRunStore::new(
+            temp_dir.path().join("running-claude-sessions.json"),
+        ));
+
+        store
+            .upsert(PersistedClaudeRun {
+                run_id: 5151,
+                session_id: "session-dead".to_string(),
+                pid: 54321,
+                started_at: Utc::now(),
+                project_path: "/tmp/stale".to_string(),
+                task: "stale task".to_string(),
+                model: "opus".to_string(),
+                marker: "marker-dead".to_string(),
+            })
+            .unwrap();
+
+        let registry = ProcessRegistry::with_persisted_store(store.clone());
+        registry
+            .restore_persisted_claude_sessions_with_probe(&StaticProbe { expected: false })
+            .unwrap();
+
+        assert!(registry.get_running_claude_sessions().unwrap().is_empty());
+        assert!(store.load_all().unwrap().is_empty());
+    }
+
+    #[test]
+    fn register_update_and_unregister_keep_persisted_claude_run_in_sync() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(PersistedClaudeRunStore::new(
+            temp_dir.path().join("running-claude-sessions.json"),
+        ));
+        let registry = ProcessRegistry::with_persisted_store(store.clone());
+
+        let run_id = registry
+            .register_claude_session_with_job_and_marker(
+                "session-old".to_string(),
+                22222,
+                "/tmp/project".to_string(),
+                "task".to_string(),
+                "sonnet".to_string(),
+                Some("marker-sync".to_string()),
+                None,
+            )
+            .unwrap();
+
+        let records = store.load_all().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].run_id, run_id);
+        assert_eq!(records[0].session_id, "session-old");
+        assert_eq!(records[0].marker, "marker-sync");
+
+        registry
+            .update_claude_session_id(run_id, "session-new".to_string())
+            .unwrap();
+        let records = store.load_all().unwrap();
+        assert_eq!(records[0].session_id, "session-new");
+
+        registry.unregister_process(run_id).unwrap();
+        assert!(store.load_all().unwrap().is_empty());
+    }
+
+    #[test]
+    fn reconcile_does_not_drop_current_in_memory_runs_when_probe_cannot_verify() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(PersistedClaudeRunStore::new(
+            temp_dir.path().join("running-claude-sessions.json"),
+        ));
+        let registry = ProcessRegistry::with_persisted_store(store.clone());
+
+        let run_id = registry
+            .register_claude_session_with_job_and_marker(
+                "session-current".to_string(),
+                33333,
+                "/tmp/project".to_string(),
+                "task".to_string(),
+                "sonnet".to_string(),
+                Some("marker-current".to_string()),
+                None,
+            )
+            .unwrap();
+
+        registry
+            .restore_persisted_claude_sessions_with_probe(&StaticProbe { expected: false })
+            .unwrap();
+
+        assert!(registry.get_process(run_id).unwrap().is_some());
+        assert_eq!(store.load_all().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn restored_runs_are_rechecked_and_removed_after_the_process_exits() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(PersistedClaudeRunStore::new(
+            temp_dir.path().join("running-claude-sessions.json"),
+        ));
+        store
+            .upsert(PersistedClaudeRun {
+                run_id: 6262,
+                session_id: "session-restored".to_string(),
+                pid: 62626,
+                started_at: Utc::now(),
+                project_path: "/tmp/project".to_string(),
+                task: "task".to_string(),
+                model: "sonnet".to_string(),
+                marker: "marker-restored".to_string(),
+            })
+            .unwrap();
+        let registry = ProcessRegistry::with_persisted_store(store.clone());
+
+        registry
+            .restore_persisted_claude_sessions_with_probe(&StaticProbe { expected: true })
+            .unwrap();
+        assert!(registry.get_process(6262).unwrap().is_some());
+
+        registry
+            .restore_persisted_claude_sessions_with_probe(&StaticProbe { expected: false })
+            .unwrap();
+
+        assert!(registry.get_process(6262).unwrap().is_none());
+        assert!(store.load_all().unwrap().is_empty());
+    }
 }
 
 impl Default for ProcessRegistry {
@@ -823,6 +1229,34 @@ impl Default for ProcessRegistry {
 
 /// Global process registry state
 pub struct ProcessRegistryState(pub Arc<ProcessRegistry>);
+
+impl ProcessRegistryState {
+    pub fn with_app_handle(app: &tauri::AppHandle) -> Result<Self, String> {
+        use tauri::Manager;
+
+        let app_data_dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| format!("Failed to resolve app data dir: {}", e))?;
+        std::fs::create_dir_all(&app_data_dir).map_err(|e| {
+            format!(
+                "Failed to create app data dir {}: {}",
+                app_data_dir.display(),
+                e
+            )
+        })?;
+
+        let store = Arc::new(PersistedClaudeRunStore::new(
+            app_data_dir.join("running-claude-sessions.json"),
+        ));
+        let registry = Arc::new(ProcessRegistry::with_persisted_store(store));
+        let restored = registry.restore_persisted_claude_sessions()?;
+        if restored > 0 {
+            log::info!("Restored {} running Claude session(s) on startup", restored);
+        }
+        Ok(Self(registry))
+    }
+}
 
 impl Default for ProcessRegistryState {
     fn default() -> Self {
