@@ -30,6 +30,16 @@ export interface PromptEnterSubmitInput {
   timeSinceCompositionEndMs: number;
 }
 
+export interface PromptEnterNewlineInput {
+  key: string;
+  shiftKey: boolean;
+  isFilePickerOpen: boolean;
+  isComposing: boolean;
+  nativeIsComposing?: boolean;
+  keyCode?: number;
+  which?: number;
+}
+
 export function resolvePromptActionButtonState(input: PromptActionButtonStateInput): PromptActionButtonState {
   const hasPromptText = input.prompt.trim().length > 0;
   const showCancel = input.isLoading && !hasPromptText;
@@ -57,14 +67,23 @@ export function shouldSubmitPromptFromEnterKey(input: PromptEnterSubmitInput): b
     input.isComposing ||
     input.nativeIsComposing === true ||
     input.keyCode === 229 ||
-    input.which === 229 ||
-    input.timeSinceCompositionEndMs < 200;
+    input.which === 229;
 
   if (isIMEProcessing) return false;
 
-  if (!input.isExpanded) {
-    return true;
-  }
+  return true;
+}
 
-  return input.ctrlKey === true || input.metaKey === true;
+export function shouldSuppressPromptEnterNewline(input: PromptEnterNewlineInput): boolean {
+  if (input.key !== 'Enter') return false;
+  if (input.shiftKey) return false;
+  if (input.isFilePickerOpen) return false;
+
+  const isIMEProcessing =
+    input.isComposing ||
+    input.nativeIsComposing === true ||
+    input.keyCode === 229 ||
+    input.which === 229;
+
+  return !isIMEProcessing;
 }

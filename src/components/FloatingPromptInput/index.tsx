@@ -26,7 +26,11 @@ import { InputArea } from "./InputArea";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { ControlBar } from "./ControlBar";
 import { ExpandedModal } from "./ExpandedModal";
-import { resolvePromptActionButtonState, shouldSubmitPromptFromEnterKey } from "./promptActionButtonState";
+import {
+  resolvePromptActionButtonState,
+  shouldSubmitPromptFromEnterKey,
+  shouldSuppressPromptEnterNewline,
+} from "./promptActionButtonState";
 
 // Re-export types for external use
 export type { FloatingPromptInputRef, FloatingPromptInputProps, ThinkingMode, ModelType, ExecutionStatusInfo } from "./types";
@@ -655,17 +659,17 @@ const FloatingPromptInputInner = (
 
       // 紧凑输入框里 Enter 的语义是“提交”。当当前动作是取消（运行中且输入为空）
       // 时不要误提交，也不要插入一个看不见的换行把“空输入”变成草稿噪音。
-      if (
-        !state.isExpanded &&
-        !e.shiftKey &&
-        !showFilePicker &&
-        actionButtonState.mode === 'cancel' &&
-        !isComposing &&
-        !e.nativeEvent.isComposing &&
-        e.nativeEvent.keyCode !== 229 &&
-        (e.nativeEvent as any).which !== 229 &&
-        timeSinceCompositionEnd >= 200
-      ) {
+      // 同时覆盖“发送可用但被 IME 冷却期误挡”的旧路径：plain Enter 在紧凑输入框
+      // 永远不应插入换行；Shift+Enter 才换行。
+      if (shouldSuppressPromptEnterNewline({
+        key: e.key,
+        shiftKey: e.shiftKey,
+        isFilePickerOpen: showFilePicker,
+        isComposing,
+        nativeIsComposing: e.nativeEvent.isComposing,
+        keyCode: e.nativeEvent.keyCode,
+        which: (e.nativeEvent as any).which,
+      })) {
         e.preventDefault();
       }
     }

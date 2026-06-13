@@ -15,7 +15,11 @@ import { GeminiModelSelector } from "./GeminiModelSelector";
 import { ThinkingModeToggle } from "./ThinkingModeToggle";
 import { PlanModeToggle } from "./PlanModeToggle";
 import { ModelType, ModelConfig, ThinkingEffort, type ExecutionStatusInfo } from "./types";
-import { resolvePromptActionButtonState, shouldSubmitPromptFromEnterKey } from "./promptActionButtonState";
+import {
+  resolvePromptActionButtonState,
+  shouldSubmitPromptFromEnterKey,
+  shouldSuppressPromptEnterNewline,
+} from "./promptActionButtonState";
 
 interface ExpandedModalProps {
   prompt: string;
@@ -167,6 +171,19 @@ export const ExpandedModal = forwardRef<HTMLTextAreaElement, ExpandedModalProps>
     })) {
       e.preventDefault();
       onSend();
+      return;
+    }
+
+    if (shouldSuppressPromptEnterNewline({
+      key: e.key,
+      shiftKey: e.shiftKey,
+      isFilePickerOpen: false,
+      isComposing,
+      nativeIsComposing: e.nativeEvent.isComposing,
+      keyCode: e.nativeEvent.keyCode,
+      which: (e.nativeEvent as any).which,
+    })) {
+      e.preventDefault();
     }
   };
 

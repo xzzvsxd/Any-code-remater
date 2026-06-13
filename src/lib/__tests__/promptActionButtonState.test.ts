@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   resolvePromptActionButtonState,
+  shouldSuppressPromptEnterNewline,
   shouldSubmitPromptFromEnterKey,
 } from '../../components/FloatingPromptInput/promptActionButtonState';
 
@@ -94,6 +95,13 @@ describe('prompt Enter submit shortcut', () => {
     expect(shouldSubmitPromptFromEnterKey(base)).toBe(true);
   });
 
+  test('submits compact prompt on plain Enter right after composition ended when the key event is no longer composing', () => {
+    expect(shouldSubmitPromptFromEnterKey({
+      ...base,
+      timeSinceCompositionEndMs: 50,
+    })).toBe(true);
+  });
+
   test('does not submit compact prompt when current action is cancel', () => {
     expect(shouldSubmitPromptFromEnterKey({
       ...base,
@@ -115,11 +123,11 @@ describe('prompt Enter submit shortcut', () => {
     })).toBe(false);
   });
 
-  test('submits expanded prompt only with Ctrl+Enter or Meta+Enter', () => {
+  test('submits expanded prompt on plain Enter too', () => {
     expect(shouldSubmitPromptFromEnterKey({
       ...base,
       isExpanded: true,
-    })).toBe(false);
+    })).toBe(true);
 
     expect(shouldSubmitPromptFromEnterKey({
       ...base,
@@ -132,9 +140,15 @@ describe('prompt Enter submit shortcut', () => {
       isExpanded: true,
       metaKey: true,
     })).toBe(true);
+
+    expect(shouldSubmitPromptFromEnterKey({
+      ...base,
+      isExpanded: true,
+      shiftKey: true,
+    })).toBe(false);
   });
 
-  test('does not submit while IME composition is active or cooling down', () => {
+  test('does not submit while IME composition is active', () => {
     expect(shouldSubmitPromptFromEnterKey({
       ...base,
       isComposing: true,
@@ -150,10 +164,21 @@ describe('prompt Enter submit shortcut', () => {
       keyCode: 229,
       which: 229,
     })).toBe(false);
+  });
 
-    expect(shouldSubmitPromptFromEnterKey({
+  test('suppresses compact prompt newline on plain Enter when it is not an IME event', () => {
+    expect(shouldSuppressPromptEnterNewline(base)).toBe(true);
+    expect(shouldSuppressPromptEnterNewline({
       ...base,
-      timeSinceCompositionEndMs: 50,
+      isFilePickerOpen: false,
+    })).toBe(true);
+    expect(shouldSuppressPromptEnterNewline({
+      ...base,
+      shiftKey: true,
+    })).toBe(false);
+    expect(shouldSuppressPromptEnterNewline({
+      ...base,
+      isComposing: true,
     })).toBe(false);
   });
 });
