@@ -29,6 +29,39 @@ describe('bottom scroll stabilizer', () => {
     expect(result.done).toBe(false);
   });
 
+  test('keeps settling for a minimum time even when early frames look stable', () => {
+    const result = evaluateBottomScrollFrame({
+      scrollTop: 700,
+      scrollHeight: 1200,
+      clientHeight: 500,
+      lastScrollHeight: 1200,
+      stableCount: 3,
+      stableFrames: 4,
+      elapsedMs: 120,
+      minSettleMs: 600,
+    });
+
+    expect(result.atBottom).toBe(true);
+    expect(result.shouldWriteScrollTop).toBe(false);
+    expect(result.nextStableCount).toBe(4);
+    expect(result.done).toBe(false);
+  });
+
+  test('treats small near-bottom drift as settled by default', () => {
+    const result = evaluateBottomScrollFrame({
+      scrollTop: 692,
+      scrollHeight: 1200,
+      clientHeight: 500,
+      lastScrollHeight: 1200,
+      stableCount: 3,
+      stableFrames: 4,
+    });
+
+    expect(result.atBottom).toBe(true);
+    expect(result.shouldWriteScrollTop).toBe(false);
+    expect(result.done).toBe(true);
+  });
+
   test('writes a clamped target only when still away from bottom', () => {
     const result = evaluateBottomScrollFrame({
       scrollTop: 650,

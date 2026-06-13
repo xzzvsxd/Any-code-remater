@@ -16,6 +16,12 @@ describe('SessionMessages imperative scrolling invariants', () => {
     expect(source).toMatch(/useEffect\(\(\)\s*=>\s*{\s*cancelBottomScrollLoop\(\);\s*cancelPromptScrollSearch\(\);\s*measuredHeightsRef\.current\.clear\(\);\s*},\s*\[sessionId\]\);/);
   });
 
+  test('direct user scroll gestures cancel active bottom-settling loops', () => {
+    expect(source).toContain('onWheelCapture={cancelBottomScrollLoop}');
+    expect(source).toContain('onTouchStartCapture={cancelBottomScrollLoop}');
+    expect(source).toContain('onPointerDownCapture={cancelBottomScrollLoop}');
+  });
+
   test('new imperative scroll commands cancel any pending prompt-navigation retry loop', () => {
     expect(source).toContain('cancelPromptScrollSearch');
     expect(source).toMatch(/scrollToBottom:\s*\(\)\s*=>\s*{[\s\S]*?cancelPromptScrollSearch\(\);/);

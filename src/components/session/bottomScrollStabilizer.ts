@@ -8,6 +8,8 @@ export interface BottomScrollFrameInput extends ScrollGeometry {
   lastScrollHeight: number;
   stableCount: number;
   stableFrames: number;
+  elapsedMs?: number;
+  minSettleMs?: number;
   bottomThresholdPx?: number;
 }
 
@@ -31,7 +33,9 @@ export function evaluateBottomScrollFrame({
   lastScrollHeight,
   stableCount,
   stableFrames,
-  bottomThresholdPx = 1,
+  elapsedMs,
+  minSettleMs = 0,
+  bottomThresholdPx = 16,
 }: BottomScrollFrameInput): BottomScrollFrameDecision {
   const targetScrollTop = getBottomScrollTop({ scrollHeight, clientHeight });
   const distance = targetScrollTop - scrollTop;
@@ -50,12 +54,13 @@ export function evaluateBottomScrollFrame({
   }
 
   const nextStableCount = heightStable ? stableCount + 1 : 0;
+  const minimumSettleElapsed = elapsedMs === undefined || elapsedMs >= minSettleMs;
   return {
     atBottom,
     heightStable,
     shouldWriteScrollTop: false,
     targetScrollTop,
     nextStableCount,
-    done: nextStableCount >= stableFrames,
+    done: nextStableCount >= stableFrames && minimumSettleElapsed,
   };
 }

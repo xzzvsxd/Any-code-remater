@@ -622,20 +622,32 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   // 仅靠 useSmartAutoScroll 的单次 performAutoScroll 无法对抗虚拟列表的渐进高度重测，
   // 会停在"离底一点点"。这里用带 followUp 校正的 scrollToBottom，并按 session.id 去重只触发一次。
   const initialScrolledSessionRef = useRef<string | null>(null);
+  const initialScrollPendingSessionRef = useRef<string | null>(null);
   useEffect(() => {
     const sid = session?.id || 'new_session';
     if (isHistoryLoading) return;
-    if (displayableMessages.length === 0) return;
+    if (messageGroups.length === 0) return;
     if (initialScrolledSessionRef.current === sid) return;
+    if (initialScrollPendingSessionRef.current === sid) return;
 
-    initialScrolledSessionRef.current = sid;
+    initialScrollPendingSessionRef.current = sid;
     setUserScrolled(false);
     setShouldAutoScroll(true);
     // 等一帧让 messageGroups 渲染就位，再走带 followUp 校正的置底
-    requestAnimationFrame(() => {
-      sessionMessagesRef.current?.scrollToBottom();
+    const rafId = requestAnimationFrame(() => {
+      if (initialScrollPendingSessionRef.current !== sid) return;
+      initialScrollPendingSessionRef.current = null;
+      if (!sessionMessagesRef.current) return;
+      sessionMessagesRef.current.scrollToBottom();
+      initialScrolledSessionRef.current = sid;
     });
-  }, [session?.id, isHistoryLoading, displayableMessages.length, setShouldAutoScroll, setUserScrolled]);
+    return () => {
+      cancelAnimationFrame(rafId);
+      if (initialScrollPendingSessionRef.current === sid) {
+        initialScrollPendingSessionRef.current = null;
+      }
+    };
+  }, [session?.id, isHistoryLoading, messageGroups.length, setShouldAutoScroll, setUserScrolled]);
 
   // ????????????????????????????
   const handleSendPromptWithScroll = useCallback((prompt: string, model: ModelType, maxThinkingTokens?: number) => {

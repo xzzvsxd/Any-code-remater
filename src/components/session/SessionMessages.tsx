@@ -285,8 +285,10 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       // 或达到超时上限才停止，无论会话多长都能稳定落底。
       let rafId = 0;
       const startTs = performance.now();
-      const MAX_DURATION = 1500; // ms 超时上限，覆盖大会话的渐进重测
+      const MAX_DURATION = 2400; // ms 超时上限，覆盖大会话的渐进重测
+      const MIN_SETTLE_DURATION = 800; // ms 最短稳定窗口，覆盖代码高亮/折叠块等延迟测高
       const STABLE_FRAMES = 4;   // 连续稳定帧数
+      const BOTTOM_THRESHOLD = 16; // 与 streaming 粘底死区一致，吸收 WebKit/虚拟列表微抖
       let stableCount = 0;
       let lastScrollHeight = -1;
 
@@ -302,6 +304,9 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
           lastScrollHeight,
           stableCount,
           stableFrames: STABLE_FRAMES,
+          elapsedMs: performance.now() - startTs,
+          minSettleMs: MIN_SETTLE_DURATION,
+          bottomThresholdPx: BOTTOM_THRESHOLD,
         });
         lastScrollHeight = scrollHeight;
         stableCount = decision.nextStableCount;
@@ -472,6 +477,9 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
     <div
       ref={parentRef}
       className="flex-1 overflow-y-auto relative"
+      onWheelCapture={cancelBottomScrollLoop}
+      onTouchStartCapture={cancelBottomScrollLoop}
+      onPointerDownCapture={cancelBottomScrollLoop}
       style={{
         paddingTop: '20px',
         paddingBottom: '24px', // 底部留一点间距即可
