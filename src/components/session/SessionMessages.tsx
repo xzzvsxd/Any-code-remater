@@ -132,10 +132,24 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
   // 使未在窗口内的行也能用「上次测得的真实高度」占位，而非粗估，避免重测时整列跳动。
   const measuredHeightsRef = useRef<Map<string, number>>(new Map());
   const bottomScrollRafRef = useRef<number>(0);
+  const promptScrollRafRef = useRef<number>(0);
+  const promptScrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const promptScrollSearchTokenRef = useRef(0);
   const cancelBottomScrollLoop = () => {
     if (bottomScrollRafRef.current) {
       cancelAnimationFrame(bottomScrollRafRef.current);
       bottomScrollRafRef.current = 0;
+    }
+  };
+  const cancelPromptScrollSearch = () => {
+    promptScrollSearchTokenRef.current += 1;
+    if (promptScrollRafRef.current) {
+      cancelAnimationFrame(promptScrollRafRef.current);
+      promptScrollRafRef.current = 0;
+    }
+    if (promptScrollTimeoutRef.current) {
+      clearTimeout(promptScrollTimeoutRef.current);
+      promptScrollTimeoutRef.current = null;
     }
   };
 
@@ -240,12 +254,15 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
   // 切换会话时清空高度缓存：不同会话的消息 key 可能因 index 复用而碰撞，
   // 旧高度会污染新会话首屏布局。会话切换不频繁，清空成本可忽略。
   useEffect(() => {
+    cancelBottomScrollLoop();
+    cancelPromptScrollSearch();
     measuredHeightsRef.current.clear();
   }, [sessionId]);
 
   useEffect(() => {
     return () => {
       cancelBottomScrollLoop();
+      cancelPromptScrollSearch();
     };
   }, []);
 
@@ -253,6 +270,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
     scrollToBottom: () => {
       if (messageGroups.length === 0) return;
       cancelBottomScrollLoop();
+      cancelPromptScrollSearch();
 
       // Use virtualizer's scrollToIndex for reliable scrolling to the last item
       rowVirtualizer.scrollToIndex(messageGroups.length - 1, {
@@ -316,6 +334,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
     scrollToTop: () => {
       if (messageGroups.length === 0) return;
       cancelBottomScrollLoop();
+      cancelPromptScrollSearch();
 
       // 用虚拟列表 scrollToIndex(0) 而非裸 scrollTo({top:0,smooth})：
       // 顶部 item 真实高度与估算不符会触发高度重测、改变 totalSize，smooth 动画期间会被"顶飞/中断"。
@@ -337,6 +356,10 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       });
     },
     scrollToPrompt: (promptIndex: number) => {
+      cancelBottomScrollLoop();
+      cancelPromptScrollSearch();
+      const searchToken = promptScrollSearchTokenRef.current;
+
       // Find the targetGroupIndex for the given promptIndex.
       // Uses getPromptIndexForMessage to ensure counting logic matches backend
       // (excludes warmup/skill/sidechain/tool-result-only non-real user inputs)
@@ -378,6 +401,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       const pollInterval = 100; // ms between retries
 
       const tryFindAndHighlight = () => {
+        if (promptScrollSearchTokenRef.current !== searchToken) return;
         attempts++;
         const element = document.getElementById(`prompt-${promptIndex}`);
 
@@ -421,7 +445,10 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
             align: 'center',
             behavior: 'auto',
           });
-          setTimeout(tryFindAndHighlight, pollInterval);
+          promptScrollTimeoutRef.current = setTimeout(() => {
+            promptScrollTimeoutRef.current = null;
+            tryFindAndHighlight();
+          }, pollInterval);
         } else {
           console.warn(`[Prompt Navigation] Element #prompt-${promptIndex} not found after ${maxAttempts} attempts`);
         }
@@ -429,8 +456,10 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
 
       // Wait for two animation frames to let the virtualizer process
       // the scroll and render the target area before searching for the element
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
+      promptScrollRafRef.current = requestAnimationFrame(() => {
+        if (promptScrollSearchTokenRef.current !== searchToken) return;
+        promptScrollRafRef.current = requestAnimationFrame(() => {
+          promptScrollRafRef.current = 0;
           tryFindAndHighlight();
         });
       });

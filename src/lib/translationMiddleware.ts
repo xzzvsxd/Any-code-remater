@@ -1,5 +1,7 @@
 import { api, type TranslationConfig } from './api';
+import { createFallbackTranslationConfig } from './translationConfigDefaults';
 
+export { createFallbackTranslationConfig } from './translationConfigDefaults';
 
 /**
  * 速率限制配置接口
@@ -25,6 +27,11 @@ interface QueueItem {
   reject: (error: any) => void;
 }
 
+interface TranslationMiddlewareOptions {
+  autoInitialize?: boolean;
+  startBackgroundTasks?: boolean;
+}
+
 /**
  * 翻译中间件 - 提供透明的中英文翻译功能 (性能优化版)
  *
@@ -39,6 +46,9 @@ interface QueueItem {
 export class TranslationMiddleware {
   private config: TranslationConfig | null = null;
   private initialized = false;
+  private initializationPromise: Promise<void> | null = null;
+  private queueProcessorTimer: ReturnType<typeof setInterval> | null = null;
+  private cacheCleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   // 性能优化相关
   private rateLimitConfig: RateLimitConfig = {
@@ -63,10 +73,19 @@ export class TranslationMiddleware {
   private cacheHitCount = 0;
   private cacheMissCount = 0;
 
-  constructor() {
-    this.init();
-    this.startQueueProcessor();
-    this.startCacheCleanup();
+  constructor(options: TranslationMiddlewareOptions = {}) {
+    const {
+      autoInitialize = true,
+      startBackgroundTasks = true,
+    } = options;
+
+    if (autoInitialize) {
+      void this.ensureInitialized();
+    }
+    if (startBackgroundTasks) {
+      this.startQueueProcessor();
+      this.startCacheCleanup();
+    }
   }
 
   /**
@@ -178,7 +197,8 @@ export class TranslationMiddleware {
    * 启动队列处理器
    */
   private startQueueProcessor(): void {
-    setInterval(() => {
+    if (this.queueProcessorTimer) return;
+    this.queueProcessorTimer = setInterval(() => {
       this.processQueue();
     }, 1000); // 每秒检查队列
   }
@@ -187,7 +207,8 @@ export class TranslationMiddleware {
    * 启动缓存清理器
    */
   private startCacheCleanup(): void {
-    setInterval(() => {
+    if (this.cacheCleanupTimer) return;
+    this.cacheCleanupTimer = setInterval(() => {
       this.cleanupCache();
     }, 300000); // 每5分钟清理过期缓存
   }
@@ -407,31 +428,36 @@ export class TranslationMiddleware {
    * 初始化翻译中间件
    */
   private async init(): Promise<void> {
+    if (this.initialized) {
+      return;
+    }
+    if (this.initializationPromise) {
+      return this.initializationPromise;
+    }
+
+    this.initializationPromise = (async () => {
     try {
       this.config = await api.getTranslationConfig();
       this.initialized = true;
     } catch (error) {
       console.warn('[TranslationMiddleware] ⚠️ Failed to load saved config, using default:', error);
-      this.config = {
-        enabled: true,  // 🔧 修复：默认启用翻译功能
-        api_base_url: "https://api.siliconflow.cn/v1",
-        api_key: "sk-ednywbvnfwerfcxnqjkmnhxvgcqoyuhmjvfywrshpxsgjbzm",
-        model: "tencent/Hunyuan-MT-7B",
-        timeout_seconds: 30,
-        cache_ttl_seconds: 3600,
-      };
+      this.config = createFallbackTranslationConfig();
       this.initialized = true;
       
+    } finally {
+      this.initializationPromise = null;
     }
+    })();
+
+    return this.initializationPromise;
   }
 
   /**
    * 确保中间件已初始化
    */
   private async ensureInitialized(): Promise<void> {
-    if (!this.initialized) {
-      await this.init();
-    }
+    if (this.initialized) return;
+    await this.init();
   }
 
   /**

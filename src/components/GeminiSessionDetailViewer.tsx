@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/collapsible';
 import { X, User, Bot, Wrench, Clock, CheckCircle, XCircle, RefreshCw, ChevronDown, ChevronRight, Cpu } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { getBottomScrollTop } from '@/components/session/bottomScrollStabilizer';
 
 interface GeminiSessionDetailViewerProps {
   projectPath: string;
@@ -56,41 +57,63 @@ export const GeminiSessionDetailViewer: React.FC<GeminiSessionDetailViewerProps>
     const el = messagesScrollRef.current;
     if (!el) return;
 
-    // 标记是否需要保持在底部
-    let shouldStick = true;
-    
-    const scrollToBottom = () => {
-      if (shouldStick && el) {
-        el.scrollTop = el.scrollHeight;
+    let disposed = false;
+    let userInteracted = false;
+    let rafId = 0;
+
+    const stopSettling = () => {
+      userInteracted = true;
+      observer.disconnect();
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = 0;
       }
     };
-    
-    // 立即尝试滚动
-    scrollToBottom();
-    
-    // 监听内容大小变化
-    const observer = new ResizeObserver(() => {
-      scrollToBottom();
-    });
-    
-    // 监听内容区域（ScrollArea 的直接子元素）
-    if (el.firstElementChild) {
-      observer.observe(el.firstElementChild);
-    } else {
-      observer.observe(el);
-    }
-    
-    // 1秒后停止强制滚动，允许用户自由滚动
+
+    const scrollToBottom = () => {
+      if (disposed || userInteracted) return;
+      const target = getBottomScrollTop({
+        scrollHeight: el.scrollHeight,
+        clientHeight: el.clientHeight,
+      });
+      if (Math.abs(el.scrollTop - target) > 1) {
+        el.scrollTop = target;
+      }
+    };
+
+    const scheduleScrollToBottom = () => {
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        scrollToBottom();
+      });
+    };
+
+    const observer = new ResizeObserver(scheduleScrollToBottom);
+    observer.observe(el.firstElementChild ?? el);
+    scheduleScrollToBottom();
+
+    el.addEventListener('wheel', stopSettling, { passive: true });
+    el.addEventListener('touchstart', stopSettling, { passive: true });
+    el.addEventListener('pointerdown', stopSettling, { passive: true });
+    el.addEventListener('keydown', stopSettling);
+
+    // 历史详情只需要短暂 settle 到底，不能长期 ResizeObserver 抢 scrollTop。
     const timer = setTimeout(() => {
-      shouldStick = false;
+      userInteracted = true;
       observer.disconnect();
       autoScrolledSessionIdRef.current = sessionId;
-    }, 1000);
+    }, 600);
 
     return () => {
-      shouldStick = false;
+      disposed = true;
       observer.disconnect();
       clearTimeout(timer);
+      if (rafId) cancelAnimationFrame(rafId);
+      el.removeEventListener('wheel', stopSettling);
+      el.removeEventListener('touchstart', stopSettling);
+      el.removeEventListener('pointerdown', stopSettling);
+      el.removeEventListener('keydown', stopSettling);
     };
   }, [session?.sessionId]);
 

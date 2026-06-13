@@ -19,6 +19,10 @@ use tauri::{AppHandle, Emitter, EventTarget, Manager};
 const MAX_BATCH_LINES: usize = 64;
 /// 批处理窗口：距上次 flush 超过该时长即 flush（毫秒）。约一帧多一点，兼顾吞吐与延迟。
 const MAX_BATCH_INTERVAL: Duration = Duration::from_millis(16);
+/// session_id 刚出现后，前端需要一小段时间从 global `system:init` 里拿到 sid 并注册
+/// `*-output:<sid>` 监听。此窗口内普通 stream 仍保留少量 global fallback，避免 attach 竞态丢早期行。
+const SESSION_LISTENER_ATTACH_GRACE_BATCHES: usize = 8;
+const SESSION_LISTENER_ATTACH_GRACE_WINDOW: Duration = Duration::from_millis(750);
 
 /// 单个会话输出流的 emit 批处理器。
 ///
@@ -30,6 +34,9 @@ pub struct EmitBatcher {
     tab_id: Option<String>,
     buffer: Vec<String>,
     last_flush: Instant,
+    last_session_event: Option<String>,
+    session_listener_attach_grace_batches: usize,
+    session_listener_attach_grace_until: Option<Instant>,
 }
 
 impl EmitBatcher {
@@ -40,6 +47,9 @@ impl EmitBatcher {
             tab_id,
             buffer: Vec::with_capacity(MAX_BATCH_LINES),
             last_flush: Instant::now(),
+            last_session_event: None,
+            session_listener_attach_grace_batches: 0,
+            session_listener_attach_grace_until: None,
         }
     }
 
@@ -58,7 +68,7 @@ impl EmitBatcher {
             return;
         }
         let batch: Vec<String> = std::mem::take(&mut self.buffer);
-        self.emit_lines(session_event, &batch);
+        self.emit_stream_lines(session_event, &batch);
         self.last_flush = Instant::now();
     }
 
@@ -68,23 +78,73 @@ impl EmitBatcher {
         self.flush(session_event);
         let one = [line.to_string()];
         // 上一行 flush 后 buffer 为空，这里直接发单行批，保证它紧跟在已排空内容之后。
-        self.emit_lines(session_event, &one);
+        self.emit_control_lines(session_event, &one);
         self.last_flush = Instant::now();
     }
 
-    fn emit_lines(&self, session_event: Option<&str>, lines: &[String]) {
+    fn emit_stream_lines(&mut self, session_event: Option<&str>, lines: &[String]) {
         let target = self.target_window_label();
         let target_event = EventTarget::webview_window(target);
 
         if let Some(ev) = session_event {
+            // 高频普通 stream 行优先走 session-specific 隔离事件。
+            // attach grace 结束后不再额外发 global，避免同一窗口内 global listener 也被唤醒，
+            // 在 Linux/WebKit 下放大 JSON parse、normalize、队列调度成本。
+            let _ = self.app.emit_to(target_event.clone(), ev, lines);
+
+            // 但 session_id 刚出现时，前端尚未完成 session-specific listener attach。
+            // 短暂保留 global fallback，覆盖 init 之后的早期几批输出；窗口结束后回到只发隔离事件。
+            if !self.should_emit_global_fallback(ev) {
+                return;
+            }
+        }
+
+        self.emit_global_lines(target_event, lines);
+    }
+
+    fn emit_control_lines(&mut self, session_event: Option<&str>, lines: &[String]) {
+        let target = self.target_window_label();
+        let target_event = EventTarget::webview_window(target);
+
+        if let Some(ev) = session_event {
+            self.begin_session_listener_attach_grace(ev);
             let _ = self.app.emit_to(target_event.clone(), ev, lines);
         }
 
+        self.emit_global_lines(target_event, lines);
+    }
+
+    fn emit_global_lines(&self, target_event: EventTarget, lines: &[String]) {
         let _ = self.app.emit_to(
             target_event,
             &self.global_event,
             &serde_json::json!({ "tab_id": self.tab_id, "payload": lines }),
         );
+    }
+
+    fn begin_session_listener_attach_grace(&mut self, session_event: &str) {
+        if self.last_session_event.as_deref() == Some(session_event) {
+            return;
+        }
+
+        self.last_session_event = Some(session_event.to_string());
+        self.session_listener_attach_grace_batches = SESSION_LISTENER_ATTACH_GRACE_BATCHES;
+        self.session_listener_attach_grace_until = Some(Instant::now() + SESSION_LISTENER_ATTACH_GRACE_WINDOW);
+    }
+
+    fn should_emit_global_fallback(&mut self, session_event: &str) -> bool {
+        self.begin_session_listener_attach_grace(session_event);
+
+        let within_grace_window = self
+            .session_listener_attach_grace_until
+            .map(|until| Instant::now() <= until)
+            .unwrap_or(false);
+        if !within_grace_window || self.session_listener_attach_grace_batches == 0 {
+            return false;
+        }
+
+        self.session_listener_attach_grace_batches -= 1;
+        true
     }
 
     fn target_window_label(&self) -> String {

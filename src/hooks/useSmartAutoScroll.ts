@@ -11,6 +11,7 @@ import {
   shouldFollowResizeToBottom,
   shouldRunStickyAutoScroll,
 } from './smartAutoScrollPolicy';
+import { shouldMarkDownwardIntentFromScrollDelta } from './smartAutoScrollIntentPolicy';
 
 interface SmartAutoScrollConfig {
   /** 可显示的消息列表（用于触发滚动） */
@@ -41,6 +42,8 @@ const RESUME_AT_BOTTOM_THRESHOLD = 4;
 // scrollTop 就被反复微调、肉眼可见地一直闪。设一个略大于"半行"的死区吸收这些微抖：
 // 只有真正的新内容（通常 ≥ 一行 ~20px，超过死区）才触发跟随，且一次追到底。
 const STICK_BOTTOM_DEADBAND = 16;
+const PROGRAMMATIC_SCROLL_GUARD_MS = 120;
+const DIRECT_SCROLL_GESTURE_WINDOW_MS = 1000;
 
 /**
  * 计算最后一条消息的内容哈希，用于检测内容变化
@@ -80,6 +83,11 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
   const userIntentDownwardRef = useRef(false);
   // 记录上一帧 scrollTop，用于在 scroll 事件里甄别“真·向下滚动”与“高度补偿被动位移”。
   const lastScrollTopRef = useRef(0);
+  // 自动贴底写 scrollTop 后，浏览器会派发 scroll 事件；这些事件不能反过来被当成用户意图。
+  const programmaticScrollUntilRef = useRef(0);
+  // 滚动条拖拽/触摸/滚轮/键盘等直接输入后的短窗口。只有这个窗口内的 scrollTop 增大，
+  // 才作为“用户想回到底部”的兜底信号；虚拟列表测高补偿不带直接输入，不能恢复粘底。
+  const directScrollGestureUntilRef = useRef(0);
 
   const lastMessageHash = useMemo(
     () => getLastMessageContentHash(displayableMessages),
@@ -90,6 +98,8 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
    * 同步自动滚动与“用户已离开底部”两个状态，避免它们互相打架。
    */
   const syncAutoScrollState = (enabled: boolean) => {
+    userIntentReleasedRef.current = !enabled;
+    userIntentDownwardRef.current = false;
     autoScrollEnabledRef.current = enabled;
     setShouldAutoScrollState(enabled);
     setUserScrolledState(!enabled);
@@ -126,6 +136,8 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
       return false;
     }
 
+    programmaticScrollUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_GUARD_MS;
+    lastScrollTopRef.current = targetScrollTop;
     scrollElement.scrollTop = targetScrollTop;
     return true;
   };
@@ -167,7 +179,12 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
       if (movingDown) userIntentDownwardRef.current = true;
     };
 
+    const markDirectScrollGesture = () => {
+      directScrollGestureUntilRef.current = performance.now() + DIRECT_SCROLL_GESTURE_WINDOW_MS;
+    };
+
     const handleWheel = (event: WheelEvent) => {
+      if (event.deltaY !== 0) markDirectScrollGesture();
       releaseOnUserIntent(event.deltaY < 0);
       markDownwardIntent(event.deltaY > 0);
     };
@@ -175,9 +192,11 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
     let touchStartY = 0;
     const handleTouchStart = (event: TouchEvent) => {
       touchStartY = event.touches[0]?.clientY ?? 0;
+      markDirectScrollGesture();
     };
     const handleTouchMove = (event: TouchEvent) => {
       const currentY = event.touches[0]?.clientY ?? 0;
+      markDirectScrollGesture();
       // 手指下滑（clientY 增大）= 内容上移 = 查看历史；手指上滑（clientY 减小）= 内容下移 = 回到底部
       releaseOnUserIntent(currentY > touchStartY);
       markDownwardIntent(currentY < touchStartY);
@@ -186,8 +205,15 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
     const handleKeyDown = (event: KeyboardEvent) => {
       const upKeys = ['ArrowUp', 'PageUp', 'Home'];
       const downKeys = ['ArrowDown', 'PageDown', 'End'];
+      if (upKeys.includes(event.key) || downKeys.includes(event.key)) {
+        markDirectScrollGesture();
+      }
       releaseOnUserIntent(upKeys.includes(event.key));
       markDownwardIntent(downKeys.includes(event.key));
+    };
+
+    const handlePointerDown = () => {
+      markDirectScrollGesture();
     };
 
     /**
@@ -202,8 +228,19 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
       const currentScrollTop = scrollElement.scrollTop;
       const delta = currentScrollTop - lastScrollTopRef.current;
       lastScrollTopRef.current = currentScrollTop;
-      if (delta > STICK_BOTTOM_DEADBAND) {
+      const now = performance.now();
+      const isProgrammatic = now <= programmaticScrollUntilRef.current;
+      if (shouldMarkDownwardIntentFromScrollDelta({
+        delta,
+        deadband: STICK_BOTTOM_DEADBAND,
+        isProgrammatic,
+        hasRecentDirectUserIntent: now <= directScrollGestureUntilRef.current,
+      })) {
         userIntentDownwardRef.current = true;
+      }
+      if (isProgrammatic) {
+        cancelResumeConfirmation();
+        return;
       }
 
       // 用户主动上滑解除过粘底：必须几乎精确贴底（≤4px）才恢复，避免 80px 区间内被立即吸回。
@@ -249,6 +286,7 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
     scrollElement.addEventListener('touchstart', handleTouchStart, { passive: true });
     scrollElement.addEventListener('touchmove', handleTouchMove, { passive: true });
     scrollElement.addEventListener('keydown', handleKeyDown);
+    scrollElement.addEventListener('pointerdown', handlePointerDown, { passive: true });
     scrollElement.addEventListener('scroll', handleScroll, { passive: true });
 
     // 内容高度即时跟随：rAF 粘底循环靠 lastMessageHash 重启，有两个盲区——
@@ -278,6 +316,7 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
       scrollElement.removeEventListener('touchstart', handleTouchStart);
       scrollElement.removeEventListener('touchmove', handleTouchMove);
       scrollElement.removeEventListener('keydown', handleKeyDown);
+      scrollElement.removeEventListener('pointerdown', handlePointerDown);
       scrollElement.removeEventListener('scroll', handleScroll);
     };
   }, [isLoading]);

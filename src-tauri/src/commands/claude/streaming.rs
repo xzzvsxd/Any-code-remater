@@ -211,16 +211,21 @@ pub async fn execute_claude_streaming(
                     .unwrap()
                     .as_ref()
                     .map(|sid| format!("claude-output:{}", sid));
-                if mtype == "result" {
-                    // 先排空缓冲再立即单独 emit 这条 result，保证零延迟、不被攒批拖住。
+                let is_control = mtype == "result" || (mtype == "system" && msg["subtype"] == "init");
+                if is_control {
+                    // 先排空缓冲再立即单独 emit init/result，保证零延迟、不被攒批拖住。
+                    // init 必须继续走 global 控制事件：前端正是靠它拿到真实 session_id，
+                    // 然后才能 attach `claude-output:<sid>` 隔离监听器。
                     batcher.flush_with(sess_event.as_deref(), &line);
-                    if let Some(ref sid) = *sid_out.lock().unwrap() {
-                        let _ = app_out.emit(&format!("claude-complete:{}", sid), true);
+                    if mtype == "result" {
+                        if let Some(ref sid) = *sid_out.lock().unwrap() {
+                            let _ = app_out.emit(&format!("claude-complete:{}", sid), true);
+                        }
+                        let _ = app_out.emit(
+                            "claude-complete",
+                            &serde_json::json!({ "tab_id": tab_out, "payload": true }),
+                        );
                     }
-                    let _ = app_out.emit(
-                        "claude-complete",
-                        &serde_json::json!({ "tab_id": tab_out, "payload": true }),
-                    );
                 } else {
                     batcher.push(sess_event.as_deref(), line.clone());
                 }
