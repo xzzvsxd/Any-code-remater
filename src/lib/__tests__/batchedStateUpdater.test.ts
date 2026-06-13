@@ -20,6 +20,7 @@ describe('batched state updaters', () => {
   };
 
   beforeEach(() => {
+    vi.useFakeTimers();
     rafCallbacks = new Map();
     nextRafId = 1;
 
@@ -35,6 +36,7 @@ describe('batched state updaters', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -83,5 +85,37 @@ describe('batched state updaters', () => {
     expect(state).toEqual([0, 1, 2, 3, 4]);
     expect(setStateCalls).toBe(2);
     expect(rafCallbacks.size).toBe(0);
+  });
+
+  test('flushes generic updates when requestAnimationFrame is suspended', async () => {
+    let state: number[] = [];
+    const updater = createBatchedUpdater<number[]>((apply) => {
+      state = apply(state);
+    });
+
+    updater.enqueue((prev) => [...prev, 1]);
+
+    expect(state).toEqual([]);
+    expect(rafCallbacks.size).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(state).toEqual([1]);
+  });
+
+  test('flushes append-only updates when requestAnimationFrame is suspended', async () => {
+    let state: number[] = [];
+    const updater = createBatchedAppendUpdater<number>((apply) => {
+      state = apply(state);
+    });
+
+    updater.enqueueAll([1, 2, 3]);
+
+    expect(state).toEqual([]);
+    expect(rafCallbacks.size).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(state).toEqual([1, 2, 3]);
   });
 });

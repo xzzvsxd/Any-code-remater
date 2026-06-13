@@ -338,8 +338,9 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
 
       // 更新状态。上游错误/完成提醒是前端 UI-only 事件：历史里可见，但不写入原生 JSONL，
       // 避免 Claude/Codex/Gemini resume 时把错误详情带回下一次模型上下文。
+      // 原始 JSONL 已由后端会话文件持久化；前端不再 stringify 整段 history 保留第二份副本。
       setMessages(mergeUiOnlySessionMessages(processedMessages, uiOnlyMessages));
-      setRawJsonlOutput(history.map(h => JSON.stringify(h)));
+      setRawJsonlOutput([]);
       setIsHistoryLoading(false);
 
     } catch (err) {

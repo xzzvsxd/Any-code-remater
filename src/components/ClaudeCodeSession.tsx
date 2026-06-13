@@ -156,18 +156,11 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   const setIsLoading = setIsStreaming;
   const [error, setError] = useState<string | null>(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
-  // rawJsonl 仅用于「复制为 JSONL」等辅助操作，从不参与渲染。过去用 useState，导致 streaming
-  // 期间每条消息都触发一次 ClaudeCodeSession 重渲染（白白放大渲染风暴）。改用 ref 累积 +
-  // 兼容 React.Dispatch 签名的 setter，写入不再触发任何重渲染。
-  const rawJsonlOutputRef = useRef<string[]>([]);
-  const setRawJsonlOutput = useCallback<React.Dispatch<React.SetStateAction<string[]>>>((action) => {
-    rawJsonlOutputRef.current = typeof action === 'function'
-      ? (action as (prev: string[]) => string[])(rawJsonlOutputRef.current)
-      : action;
-  }, []);
-  const appendRawJsonlOutput = useCallback((payload: string) => {
-    rawJsonlOutputRef.current.push(payload);
-  }, []);
+  // 原始 JSONL 已由后端会话文件持久化，导出功能也从规范化后的 messages 生成。
+  // 前端运行期不再保留第二份 raw JSONL：长任务中工具结果可能很大，在 Linux/WebKitGTK
+  // renderer 内无界累积会制造内存压力并诱发白屏。保留 no-op 回调仅为 hook 接口兼容。
+  const setRawJsonlOutput = useCallback<React.Dispatch<React.SetStateAction<string[]>>>((_action) => {}, []);
+  const appendRawJsonlOutput = useCallback((_payload: string) => {}, []);
   const [isFirstPrompt, setIsFirstPrompt] = useState(!session); // Key state for session continuation
   const [extractedSessionInfo, setExtractedSessionInfo] = useState<{ sessionId: string; projectId: string; engine?: 'claude' | 'codex' | 'gemini' } | null>(null);
   // 🔧 FIX: 标记会话是否不存在（历史记录文件未找到）

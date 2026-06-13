@@ -41,6 +41,18 @@ describe('live message processing', () => {
     expect(prepared.subtype).toBe('command-output');
   });
 
+  test('drops transient raw payload markers before appending to renderer state', () => {
+    const original = {
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'hello' }] },
+      __rawPayload: '{"huge":"raw jsonl payload"}',
+    } as ClaudeStreamMessage & { __rawPayload: string };
+
+    const prepared = prepareStreamMessageForAppend(original, '2026-06-13T00:00:00.000Z');
+
+    expect((prepared as any).__rawPayload).toBeUndefined();
+  });
+
   test('appends immediately before waiting for live translation', () => {
     const appended: ClaudeStreamMessage[] = [];
     let translateStarted = false;

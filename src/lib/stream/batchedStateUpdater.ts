@@ -52,20 +52,25 @@ export interface BatchedAppendUpdater<T> {
 
 const DEFAULT_MAX_UPDATES_PER_FRAME = 64;
 const DEFAULT_MAX_APPEND_ITEMS_PER_FRAME = 128;
+/**
+ * WebKitGTK 在窗口被遮挡、最小化或合成线程异常时可能暂停 rAF，但 Tauri IPC 仍继续送达。
+ * 若只等 rAF，pending 会无限增长；100ms watchdog 保证后台流也能持续排空，同时把渲染频率
+ * 限制在最多约 10fps，避免非活跃窗口反过来占满主线程。
+ */
+const MAX_FRAME_WAIT_MS = 100;
 
-const requestFrame = (callback: FrameRequestCallback): number => {
+const requestFrame = (callback: FrameRequestCallback): number | null => {
   if (typeof requestAnimationFrame === 'function') {
     return requestAnimationFrame(callback);
   }
-  return globalThis.setTimeout(() => callback(performance.now()), 16) as unknown as number;
+  return null;
 };
 
-const cancelFrame = (id: number) => {
+const cancelFrame = (id: number | null) => {
+  if (id === null) return;
   if (typeof cancelAnimationFrame === 'function') {
     cancelAnimationFrame(id);
-    return;
   }
-  clearTimeout(id);
 };
 
 /**
@@ -79,19 +84,26 @@ export function createBatchedUpdater<T>(
 ): BatchedUpdater<T> {
   let pending: FunctionalUpdater<T>[] = [];
   let rafId: number | null = null;
+  let watchdogId: ReturnType<typeof globalThis.setTimeout> | null = null;
   const maxUpdatesPerFrame = Math.max(
     1,
     options.maxUpdatesPerFrame ?? DEFAULT_MAX_UPDATES_PER_FRAME,
   );
 
   const schedule = () => {
-    if (rafId === null) {
+    if (rafId === null && watchdogId === null) {
       rafId = requestFrame(flush);
+      watchdogId = globalThis.setTimeout(flush, rafId === null ? 16 : MAX_FRAME_WAIT_MS);
     }
   };
 
   const flush = () => {
+    cancelFrame(rafId);
     rafId = null;
+    if (watchdogId !== null) {
+      clearTimeout(watchdogId);
+      watchdogId = null;
+    }
     if (pending.length === 0) return;
     // 取出本帧累积的所有更新器，按入队顺序折叠成一次 setState：
     // setState(prev => updaterN(...updater2(updater1(prev))))。
@@ -115,9 +127,11 @@ export function createBatchedUpdater<T>(
   };
 
   const flushNow = () => {
-    if (rafId !== null) {
-      cancelFrame(rafId);
-      rafId = null;
+    cancelFrame(rafId);
+    rafId = null;
+    if (watchdogId !== null) {
+      clearTimeout(watchdogId);
+      watchdogId = null;
     }
     if (pending.length === 0) return;
     const batch = pending;
@@ -132,9 +146,11 @@ export function createBatchedUpdater<T>(
   };
 
   const dispose = () => {
-    if (rafId !== null) {
-      cancelFrame(rafId);
-      rafId = null;
+    cancelFrame(rafId);
+    rafId = null;
+    if (watchdogId !== null) {
+      clearTimeout(watchdogId);
+      watchdogId = null;
     }
     pending = [];
   };
@@ -155,19 +171,26 @@ export function createBatchedAppendUpdater<T>(
 ): BatchedAppendUpdater<T> {
   let pending: T[] = [];
   let rafId: number | null = null;
+  let watchdogId: ReturnType<typeof globalThis.setTimeout> | null = null;
   const maxItemsPerFrame = Math.max(
     1,
     options.maxItemsPerFrame ?? DEFAULT_MAX_APPEND_ITEMS_PER_FRAME,
   );
 
   const schedule = () => {
-    if (rafId === null) {
+    if (rafId === null && watchdogId === null) {
       rafId = requestFrame(flush);
+      watchdogId = globalThis.setTimeout(flush, rafId === null ? 16 : MAX_FRAME_WAIT_MS);
     }
   };
 
   const flush = () => {
+    cancelFrame(rafId);
     rafId = null;
+    if (watchdogId !== null) {
+      clearTimeout(watchdogId);
+      watchdogId = null;
+    }
     if (pending.length === 0) return;
     const batch = pending.splice(0, maxItemsPerFrame);
     setState((prev) => prev.concat(batch));
@@ -189,9 +212,11 @@ export function createBatchedAppendUpdater<T>(
   };
 
   const flushNow = () => {
-    if (rafId !== null) {
-      cancelFrame(rafId);
-      rafId = null;
+    cancelFrame(rafId);
+    rafId = null;
+    if (watchdogId !== null) {
+      clearTimeout(watchdogId);
+      watchdogId = null;
     }
     if (pending.length === 0) return;
     const batch = pending;
@@ -200,9 +225,11 @@ export function createBatchedAppendUpdater<T>(
   };
 
   const dispose = () => {
-    if (rafId !== null) {
-      cancelFrame(rafId);
-      rafId = null;
+    cancelFrame(rafId);
+    rafId = null;
+    if (watchdogId !== null) {
+      clearTimeout(watchdogId);
+      watchdogId = null;
     }
     pending = [];
   };

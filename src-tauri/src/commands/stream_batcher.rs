@@ -2,7 +2,7 @@
 //!
 //! 背景（Linux/WebKit 前端卡死优化）：streaming 高频输出时，后端每读一行就 emit 一次，
 //! IPC 往返次数过多，叠加前端每事件一次处理，主线程被淹没。本批处理器在 stdout 读取循环里
-//! 累积普通输出行，达到「行数阈值」或「时间窗口」时一次性 emit 为数组（前端按 string[] 拆行）。
+//! 累积普通输出行，达到「行数阈值」「字节阈值」或「时间窗口」时一次性 emit 为数组（前端按 string[] 拆行）。
 //!
 //! 控制消息（system:init / result 等前端用于冷启动/结束的关键行）必须即时送达，
 //! 调用方对这类行走 `flush_with`（先排空缓冲再单独立即 emit），不进缓冲，保证零延迟。
@@ -17,6 +17,13 @@ use tauri::{AppHandle, Emitter, EventTarget, Manager};
 
 /// 批处理窗口：缓冲达到该行数即 flush。
 const MAX_BATCH_LINES: usize = 64;
+/// 批处理窗口：缓冲达到该字节数即 flush。
+///
+/// 不能只按行数：Claude/Codex/Gemini 的一条 JSONL 可能包含很大的 tool_result。若 64 条大行
+/// 合成一个巨型 Tauri IPC payload，Linux/WebKitGTK 在序列化、JS bridge 反序列化和 JSON.parse
+/// 阶段会产生明显长任务/内存峰值。这里按 UTF-8 字节估算 batch 体积；单条超大 JSONL 不拆分，
+/// 但会单独成批发送，保证协议完整性。
+const MAX_BATCH_BYTES: usize = 256 * 1024;
 /// 批处理窗口：距上次 flush 超过该时长即 flush（毫秒）。约一帧多一点，兼顾吞吐与延迟。
 const MAX_BATCH_INTERVAL: Duration = Duration::from_millis(16);
 /// session_id 刚出现后，前端需要一小段时间从 global `system:init` 里拿到 sid 并注册
@@ -33,6 +40,7 @@ pub struct EmitBatcher {
     global_event: String,
     tab_id: Option<String>,
     buffer: Vec<String>,
+    buffered_bytes: usize,
     last_flush: Instant,
     last_session_event: Option<String>,
     session_listener_attach_grace_batches: usize,
@@ -46,6 +54,7 @@ impl EmitBatcher {
             global_event: global_event.into(),
             tab_id,
             buffer: Vec::with_capacity(MAX_BATCH_LINES),
+            buffered_bytes: 0,
             last_flush: Instant::now(),
             last_session_event: None,
             session_listener_attach_grace_batches: 0,
@@ -56,8 +65,18 @@ impl EmitBatcher {
     /// 累积一行普通输出。达到行数阈值或时间窗口时自动 flush。
     /// `session_event` 每次传入（因 session_id 可能在循环中途才确定）。
     pub fn push(&mut self, session_event: Option<&str>, line: String) {
+        let line_bytes = line.len();
+        if should_flush_before_push(self.buffer.len(), self.buffered_bytes, line_bytes) {
+            self.flush(session_event);
+        }
+
         self.buffer.push(line);
-        if self.buffer.len() >= MAX_BATCH_LINES || self.last_flush.elapsed() >= MAX_BATCH_INTERVAL {
+        self.buffered_bytes = self.buffered_bytes.saturating_add(line_bytes);
+        if should_flush_after_push(
+            self.buffer.len(),
+            self.buffered_bytes,
+            self.last_flush.elapsed(),
+        ) {
             self.flush(session_event);
         }
     }
@@ -68,6 +87,7 @@ impl EmitBatcher {
             return;
         }
         let batch: Vec<String> = std::mem::take(&mut self.buffer);
+        self.buffered_bytes = 0;
         self.emit_stream_lines(session_event, &batch);
         self.last_flush = Instant::now();
     }
@@ -156,5 +176,53 @@ impl EmitBatcher {
         }
 
         "main".to_string()
+    }
+}
+
+fn should_flush_before_push(
+    buffered_lines: usize,
+    buffered_bytes: usize,
+    next_line_bytes: usize,
+) -> bool {
+    buffered_lines > 0 && buffered_bytes.saturating_add(next_line_bytes) > MAX_BATCH_BYTES
+}
+
+fn should_flush_after_push(
+    buffered_lines: usize,
+    buffered_bytes: usize,
+    elapsed_since_flush: Duration,
+) -> bool {
+    buffered_lines >= MAX_BATCH_LINES
+        || buffered_bytes >= MAX_BATCH_BYTES
+        || elapsed_since_flush >= MAX_BATCH_INTERVAL
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flushes_before_adding_line_that_would_exceed_batch_bytes() {
+        assert!(should_flush_before_push(1, MAX_BATCH_BYTES - 10, 11));
+        assert!(!should_flush_before_push(0, MAX_BATCH_BYTES - 10, 11));
+        assert!(!should_flush_before_push(1, MAX_BATCH_BYTES - 10, 10));
+    }
+
+    #[test]
+    fn flushes_after_buffering_single_oversized_line() {
+        assert!(should_flush_after_push(
+            1,
+            MAX_BATCH_BYTES + 1,
+            Duration::from_millis(0),
+        ));
+    }
+
+    #[test]
+    fn keeps_small_batch_under_byte_limit_buffered() {
+        assert!(!should_flush_after_push(
+            1,
+            MAX_BATCH_BYTES - 1,
+            Duration::from_millis(0),
+        ));
     }
 }

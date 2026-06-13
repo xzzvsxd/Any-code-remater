@@ -63,16 +63,19 @@ export function prepareStreamMessageForAppend(
   message: ClaudeStreamMessage,
   nowIso: string = new Date().toISOString(),
 ): ClaudeStreamMessage {
+  const { __rawPayload: _rawPayload, ...messageWithoutTransientRawPayload } = message as ClaudeStreamMessage & {
+    __rawPayload?: string;
+  };
   let prepared: ClaudeStreamMessage = {
-    ...message,
-    message: message.message
+    ...messageWithoutTransientRawPayload,
+    message: messageWithoutTransientRawPayload.message
       ? {
-          ...message.message,
-          content: cloneContent(message.message.content),
-          usage: message.message.usage ? normalizeUsageData(message.message.usage) : message.message.usage,
+          ...messageWithoutTransientRawPayload.message,
+          content: cloneContent(messageWithoutTransientRawPayload.message.content),
+          usage: messageWithoutTransientRawPayload.message.usage ? normalizeUsageData(messageWithoutTransientRawPayload.message.usage) : messageWithoutTransientRawPayload.message.usage,
         }
-      : message.message,
-    usage: message.usage ? normalizeUsageData(message.usage) : message.usage,
+      : messageWithoutTransientRawPayload.message,
+    usage: messageWithoutTransientRawPayload.usage ? normalizeUsageData(messageWithoutTransientRawPayload.usage) : messageWithoutTransientRawPayload.usage,
   };
 
   if (prepared.type !== 'user') {
