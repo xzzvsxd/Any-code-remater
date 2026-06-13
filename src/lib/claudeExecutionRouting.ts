@@ -67,3 +67,19 @@ export function shouldAcceptClaudeGlobalMessage(input: ClaudeGlobalRoutingInput)
     && Boolean(messageSessionId)
     && messageSessionId !== normalizeSessionId(input.currentSessionId);
 }
+
+export interface ClaudeSessionListenerAttachInput {
+  currentSessionId: NullableSessionId;
+  incomingSessionId: NullableSessionId;
+  hasAttachedSessionListeners: boolean;
+}
+
+export function shouldAttachClaudeSessionListeners(input: ClaudeSessionListenerAttachInput): boolean {
+  const incomingSessionId = normalizeSessionId(input.incomingSessionId);
+  if (!incomingSessionId) {
+    return false;
+  }
+
+  const currentSessionId = normalizeSessionId(input.currentSessionId);
+  return !input.hasAttachedSessionListeners || incomingSessionId !== currentSessionId;
+}

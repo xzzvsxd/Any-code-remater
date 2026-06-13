@@ -615,6 +615,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       const startedAt = executionStartedAtRef.current;
       return startedAt ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : null;
     },
+    routingTabId: tabIdProp,
     processMessageWithTranslation
   });
 

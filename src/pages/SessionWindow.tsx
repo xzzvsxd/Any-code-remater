@@ -416,6 +416,7 @@ export const SessionWindow: React.FC = () => {
               initialProjectPath={state.projectPath || undefined}
               session={state.session || undefined}
               isActive={true}
+              tabId={state.tabId || undefined}
               planModeStorageKey={planModeStorageKey}
             />
           </PlanModeProvider>

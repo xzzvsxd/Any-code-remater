@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import {
   resolveClaudeExecutionMode,
   shouldAcceptClaudeGlobalMessage,
+  shouldAttachClaudeSessionListeners,
 } from '../claudeExecutionRouting';
 
 describe('Claude execution routing', () => {
@@ -84,5 +85,29 @@ describe('Claude execution routing', () => {
         cwd: '/home/me/work/project',
       },
     })).toBe(false);
+  });
+
+  test('attaches session listeners for an existing resumed session even when the init sid matches currentSessionId', () => {
+    expect(shouldAttachClaudeSessionListeners({
+      currentSessionId: 'existing-session',
+      incomingSessionId: 'existing-session',
+      hasAttachedSessionListeners: false,
+    })).toBe(true);
+  });
+
+  test('does not reattach session listeners for the same session after they are already attached', () => {
+    expect(shouldAttachClaudeSessionListeners({
+      currentSessionId: 'existing-session',
+      incomingSessionId: 'existing-session',
+      hasAttachedSessionListeners: true,
+    })).toBe(false);
+  });
+
+  test('reattaches session listeners when Claude init reports a different session id', () => {
+    expect(shouldAttachClaudeSessionListeners({
+      currentSessionId: 'old-session',
+      incomingSessionId: 'new-session',
+      hasAttachedSessionListeners: true,
+    })).toBe(true);
   });
 });

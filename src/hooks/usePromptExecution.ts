@@ -28,7 +28,8 @@ import { resolveInitialCancelSessionId } from '@/lib/cancelChannel';
 import { persistUiOnlySessionMessage } from '@/lib/uiOnlySessionEvents';
 import { normalizeStreamLines, AsyncQueue, consumeYielding } from '@/lib/stream';
 import { safeRandomUUID } from '@/lib/browserCompat';
-import { resolveClaudeExecutionMode, shouldAcceptClaudeGlobalMessage } from '@/lib/claudeExecutionRouting';
+import { resolveClaudeExecutionMode, shouldAcceptClaudeGlobalMessage, shouldAttachClaudeSessionListeners } from '@/lib/claudeExecutionRouting';
+import { resolveExecutionRunTabId } from '@/lib/executionRunTabId';
 
 // ============================================================================
 // Type Definitions
@@ -93,6 +94,12 @@ interface UsePromptExecutionConfig {
   setCodexRateLimits?: React.Dispatch<React.SetStateAction<CodexRateLimits | null>>;
   setCancelSessionId?: (id: string | null) => void;
   getRunElapsedSeconds?: () => number | null;
+  /**
+   * Stable UI tab/window id used for backend event routing.
+   * Detached windows are labeled `session-window-${routingTabId}`, so the
+   * backend must receive this exact id for targeted stream output to arrive.
+   */
+  routingTabId?: string | null;
 
   // External Hook Functions
   processMessageWithTranslation: (message: ClaudeStreamMessage, payload: string, currentTranslationResult?: TranslationResult) => Promise<void>;
@@ -179,6 +186,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
     setCodexRateLimits,
     setCancelSessionId,
     getRunElapsedSeconds,
+    routingTabId,
     processMessageWithTranslation
   } = config;
 
@@ -192,10 +200,12 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
   }, [isPlanMode]);
 
   // ============================================================================
-  // 🔒 CRITICAL FIX: 生成唯一的 tabId 用于会话隔离
-  // 解决问题：新建会话并发时全局事件的消息串扰
+  // 🔒 CRITICAL FIX: 使用稳定 UI tab/window id 作为后端事件路由 id。
+  // 主窗口标签页：`session-window-${tabId}` 不存在，后端自动回退到 main；
+  // 独立窗口：真实窗口 label 正是 `session-window-${tabId}`，高频 stream 才能投递到当前窗口。
+  // 没有外层 tabId 的旧挂载路径才退回随机 id。
   // ============================================================================
-  const tabIdRef = useRef<string>(safeRandomUUID());
+  const tabIdRef = useRef<string>(resolveExecutionRunTabId(routingTabId, safeRandomUUID));
 
   const codexThreadIdRef = useRef<string | null>(null);
   const latestClaudeExecutionStateRef = useRef({
@@ -1427,9 +1437,6 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         // Helper: Attach Session-Specific Listeners
         // ====================================================================
         const attachSessionSpecificListeners = async (sid: string) => {
-          // 🔧 FIX: Mark that we've attached session-specific listeners
-          hasAttachedSessionListeners = true;
-
           const specificOutputUnlisten = await listen<string | string[]>(`claude-output:${sid}`, (evt) => {
             // 批量协议适配：payload 可能是 string（单行）或 string[]（后端节流合并多行）。
             // 回调只逐行入队（同步、瞬时返回），真正处理放到消费循环里，不阻塞 event loop。
@@ -1502,6 +1509,12 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
               await processComplete();
             });
           });
+
+          // 只有三个 session-specific 监听器都真正注册成功后，才能停止接收 global fallback。
+          // 后端 stream_batcher 在 system:init 后只保留很短的 global grace window；
+          // 过早置 true 会让 Linux/WebKit 上 init 后紧跟的输出既没赶上 session listener，
+          // 又被 global listener 自己过滤，表现为“后台在跑、complete 到了，但中间消息为空”。
+          hasAttachedSessionListeners = true;
 
           // Replace existing unlisten refs with these new ones (after cleaning up)
           unlistenRefs.current.forEach((u) => u && typeof u === 'function' && u());
@@ -1633,6 +1646,10 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           // 逐行执行原有的早期 init/session 隔离逻辑。
           // 回调只逐行入队（瞬时返回），处理放到消费循环里；thunk 内 continue 改 return（跳过当前行，语义等价）。
           for (const messagePayload of normalizeStreamLines(rawPayload)) {
+            // 这个 global event 是否属于“session listener attach 前的 fallback”必须按接收时判断。
+            // 否则 WebKit/Linux 下事件先入 AsyncQueue、稍后才消费；消费时 session listener 可能已经挂好，
+            // 早期 fallback 行会被 shouldAcceptClaudeGlobalMessage 误判为应丢弃，造成中间输出空白。
+            const hadAttachedSessionListenersAtReceive = hasAttachedSessionListeners;
             claudeTaskQueue.enqueue(async () => {
               // Attempt to extract session_id on the fly (for the very first init)
               try {
@@ -1641,7 +1658,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
                 if (!shouldAcceptClaudeGlobalMessage({
                   currentTabId: tabIdRef.current,
                   eventTabId,
-                  hasAttachedSessionListeners,
+                  hasAttachedSessionListeners: hadAttachedSessionListenersAtReceive,
                   currentSessionId,
                   message: msg,
                 })) {
@@ -1658,7 +1675,11 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
                     cacheModelFromInitMessage(msg.model);
                   }
 
-                  if (!currentSessionId || currentSessionId !== msg.session_id) {
+                  if (shouldAttachClaudeSessionListeners({
+                    currentSessionId,
+                    incomingSessionId: msg.session_id,
+                    hasAttachedSessionListeners,
+                  })) {
                     currentSessionId = msg.session_id;
                     bindCancelSessionId(msg.session_id);
                     setClaudeSessionId(msg.session_id);
