@@ -182,7 +182,25 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => { reloadMeta(); }, [reloadMeta]);
+  useEffect(() => {
+    reloadMeta();
+
+    const handleTitleChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId?: string; title?: string }>).detail;
+      const sessionId = detail?.sessionId;
+      if (!sessionId) return;
+      const title = detail?.title?.trim() ?? '';
+      setSessionTitles((prev) => {
+        const next = { ...prev };
+        if (title) next[sessionId] = title;
+        else delete next[sessionId];
+        return next;
+      });
+    };
+
+    window.addEventListener('session-title-changed', handleTitleChanged);
+    return () => window.removeEventListener('session-title-changed', handleTitleChanged);
+  }, [reloadMeta]);
 
   // 项目拖拽排序：写入手动顺序并持久化。一旦有手动顺序，排序即锁定（自动置顶让位）。
   const reorderProjects = useCallback(async (orderedIds: string[]) => {
@@ -203,6 +221,9 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
         if (v) next[session.id] = v; else delete next[session.id];
         return next;
       });
+      window.dispatchEvent(new CustomEvent('session-title-changed', {
+        detail: { sessionId: session.id, title: title.trim() },
+      }));
     } catch (e) {
       console.error('[Workbench] rename failed:', e);
     }

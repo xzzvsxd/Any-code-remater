@@ -29,7 +29,7 @@ import { useProject } from '@/contexts/ProjectContext';
 import { useSessionSync } from '@/hooks/useSessionSync'; // 🔧 NEW: 会话状态同步
 import { selectProjectPath } from '@/lib/sessionHelpers';
 import { truncateText, getFirstLine } from '@/lib/date-utils';
-import type { Project, Session } from '@/lib/api';
+import { api, type Project, type Session } from '@/lib/api';
 
 interface TabManagerProps {
   onBack: () => void;
@@ -189,7 +189,19 @@ export const TabManager: React.FC<TabManagerProps> = ({
                 }}
                 onRenameActiveTab={(title) => {
                   const active = tabs.find((tb) => tb.isActive);
-                  if (active) updateTabTitle(active.id, title);
+                  if (!active) return;
+                  updateTabTitle(active.id, title);
+                  if (active.session?.id) {
+                    api.setSessionTitle(active.session.id, title)
+                      .then(() => {
+                        window.dispatchEvent(new CustomEvent('session-title-changed', {
+                          detail: { sessionId: active.session!.id, title: title.trim() },
+                        }));
+                      })
+                      .catch((err) => {
+                        console.error('[TabManager] failed to persist session title:', err);
+                      });
+                  }
                 }}
                 onNewSession={() => createNewTab()}
               />

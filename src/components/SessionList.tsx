@@ -13,9 +13,10 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { cn, filterValidSessions } from "@/lib/utils";
-import { formatUnixTimestamp, formatISOTimestamp, truncateText, getFirstLine } from "@/lib/date-utils";
+import { formatUnixTimestamp, formatISOTimestamp, truncateText } from "@/lib/date-utils";
 import type { Session, ClaudeMdFile } from "@/lib/api";
 import { api } from "@/lib/api";
+import { getSessionDisplayTitle, sessionMatchesDisplayTitle } from "@/lib/sessionDisplayTitle";
 import { useTranslation } from '@/hooks/useTranslation';
 import { listen } from '@tauri-apps/api/event';
 import { Search, X } from 'lucide-react';
@@ -119,6 +120,7 @@ export const SessionList: React.FC<SessionListProps> = ({
   const [isSearching, setIsSearching] = useState(false);
   const searchSeqRef = React.useRef(0); // 递增序号生成 searchId，隔离多次搜索（不依赖 Date/Math.random）
   const activeSearchIdRef = React.useRef<string>('');
+  const [sessionTitles, setSessionTitles] = useState<Record<string, string>>({});
 
   // 🔧 过滤掉空白无用的会话（没有 first_message 或 id 为空的）
   // 使用共享的会话验证函数，确保与项目计数逻辑一致
@@ -134,6 +136,44 @@ export const SessionList: React.FC<SessionListProps> = ({
       })),
     [validSessions]
   );
+  const searchSessionsRef = React.useRef(searchSessions);
+
+  useEffect(() => {
+    searchSessionsRef.current = searchSessions;
+  }, [searchSessions]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    api.getSessionMeta()
+      .then((meta) => {
+        if (mounted) {
+          setSessionTitles(meta.titles || {});
+        }
+      })
+      .catch((err) => {
+        console.warn('[SessionList] Failed to load session titles:', err);
+      });
+
+    const handleTitleChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId?: string; title?: string }>).detail;
+      const sessionId = detail?.sessionId;
+      if (!sessionId) return;
+      const title = detail?.title?.trim() ?? '';
+      setSessionTitles((prev) => {
+        const next = { ...prev };
+        if (title) next[sessionId] = title;
+        else delete next[sessionId];
+        return next;
+      });
+    };
+
+    window.addEventListener('session-title-changed', handleTitleChanged);
+    return () => {
+      mounted = false;
+      window.removeEventListener('session-title-changed', handleTitleChanged);
+    };
+  }, []);
 
   // Load CLAUDE.md files on mount
   useEffect(() => {
@@ -216,7 +256,7 @@ export const SessionList: React.FC<SessionListProps> = ({
         await api.searchSessionsContent(
           searchId,
           keyword,
-          searchSessions
+          searchSessionsRef.current
         );
       } catch (err) {
         console.error('[SessionSearch] failed:', err);
@@ -230,7 +270,7 @@ export const SessionList: React.FC<SessionListProps> = ({
       unlistenHit?.();
       unlistenDone?.();
     };
-  }, [searchKeyword, searchSessions]);
+  }, [searchKeyword, projectPath]);
 
   const loadClaudeMdFiles = async () => {
     try {
@@ -289,7 +329,7 @@ export const SessionList: React.FC<SessionListProps> = ({
     ? filteredSessions.filter(
         (s) =>
           searchHitIds.has(s.id) ||
-          (s.first_message || '').toLowerCase().includes(searchLower)
+          sessionMatchesDisplayTitle(s, sessionTitles, searchLower)
       )
     : filteredSessions;
 
@@ -643,9 +683,7 @@ export const SessionList: React.FC<SessionListProps> = ({
         aria-live="polite"
       >
         {currentSessions.map((session) => {
-          const firstMessagePreview = session.first_message
-            ? truncateText(getFirstLine(session.first_message), 80)
-            : session.id;
+          const firstMessagePreview = truncateText(getSessionDisplayTitle(session, sessionTitles), 80);
           const timeDisplay = session.last_message_timestamp
             ? formatISOTimestamp(session.last_message_timestamp)
             : session.message_timestamp
@@ -680,7 +718,8 @@ export const SessionList: React.FC<SessionListProps> = ({
                   if (isSelectionMode) {
                     toggleSessionSelection(session.id);
                   } else {
-                    onSessionClick?.(session);
+                    const customTitle = sessionTitles[session.id]?.trim();
+                    onSessionClick?.(customTitle ? { ...session, first_message: customTitle } : session);
                   }
                 }}
                 className="flex-1 text-left px-4 py-2.5 min-w-0"
@@ -775,9 +814,7 @@ export const SessionList: React.FC<SessionListProps> = ({
             {sessionToDelete && (
               <div className="mt-3 p-3 bg-muted rounded-md">
                 <p className="text-sm font-medium text-foreground">
-                  {sessionToDelete.first_message
-                    ? truncateText(getFirstLine(sessionToDelete.first_message), 60)
-                    : sessionToDelete.id}
+                  {truncateText(getSessionDisplayTitle(sessionToDelete, sessionTitles), 60)}
                 </p>
                 <p className="text-xs text-muted-foreground mt-1 font-mono">
                   {sessionToDelete.id}
@@ -861,9 +898,7 @@ export const SessionList: React.FC<SessionListProps> = ({
                     )}
                   </div>
                   <p className="text-sm font-medium text-foreground">
-                    {sessionToConvert.first_message
-                      ? truncateText(getFirstLine(sessionToConvert.first_message), 60)
-                      : sessionToConvert.id}
+                    {truncateText(getSessionDisplayTitle(sessionToConvert, sessionTitles), 60)}
                   </p>
                   <p className="text-xs text-muted-foreground mt-1 font-mono">
                     {sessionToConvert.id}
