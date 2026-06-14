@@ -12,9 +12,16 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { getClaudeSyntaxTheme } from "@/lib/claudeSyntaxTheme";
 import { useTheme } from "@/contexts/ThemeContext";
 import { cn } from "@/lib/utils";
+import { shouldRenderCodeBlockAsPlainText } from "@/lib/markdownRenderSafety";
 
 /** 结果折叠高度阈值 */
 const RESULT_COLLAPSE_HEIGHT = 300;
+const SUMMARY_SCAN_LIMIT = 4_096;
+
+interface ContentSummary {
+  charCountEstimate: number;
+  truncated: boolean;
+}
 
 export interface MCPWidgetProps {
   /** MCP 工具名称 (格式: mcp__namespace__method) */
@@ -27,6 +34,317 @@ export interface MCPWidgetProps {
     is_error?: boolean;
   };
 }
+
+const estimateTokens = (length: number) => Math.ceil(length / 4);
+
+const hasObjectContent = (value: unknown): boolean => {
+  if (value == null) return false;
+  if (typeof value === 'string') return value.length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') {
+    for (const _key in value as Record<string, unknown>) {
+      return true;
+    }
+    return false;
+  }
+  return true;
+};
+
+/**
+ * 轻量摘要：只做有界扫描，不 JSON.stringify 大对象。
+ * 折叠态只需要 token 量级，不需要精确文本。
+ */
+const getMcpContentSummary = (value: unknown, limit = SUMMARY_SCAN_LIMIT): ContentSummary => {
+  let charCountEstimate = 0;
+  let truncated = false;
+
+  const add = (amount: number) => {
+    if (truncated) return;
+    charCountEstimate += amount;
+    if (charCountEstimate > limit) {
+      charCountEstimate = limit;
+      truncated = true;
+    }
+  };
+
+  const visit = (current: unknown, depth: number) => {
+    if (truncated) return;
+    if (current == null) return;
+
+    if (typeof current === 'string') {
+      add(current.length);
+      return;
+    }
+
+    if (typeof current === 'number' || typeof current === 'boolean' || typeof current === 'bigint') {
+      add(String(current).length);
+      return;
+    }
+
+    if (Array.isArray(current)) {
+      for (const item of current) {
+        visit(item, depth + 1);
+        add(1);
+        if (truncated) return;
+      }
+      return;
+    }
+
+    if (typeof current === 'object') {
+      const record = current as Record<string, unknown>;
+      for (const field of ['text', 'message', 'content']) {
+        if (typeof record[field] === 'string') {
+          add((record[field] as string).length);
+          return;
+        }
+      }
+
+      if (depth > 3) {
+        add(16);
+        return;
+      }
+
+      for (const key in record) {
+        add(key.length + 2);
+        visit(record[key], depth + 1);
+        if (truncated) return;
+      }
+      return;
+    }
+
+    add(String(current).length);
+  };
+
+  visit(value, 0);
+  return { charCountEstimate, truncated };
+};
+
+/**
+ * 递归提取内容中的文本
+ * 支持多种格式：字符串、数组、对象（含 text/message/content 字段）
+ */
+const extractTextContent = (value: unknown): string => {
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (value == null) {
+    return '';
+  }
+
+  if (Array.isArray(value)) {
+    // 递归处理数组中的每个元素，用换行符连接
+    return value.map(extractTextContent).filter(Boolean).join('\n');
+  }
+
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+
+    // 优先提取 text 字段（MCP 工具常见格式）
+    if (typeof record.text === 'string') {
+      return record.text;
+    }
+
+    // 其次尝试 message 字段
+    if (typeof record.message === 'string') {
+      return record.message;
+    }
+
+    // 再次尝试 content 字段
+    if (typeof record.content === 'string') {
+      return record.content;
+    }
+
+    // 如果都没有，序列化为 JSON
+    try {
+      return JSON.stringify(record, null, 2);
+    } catch {
+      return String(record);
+    }
+  }
+
+  return String(value);
+};
+
+// 处理结果内容，将转义的换行符转换为实际换行符
+const parseResultContent = (content: any): string => {
+  // 先提取文本内容
+  const text = extractTextContent(content);
+
+  // 然后处理转义字符
+  return text
+    .replace(/\\r\\n/g, '\n')
+    .replace(/\\n/g, '\n')
+    .replace(/\\t/g, '\t');
+};
+
+const stringifyInput = (input: unknown): string => {
+  try {
+    return JSON.stringify(input, null, 2);
+  } catch {
+    return String(input);
+  }
+};
+
+interface MCPExpandedDetailsProps {
+  input: any;
+  result?: {
+    content?: any;
+    is_error?: boolean;
+  };
+  hasInput: boolean;
+  hasResult: boolean;
+  isError: boolean;
+}
+
+const MCPExpandedDetails: React.FC<MCPExpandedDetailsProps> = ({
+  input,
+  result,
+  hasInput,
+  hasResult,
+  isError,
+}) => {
+  const { t } = useTranslation();
+  const { theme } = useTheme();
+  const [isResultExpanded, setIsResultExpanded] = useState(false);
+  const [shouldCollapseResult, setShouldCollapseResult] = useState(false);
+  const resultRef = useRef<HTMLDivElement>(null);
+  const inputString = React.useMemo(() => (hasInput ? stringifyInput(input) : ''), [hasInput, input]);
+  const resultContent = React.useMemo(
+    () => (hasResult ? parseResultContent(result?.content) : ''),
+    [hasResult, result?.content],
+  );
+
+  useEffect(() => {
+    if (resultRef.current) {
+      setShouldCollapseResult(resultRef.current.scrollHeight > RESULT_COLLAPSE_HEIGHT);
+    }
+  }, [resultContent]);
+
+  const renderJsonBlock = (json: string) => {
+    if (shouldRenderCodeBlockAsPlainText(inputString)) {
+      return (
+        <pre className="p-3 text-xs font-mono whitespace-pre-wrap break-words" style={{ overflowWrap: 'anywhere' }}>
+          {json}
+        </pre>
+      );
+    }
+
+    return (
+      <SyntaxHighlighter
+        language="json"
+        style={getClaudeSyntaxTheme(theme === 'dark')}
+        customStyle={{
+          margin: 0,
+          padding: '0.75rem',
+          background: 'transparent',
+          fontSize: '0.8rem',
+          lineHeight: '1.5',
+        }}
+        wrapLongLines={false}
+      >
+        {json}
+      </SyntaxHighlighter>
+    );
+  };
+
+  return (
+    <div className="space-y-3 pl-1">
+      {/* 输入参数 */}
+      {hasInput && (
+        <div className="rounded-lg border overflow-hidden bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800">
+          <div className="px-3 py-2 border-b border-border/50 bg-muted/30 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Code className="h-3.5 w-3.5 text-violet-500" />
+              <span className="text-xs font-medium text-muted-foreground">{t('widget.parameters')}</span>
+            </div>
+          </div>
+          <div className="overflow-auto max-h-[300px]">
+            {renderJsonBlock(inputString)}
+          </div>
+        </div>
+      )}
+
+      {/* 无参数提示 */}
+      {!hasInput && (
+        <div className="text-xs text-muted-foreground italic px-2">
+          {t('widget.noParameters')}
+        </div>
+      )}
+
+      {/* 执行结果 */}
+      {hasResult && (
+        <div className="rounded-lg border overflow-hidden bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800">
+          <div className={cn(
+            "px-3 py-2 border-b flex items-center justify-between",
+            isError
+              ? "bg-red-500/10 border-red-500/20"
+              : "bg-green-500/10 border-green-500/20"
+          )}>
+            <div className="flex items-center gap-2">
+              {isError ? (
+                <XCircle className="h-3.5 w-3.5 text-red-600 dark:text-red-400" />
+              ) : (
+                <CheckCircle2 className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
+              )}
+              <span className={cn(
+                "text-xs font-medium",
+                isError ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"
+              )}>
+                {isError ? t('widget.executionFailed') : t('widget.executionResult')}
+              </span>
+            </div>
+          </div>
+
+          <div className="relative">
+            <div
+              ref={resultRef}
+              className={cn(
+                "p-3 overflow-auto transition-[max-height]",
+                shouldCollapseResult && !isResultExpanded && "overflow-hidden"
+              )}
+              style={shouldCollapseResult && !isResultExpanded ? { maxHeight: `${RESULT_COLLAPSE_HEIGHT}px` } : undefined}
+            >
+              <pre className="text-xs font-mono whitespace-pre-wrap break-words text-foreground/80" style={{ fontSize: '0.8rem', overflowWrap: 'anywhere' }}>
+                {resultContent}
+              </pre>
+            </div>
+
+            {/* 折叠遮罩和按钮 */}
+            {shouldCollapseResult && (
+              <>
+                {!isResultExpanded && (
+                  <div className={cn(
+                    "absolute bottom-0 left-0 right-0 h-12 pointer-events-none",
+                    isError
+                      ? "bg-gradient-to-t from-red-50/50 dark:from-red-950/50 to-transparent"
+                      : "bg-gradient-to-t from-green-50/50 dark:from-green-950/50 to-transparent"
+                  )} />
+                )}
+                <div className="absolute bottom-2 right-3">
+                  <button
+                    onClick={() => setIsResultExpanded(!isResultExpanded)}
+                    className="text-xs bg-background/80 backdrop-blur-sm border shadow-sm px-2 py-1 rounded hover:bg-accent transition-colors"
+                  >
+                    {isResultExpanded ? t('widget.collapseResult') : t('widget.expandAll')}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 等待结果提示 */}
+      {!hasResult && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground italic px-2 py-2">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          {t('widget.waitingForResult')}
+        </div>
+      )}
+    </div>
+  );
+};
 
 /**
  * MCP 工具 Widget
@@ -43,84 +361,12 @@ export const MCPWidget: React.FC<MCPWidgetProps> = ({
   result,
 }) => {
   const { t } = useTranslation();
-  const { theme } = useTheme();
   const [isExpanded, setIsExpanded] = useState(false);
-  const [isResultExpanded, setIsResultExpanded] = useState(false);
-  const [shouldCollapseResult, setShouldCollapseResult] = useState(false);
-  const resultRef = useRef<HTMLDivElement>(null);
-
-  // 检查结果是否需要折叠
-  useEffect(() => {
-    if (resultRef.current) {
-      setShouldCollapseResult(resultRef.current.scrollHeight > RESULT_COLLAPSE_HEIGHT);
-    }
-  }, [result, isExpanded]);
 
   // 解析结果内容
   const hasResult = result && result.content !== undefined;
   const isError = result?.is_error ?? false;
-
-  /**
-   * 递归提取内容中的文本
-   * 支持多种格式：字符串、数组、对象（含 text/message/content 字段）
-   */
-  const extractTextContent = (value: unknown): string => {
-    if (typeof value === 'string') {
-      return value;
-    }
-
-    if (value == null) {
-      return '';
-    }
-
-    if (Array.isArray(value)) {
-      // 递归处理数组中的每个元素，用换行符连接
-      return value.map(extractTextContent).filter(Boolean).join('\n');
-    }
-
-    if (typeof value === 'object') {
-      const record = value as Record<string, unknown>;
-
-      // 优先提取 text 字段（MCP 工具常见格式）
-      if (typeof record.text === 'string') {
-        return record.text;
-      }
-
-      // 其次尝试 message 字段
-      if (typeof record.message === 'string') {
-        return record.message;
-      }
-
-      // 再次尝试 content 字段
-      if (typeof record.content === 'string') {
-        return record.content;
-      }
-
-      // 如果都没有，序列化为 JSON
-      try {
-        return JSON.stringify(record, null, 2);
-      } catch {
-        return String(record);
-      }
-    }
-
-    return String(value);
-  };
-
-  // 处理结果内容，将转义的换行符转换为实际换行符
-  const parseResultContent = (content: any): string => {
-    // 先提取文本内容
-    const text = extractTextContent(content);
-
-    // 然后处理转义字符
-    return text
-      .replace(/\\r\\n/g, '\n')
-      .replace(/\\n/g, '\n')
-      .replace(/\\t/g, '\t');
-  };
-
-  const resultContent = hasResult ? parseResultContent(result.content) : '';
-  const resultTokens = hasResult ? Math.ceil(resultContent.length / 4) : 0;
+  const resultTokens = hasResult ? estimateTokens(getMcpContentSummary(result.content).charCountEstimate) : 0;
 
   // 解析工具名称
   // 格式: mcp__namespace__method
@@ -151,17 +397,8 @@ export const MCPWidget: React.FC<MCPWidgetProps> = ({
       .join(' ');
   };
 
-  const hasInput = input && Object.keys(input).length > 0;
-  const inputString = hasInput ? JSON.stringify(input, null, 2) : '';
-
-  /**
-   * Token 估算（粗略估计: ~4字符/token）
-   */
-  const estimateTokens = (str: string) => {
-    return Math.ceil(str.length / 4);
-  };
-
-  const inputTokens = hasInput ? estimateTokens(inputString) : 0;
+  const hasInput = hasObjectContent(input);
+  const inputTokens = hasInput ? estimateTokens(getMcpContentSummary(input).charCountEstimate) : 0;
 
   // 状态相关样式
   const statusIcon = hasResult
@@ -226,113 +463,13 @@ export const MCPWidget: React.FC<MCPWidgetProps> = ({
 
       {/* 展开内容区域 */}
       {isExpanded && (
-        <div className="space-y-3 pl-1">
-          {/* 输入参数 */}
-          {hasInput && (
-            <div className="rounded-lg border overflow-hidden bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800">
-              <div className="px-3 py-2 border-b border-border/50 bg-muted/30 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Code className="h-3.5 w-3.5 text-violet-500" />
-                  <span className="text-xs font-medium text-muted-foreground">{t('widget.parameters')}</span>
-                </div>
-              </div>
-              <div className="overflow-auto max-h-[300px]">
-                <SyntaxHighlighter
-                  language="json"
-                  style={getClaudeSyntaxTheme(theme === 'dark')}
-                  customStyle={{
-                    margin: 0,
-                    padding: '0.75rem',
-                    background: 'transparent',
-                    fontSize: '0.8rem',
-                    lineHeight: '1.5',
-                  }}
-                  wrapLongLines={false}
-                >
-                  {inputString}
-                </SyntaxHighlighter>
-              </div>
-            </div>
-          )}
-
-          {/* 无参数提示 */}
-          {!hasInput && (
-            <div className="text-xs text-muted-foreground italic px-2">
-              {t('widget.noParameters')}
-            </div>
-          )}
-
-          {/* 执行结果 */}
-          {hasResult && (
-            <div className="rounded-lg border overflow-hidden bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800">
-              <div className={cn(
-                "px-3 py-2 border-b flex items-center justify-between",
-                isError
-                  ? "bg-red-500/10 border-red-500/20"
-                  : "bg-green-500/10 border-green-500/20"
-              )}>
-                <div className="flex items-center gap-2">
-                  {isError ? (
-                    <XCircle className="h-3.5 w-3.5 text-red-600 dark:text-red-400" />
-                  ) : (
-                    <CheckCircle2 className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
-                  )}
-                  <span className={cn(
-                    "text-xs font-medium",
-                    isError ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"
-                  )}>
-                    {isError ? t('widget.executionFailed') : t('widget.executionResult')}
-                  </span>
-                </div>
-              </div>
-              
-              <div className="relative">
-                <div
-                  ref={resultRef}
-                  className={cn(
-                    "p-3 overflow-auto transition-[max-height]",
-                    shouldCollapseResult && !isResultExpanded && "overflow-hidden"
-                  )}
-                  style={shouldCollapseResult && !isResultExpanded ? { maxHeight: `${RESULT_COLLAPSE_HEIGHT}px` } : undefined}
-                >
-                  <pre className="text-xs font-mono whitespace-pre-wrap break-words text-foreground/80" style={{ fontSize: '0.8rem', overflowWrap: 'anywhere' }}>
-                    {resultContent}
-                  </pre>
-                </div>
-                
-                {/* 折叠遮罩和按钮 */}
-                {shouldCollapseResult && (
-                  <>
-                    {!isResultExpanded && (
-                      <div className={cn(
-                        "absolute bottom-0 left-0 right-0 h-12 pointer-events-none",
-                        isError
-                          ? "bg-gradient-to-t from-red-50/50 dark:from-red-950/50 to-transparent"
-                          : "bg-gradient-to-t from-green-50/50 dark:from-green-950/50 to-transparent"
-                      )} />
-                    )}
-                    <div className="absolute bottom-2 right-3">
-                      <button
-                        onClick={() => setIsResultExpanded(!isResultExpanded)}
-                        className="text-xs bg-background/80 backdrop-blur-sm border shadow-sm px-2 py-1 rounded hover:bg-accent transition-colors"
-                      >
-                        {isResultExpanded ? t('widget.collapseResult') : t('widget.expandAll')}
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* 等待结果提示 */}
-          {!hasResult && (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground italic px-2 py-2">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              {t('widget.waitingForResult')}
-            </div>
-          )}
-        </div>
+        <MCPExpandedDetails
+          input={input}
+          result={result}
+          hasInput={hasInput}
+          hasResult={Boolean(hasResult)}
+          isError={isError}
+        />
       )}
     </div>
   );

@@ -367,13 +367,89 @@ interface FallbackToolRenderProps {
   };
 }
 
+const MAX_FALLBACK_PREVIEW_CHARS = 40_000;
+const SUMMARY_SCAN_LIMIT = 4_096;
+
+interface ToolContentSummary {
+  charCountEstimate: number;
+  truncated: boolean;
+}
+
+const hasObjectContent = (value: unknown): boolean => {
+  if (value == null) return false;
+  if (typeof value === 'string') return value.length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') {
+    for (const _key in value as Record<string, unknown>) {
+      return true;
+    }
+    return false;
+  }
+  return true;
+};
+
+const getToolContentSummary = (value: unknown, limit = SUMMARY_SCAN_LIMIT): ToolContentSummary => {
+  let charCountEstimate = 0;
+  let truncated = false;
+
+  const add = (amount: number) => {
+    if (truncated) return;
+    charCountEstimate += amount;
+    if (charCountEstimate > limit) {
+      charCountEstimate = limit;
+      truncated = true;
+    }
+  };
+
+  const visit = (current: unknown, depth: number) => {
+    if (truncated || current == null) return;
+    if (typeof current === 'string') {
+      add(current.length);
+      return;
+    }
+    if (typeof current === 'number' || typeof current === 'boolean' || typeof current === 'bigint') {
+      add(String(current).length);
+      return;
+    }
+    if (Array.isArray(current)) {
+      for (const item of current) {
+        visit(item, depth + 1);
+        add(1);
+        if (truncated) return;
+      }
+      return;
+    }
+    if (typeof current === 'object') {
+      const record = current as Record<string, unknown>;
+      for (const field of ['text', 'message', 'content']) {
+        if (typeof record[field] === 'string') {
+          add((record[field] as string).length);
+          return;
+        }
+      }
+      if (depth > 3) {
+        add(16);
+        return;
+      }
+      for (const key in record) {
+        add(key.length + 2);
+        visit(record[key], depth + 1);
+        if (truncated) return;
+      }
+    }
+  };
+
+  visit(value, 0);
+  return { charCountEstimate, truncated };
+};
+
 /**
  * 递归提取内容中的文本
  * 支持多种格式：字符串、数组、对象（含 text/message/content 字段）
  */
-const extractTextContent = (value: unknown): string => {
+const extractTextContent = (value: unknown, maxChars = Number.POSITIVE_INFINITY): string => {
   if (typeof value === 'string') {
-    return value;
+    return value.length > maxChars ? `${value.slice(0, maxChars)}\n\n…内容过长，已截断预览…` : value;
   }
 
   if (value == null) {
@@ -382,7 +458,20 @@ const extractTextContent = (value: unknown): string => {
 
   if (Array.isArray(value)) {
     // 递归处理数组中的每个元素，用换行符连接
-    return value.map(extractTextContent).filter(Boolean).join('\n');
+    const parts: string[] = [];
+    let remaining = maxChars;
+    for (const item of value) {
+      if (remaining <= 0) break;
+      const text = extractTextContent(item, remaining);
+      if (text) {
+        parts.push(text);
+        remaining -= text.length + 1;
+      }
+    }
+    if (remaining <= 0) {
+      parts.push('…内容过长，已截断预览…');
+    }
+    return parts.filter(Boolean).join('\n');
   }
 
   if (typeof value === 'object') {
@@ -390,25 +479,33 @@ const extractTextContent = (value: unknown): string => {
 
     // 优先提取 text 字段（MCP 工具常见格式）
     if (typeof record.text === 'string') {
-      return record.text;
+      return extractTextContent(record.text, maxChars);
     }
 
     // 其次尝试 message 字段
     if (typeof record.message === 'string') {
-      return record.message;
+      return extractTextContent(record.message, maxChars);
     }
 
     // 再次尝试 content 字段
     if (typeof record.content === 'string') {
-      return record.content;
+      return extractTextContent(record.content, maxChars);
     }
 
-    // 如果都没有，序列化为 JSON
-    try {
-      return JSON.stringify(record, null, 2);
-    } catch {
-      return String(record);
+    const lines: string[] = ['{'];
+    let remaining = Math.max(0, maxChars - 4);
+    for (const key in record) {
+      if (remaining <= 0) break;
+      const valuePreview = extractTextContent(record[key], Math.max(0, remaining - key.length - 8));
+      const line = `  ${JSON.stringify(key)}: ${valuePreview}`;
+      lines.push(line);
+      remaining -= line.length + 1;
     }
+    if (remaining <= 0) {
+      lines.push('  …内容过长，已截断预览…');
+    }
+    lines.push('}');
+    return lines.join('\n');
   }
 
   return String(value);
@@ -417,9 +514,9 @@ const extractTextContent = (value: unknown): string => {
 /**
  * 处理结果内容，将转义的换行符转换为实际换行符
  */
-const parseResultContent = (content: any): string => {
+const parseResultContent = (content: any, maxChars = Number.POSITIVE_INFINITY): string => {
   // 先提取文本内容
-  const text = extractTextContent(content);
+  const text = extractTextContent(content, maxChars);
 
   // 然后处理转义字符
   return text
@@ -428,7 +525,7 @@ const parseResultContent = (content: any): string => {
     .replace(/\\t/g, '\t');
 };
 
-const FallbackToolRender: React.FC<FallbackToolRenderProps> = ({ tool, result }) => {
+const FallbackToolDetails: React.FC<FallbackToolRenderProps> = ({ tool, result }) => {
   const { t } = useTranslation();
   const COLLAPSE_HEIGHT = 300;
   const resultRef = useRef<HTMLPreElement>(null);
@@ -447,19 +544,18 @@ const FallbackToolRender: React.FC<FallbackToolRenderProps> = ({ tool, result })
   const toggle = () => setCollapsed((v) => !v);
 
   // 处理结果内容
-  const resultContent = result ? parseResultContent(result.content) : '';
+  const resultContent = result ? parseResultContent(result.content, MAX_FALLBACK_PREVIEW_CHARS) : '';
+  const inputPreview = tool.input ? extractTextContent(tool.input, MAX_FALLBACK_PREVIEW_CHARS) : '';
 
   return (
-    <div className="fallback-tool-render space-y-2 text-xs">
-      <div className="text-muted-foreground">{t('tools.unregisteredTool')}</div>
-
+    <div className="fallback-tool-details space-y-2 text-xs">
       {tool.input && Object.keys(tool.input).length > 0 && (
         <details className="text-xs">
           <summary className="cursor-pointer text-muted-foreground hover:text-foreground select-none">
             {t('tools.inputParams')}
           </summary>
           <pre className="mt-1 p-2 bg-muted rounded text-[10px] overflow-x-auto whitespace-pre-wrap break-words" style={{ overflowWrap: 'anywhere' }}>
-            {JSON.stringify(tool.input, null, 2)}
+            {inputPreview}
           </pre>
         </details>
       )}
@@ -492,6 +588,47 @@ const FallbackToolRender: React.FC<FallbackToolRenderProps> = ({ tool, result })
           )}
         </div>
       )}
+    </div>
+  );
+};
+
+const FallbackToolRender: React.FC<FallbackToolRenderProps> = ({ tool, result }) => {
+  const { t } = useTranslation();
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const hasInput = hasObjectContent(tool.input);
+  const resultSummary = result ? getToolContentSummary(result.content) : { charCountEstimate: 0, truncated: false };
+  const inputSummary = hasInput ? getToolContentSummary(tool.input) : { charCountEstimate: 0, truncated: false };
+
+  return (
+    <div className="fallback-tool-render space-y-2 text-xs">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-muted-foreground">{t('tools.unregisteredTool')}</div>
+        {(hasInput || result) && (
+          <button
+            onClick={() => setDetailsOpen(open => !open)}
+            className="text-[11px] text-primary underline underline-offset-2"
+          >
+            {detailsOpen ? t('tools.collapseContent') : t('tools.expandAll')}
+          </button>
+        )}
+      </div>
+
+      {(hasInput || result) && (
+        <div className="flex flex-wrap gap-2 text-[10px] text-muted-foreground/80">
+          {hasInput && (
+            <span className="rounded bg-muted px-1.5 py-0.5">
+              input ~{Math.ceil(inputSummary.charCountEstimate / 4)} toks{inputSummary.truncated ? '+' : ''}
+            </span>
+          )}
+          {result && (
+            <span className={cn('rounded px-1.5 py-0.5', result.is_error ? 'bg-red-500/10 text-red-600' : 'bg-muted')}>
+              result ~{Math.ceil(resultSummary.charCountEstimate / 4)} toks{resultSummary.truncated ? '+' : ''}
+            </span>
+          )}
+        </div>
+      )}
+
+      {detailsOpen && <FallbackToolDetails tool={tool} result={result} />}
     </div>
   );
 };

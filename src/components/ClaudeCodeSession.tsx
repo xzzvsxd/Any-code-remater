@@ -156,6 +156,10 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   const isLoading = isStreaming;
   const setIsLoading = setIsStreaming;
   const visibleMessages = isActive ? messages : EMPTY_VISIBLE_MESSAGES;
+  // 长流式输出时 messages 每帧都会变化；把“发送/问答/上下文”回调读取的最新消息放到 ref，
+  // 避免 useCallback 依赖 messages 后在后台 tab 中反复重注册 Plan/UserQuestion 回调。
+  const messagesRef = useRef<ClaudeStreamMessage[]>(messages);
+  messagesRef.current = messages;
   const [error, setError] = useState<string | null>(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   // 原始 JSONL 已由后端会话文件持久化，导出功能也从规范化后的 messages 生成。
@@ -660,7 +664,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     }
 
     // 新会话首条消息：用该消息内容为标签命名（仅触发一次）。
-    if (!firstPromptNotifiedRef.current && messages.length === 0) {
+    if (!firstPromptNotifiedRef.current && messagesRef.current.length === 0) {
       const trimmed = prompt.trim();
       if (trimmed) {
         firstPromptNotifiedRef.current = true;
@@ -673,16 +677,16 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     }, 50);
 
     handleSendPrompt(prompt, model, maxThinkingTokens);
-  }, [executionEngineConfig.engine, handleJumpToLatest, handleSendPrompt, setUserScrolled, setShouldAutoScroll, messages.length, onFirstUserPrompt]);
+  }, [executionEngineConfig.engine, handleJumpToLatest, handleSendPrompt, setUserScrolled, setShouldAutoScroll, onFirstUserPrompt]);
 
   const resolveAutoContinuationModel = useCallback((): ModelType => {
     return resolveClaudeContinuationModel({
       requestedModel: 'sonnet',
       sessionModel: effectiveSession?.model || session?.model,
-      messages,
+      messages: messagesRef.current,
       lastSubmittedModel: lastSubmittedClaudeModelRef.current,
     });
-  }, [effectiveSession?.model, messages, session?.model]);
+  }, [effectiveSession?.model, session?.model]);
 
   // 🆕 监听阻塞式"向用户提问" / "计划审批"事件。关键：用 hook 暴露的 runTabId 过滤
   // （后端事件路由用的就是这个 id），而非外层 tabIdProp——二者不同，用错会导致事件被永久挡掉、弹窗不出。
@@ -914,11 +918,11 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   // ✅ handleSendPrompt function is now provided by usePromptExecution Hook (line 207-234)
 
   // Get conversation context for prompt enhancement
-  // 🔧 FIX: Use useCallback to ensure getConversationContext always uses the latest messages
-  // This fixes the issue where prompt enhancement doesn't work in historical sessions
+  // 🔧 FIX: 保持回调引用稳定，同时通过 ref 读取最新消息。
+  // 否则后台 streaming 每来一条消息都会让 FloatingPromptInput / Plan / AskUser 回调重注册。
   const getConversationContext = useCallback((): string[] => {
-    return SessionHelpers.getConversationContext(messages);
-  }, [messages]);
+    return SessionHelpers.getConversationContext(messagesRef.current);
+  }, []);
 
   const handleCancelExecution = async () => {
     if (!isLoading || !hasActiveSessionRef.current) return;
@@ -1111,7 +1115,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     setShouldAutoScroll(false);
 
     // 历史加载中（或首屏消息尚未就位）：暂存目标，等加载完成后再定位。
-    if (isHistoryLoading || (isLoading && messages.length === 0)) {
+    if (isHistoryLoading || (isLoading && messagesRef.current.length === 0)) {
       pendingPromptNavRef.current = promptIndex;
       return;
     }
@@ -1119,7 +1123,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     if (sessionMessagesRef.current) {
       sessionMessagesRef.current.scrollToPrompt(promptIndex);
     }
-  }, [isHistoryLoading, isLoading, messages.length, setShouldAutoScroll, setUserScrolled]);
+  }, [isHistoryLoading, isLoading, setShouldAutoScroll, setUserScrolled]);
 
   // 历史加载完成后，若有暂存的定位目标，补执行一次定位。
   useEffect(() => {
@@ -1738,7 +1742,10 @@ export const ClaudeCodeSession: React.FC<ClaudeCodeSessionProps> = (props) => {
   }, [props.planModeStorageKey, props.session?.id, props.initialProjectPath]);
 
   return (
-    <MessagesProvider initialFilterConfig={{ hideWarmupMessages: true }}>
+    <MessagesProvider
+      initialFilterConfig={{ hideWarmupMessages: true }}
+      deriveToolResults={props.isActive !== false}
+    >
       <PlanModeProvider storageKey={planModeStorageKey}>
         <UserQuestionProvider>
           <ClaudeCodeSessionInner {...props} />

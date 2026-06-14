@@ -12,4 +12,11 @@ describe('ClaudeCodeSession background render safety', () => {
     expect(source).toContain('buildPromptIndexByMessage(visibleMessages');
     expect(source).toContain('messages={visibleMessages}');
   });
+
+  test('streaming message churn does not re-register stable prompt callbacks', () => {
+    expect(source).toContain('messagesRef.current');
+    expect(source).toContain('messages: messagesRef.current');
+    expect(source).toContain('SessionHelpers.getConversationContext(messagesRef.current)');
+    expect(source).not.toContain('resolveAutoContinuationModel = useCallback((): ModelType => {\n    return resolveClaudeContinuationModel({\n      requestedModel: \'sonnet\',\n      sessionModel: effectiveSession?.model || session?.model,\n      messages,');
+  });
 });

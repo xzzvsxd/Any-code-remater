@@ -33,6 +33,7 @@ interface MessagesActionsContextValue {
 
 const MessagesDataContext = React.createContext<MessagesDataContextValue | undefined>(undefined);
 const MessagesActionsContext = React.createContext<MessagesActionsContextValue | undefined>(undefined);
+const EMPTY_TOOL_RESULTS = new Map<string, ToolResultEntry>();
 
 const buildToolResultMap = (messages: ClaudeStreamMessage[]): Map<string, ToolResultEntry> => {
   const results = new Map<string, ToolResultEntry>();
@@ -61,6 +62,7 @@ interface MessagesProviderProps {
   initialMessages?: ClaudeStreamMessage[];
   initialIsStreaming?: boolean;
   initialFilterConfig?: Partial<MessageFilterConfig>;
+  deriveToolResults?: boolean;
   children: React.ReactNode;
 }
 
@@ -72,6 +74,7 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({
   initialMessages = [],
   initialIsStreaming = false,
   initialFilterConfig,
+  deriveToolResults = true,
   children,
 }) => {
   const [messages, setMessages] = React.useState<ClaudeStreamMessage[]>(initialMessages);
@@ -83,7 +86,10 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({
         : defaultFilterConfig.hideWarmupMessages,
   });
 
-  const toolResults = React.useMemo(() => buildToolResultMap(messages), [messages]);
+  const toolResults = React.useMemo(
+    () => (deriveToolResults ? buildToolResultMap(messages) : EMPTY_TOOL_RESULTS),
+    [deriveToolResults, messages]
+  );
 
   // 🚀 性能（修复 Linux/WebKit streaming 渲染风暴）：streaming 期间每条消息一次 setMessages
   // → 全量重渲染 + 虚拟列表重测，高频时主线程被打满。这里把对外暴露的 setMessages 包一层

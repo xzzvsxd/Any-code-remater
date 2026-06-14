@@ -8,6 +8,27 @@
 import React from "react";
 import { ChevronRight, CheckCircle2 } from "lucide-react";
 import { detectLinks, makeLinksClickable } from "@/lib/linkDetector";
+import { countLinesUpTo } from "@/lib/markdownRenderSafety";
+
+const MAX_CLICKABLE_OUTPUT_CHARS = 80_000;
+const MAX_CLICKABLE_OUTPUT_LINES = 2_000;
+const MAX_OUTPUT_PREVIEW_CHARS = 120_000;
+
+const getSafeOutputPreview = (output: string, maxChars = MAX_OUTPUT_PREVIEW_CHARS): string => {
+  if (output.length <= maxChars) {
+    return output;
+  }
+
+  return `${output.slice(0, maxChars)}\n\n…输出过长，已截断预览（保留前 ${maxChars.toLocaleString()} 字符以避免 Linux WebKit 渲染卡死）…`;
+};
+
+const shouldUsePlainTextOutput = (output: string): boolean => {
+  if (output.length > MAX_CLICKABLE_OUTPUT_CHARS) {
+    return true;
+  }
+
+  return countLinesUpTo(output, MAX_CLICKABLE_OUTPUT_LINES).exceeded;
+};
 
 export interface CommandOutputWidgetProps {
   /** 命令输出内容 */
@@ -28,13 +49,15 @@ export const CommandOutputWidget: React.FC<CommandOutputWidgetProps> = ({
   output,
   onLinkDetected,
 }) => {
+  const safeOutput = React.useMemo(() => getSafeOutputPreview(output), [output]);
+  const plainTextOutput = shouldUsePlainTextOutput(output);
   // 检查是否是 /compact 命令成功消息
   const isCompactSuccess = output.includes("Compacted.") && output.includes("ctrl+r to see full summary");
 
   // 链接检测
   React.useEffect(() => {
     if (output && onLinkDetected) {
-      const links = detectLinks(output);
+      const links = detectLinks(getSafeOutputPreview(output, MAX_CLICKABLE_OUTPUT_CHARS));
       if (links.length > 0) {
         // 通知第一个检测到的链接
         onLinkDetected(links[0].fullUrl);
@@ -102,7 +125,7 @@ export const CommandOutputWidget: React.FC<CommandOutputWidgetProps> = ({
             压缩后的内容保留了重要信息，同时为后续对话腾出了更多空间。
           </p>
           <pre className="text-xs font-mono text-muted-foreground bg-muted/30 p-2 rounded border">
-            {output}
+            {safeOutput}
           </pre>
         </div>
       </div>
@@ -118,7 +141,11 @@ export const CommandOutputWidget: React.FC<CommandOutputWidgetProps> = ({
       </div>
       <div className="p-3">
         <pre className="text-sm font-mono whitespace-pre-wrap text-zinc-700 dark:text-zinc-300">
-          {output ? parseAnsiToReact(output) : <span className="italic text-zinc-400 dark:text-zinc-500">无输出</span>}
+          {output
+            ? plainTextOutput
+              ? safeOutput
+              : parseAnsiToReact(safeOutput)
+            : <span className="italic text-zinc-400 dark:text-zinc-500">无输出</span>}
         </pre>
       </div>
     </div>
