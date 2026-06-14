@@ -67,6 +67,11 @@ import { useNavigation } from '@/contexts/NavigationContext';
 import type { View } from '@/types/navigation';
 import type { Project, Session } from '@/lib/api';
 import { truncateText, getFirstLine } from '@/lib/date-utils';
+import {
+  orderProjectSessionsForSidebar,
+  sessionBelongsToWorkbenchProject,
+  shouldRefreshProjectSessionsOnFocus,
+} from './workbenchSessionOrdering';
 
 interface WorkbenchSidebarProps {
   /** 打开"关于"对话框 */
@@ -262,6 +267,34 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     () => new Set(runningIdsSig ? runningIdsSig.split('|') : []),
     [runningIdsSig],
   );
+  const runningTabOrderSig = React.useMemo(
+    () =>
+      tabs
+        .filter((tb) => tb.state === 'streaming')
+        .map((tb) => tb.session?.id || tb.id)
+        .join('|'),
+    [tabs],
+  );
+  const nextRunningOrderRef = useRef(1);
+  const runningStartOrderRef = useRef<Map<string, number>>(new Map());
+  const runningStartOrder = React.useMemo(() => {
+    const ids = runningTabOrderSig ? runningTabOrderSig.split('|').filter(Boolean) : [];
+    const activeIds = new Set(ids);
+
+    Array.from(runningStartOrderRef.current.keys()).forEach((id) => {
+      if (!activeIds.has(id)) {
+        runningStartOrderRef.current.delete(id);
+      }
+    });
+
+    ids.forEach((id) => {
+      if (!runningStartOrderRef.current.has(id)) {
+        runningStartOrderRef.current.set(id, nextRunningOrderRef.current++);
+      }
+    });
+
+    return new Map(runningStartOrderRef.current);
+  }, [runningTabOrderSig]);
   // 已在标签页打开的会话（含尚未落盘的新建会话、以及运行中但还没拿到 sessionId 的新会话）：
   // 实时合并进项目树，无需等待 AI 完成事件与磁盘刷新。
   // 落盘前 session 无 first_message，用标签页标题兜底，避免显示成裸 id。
@@ -312,6 +345,10 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     // 依赖稳定签名而非 tabs 本身：仅当影响渲染的字段变化时才重算，消除 streaming 期间的引用抖动。
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [openTabsSig],
+  );
+  const runningOpenTabSessions = React.useMemo(
+    () => openTabSessions.filter((session) => runningSessionIds.has(session.id)),
+    [openTabSessions, runningSessionIds],
   );
 
   // 活跃置顶时间戳：项目「首次进入 streaming」时打一次当前时间戳，供「活跃项目自动置顶」。
@@ -383,21 +420,32 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
 
   // 聚焦时只刷新「已展开的项目」：窗口重新可见且聚焦时，遍历展开集合各自静默刷新会话。
   // 用 ref 持有最新值，effect 仅挂载一次；不引入定时轮询，避免 Linux 上的高频扫描卡顿。
-  const focusRefreshRef = useRef<{ expanded: Set<string>; projects: Project[]; load: typeof loadProjectSessions }>({
+  const focusRefreshRef = useRef<{
+    expanded: Set<string>;
+    projects: Project[];
+    load: typeof loadProjectSessions;
+    runningSessions: Session[];
+  }>({
     expanded: expandedProjects,
     projects,
     load: loadProjectSessions,
+    runningSessions: runningOpenTabSessions,
   });
   useEffect(() => {
-    focusRefreshRef.current = { expanded: expandedProjects, projects, load: loadProjectSessions };
-  }, [expandedProjects, projects, loadProjectSessions]);
+    focusRefreshRef.current = {
+      expanded: expandedProjects,
+      projects,
+      load: loadProjectSessions,
+      runningSessions: runningOpenTabSessions,
+    };
+  }, [expandedProjects, projects, loadProjectSessions, runningOpenTabSessions]);
 
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
-      const { expanded, projects: projs, load } = focusRefreshRef.current;
+      const { expanded, projects: projs, load, runningSessions } = focusRefreshRef.current;
       projs.forEach((p) => {
-        if (expanded.has(p.id)) {
+        if (expanded.has(p.id) && shouldRefreshProjectSessionsOnFocus(p, runningSessions)) {
           load(p, { silent: true }).catch(() => { /* ignore */ });
         }
       });
@@ -411,23 +459,9 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     };
   }, []);
 
-  // 运行期兜底刷新：仅当「有会话正在运行」时启用一个低频(4s)定时器，静默刷新已展开项目的会话列表。
-  // 目的——Linux 上 focus/visibilitychange 事件不可靠，新会话落盘后聚焦刷新可能迟迟不触发，
-  // 导致「会话在跑但侧栏一直不显示」。此定时器只在 runningSessionIds 非空时存在、会话跑完即清除，
-  // 不是常驻轮询，规避了「高频扫描卡顿」的老问题。即便前面所有派生失灵，这里也能把会话拉出来。
-  useEffect(() => {
-    if (runningSessionIds.size === 0) return;
-    const timer = window.setInterval(() => {
-      if (document.hidden) return;
-      const { expanded, projects: projs, load } = focusRefreshRef.current;
-      projs.forEach((p) => {
-        if (expanded.has(p.id)) {
-          load(p, { silent: true }).catch(() => { /* ignore */ });
-        }
-      });
-    }, 4000);
-    return () => window.clearInterval(timer);
-  }, [runningSessionIds]);
+  // 运行期间不再定时刷新/重排会话列表。新建或未落盘的运行会话由 openTabSessions
+  // 直接合并显示；磁盘侧的 last_message_timestamp 只在完成事件、手动刷新或重新聚焦非运行项目时读取。
+  // 这样多个项目同时输出 assistant token 时，不会每隔几秒扫描磁盘并按 assistant 回复时间重排侧栏。
 
   // 运行结束收尾刷新：检测「运行中数量由非空→空」的边沿（会话刚跑完）。
   // 此刻 runningSessionIds 清空、强制置顶取消，但 diskSessions 仍是运行前旧快照
@@ -725,6 +759,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
         expandedProjects={expandedProjects}
         activeSessionId={activeSessionId}
         runningSessionIds={runningSessionIds}
+        runningStartOrder={runningStartOrder}
         openTabSessions={openTabSessions}
         draftSessions={draftSessions}
         onToggleProject={toggleProject}
@@ -963,6 +998,8 @@ interface ProjectTreeProps {
   activeSessionId: string | null;
   /** 运行中的会话 id 集合（来自标签页 streaming 状态），用于实时高亮 */
   runningSessionIds: Set<string>;
+  /** 运行中会话进入 streaming 的稳定顺序：避免 assistant 输出更新时间导致运行项互相换位 */
+  runningStartOrder: ReadonlyMap<string, number>;
   /** 已在标签页打开的会话（含未落盘的新建会话），实时合并进树 */
   openTabSessions: Session[];
   /** 草稿会话（来自后端落盘），按所属项目渲染为红色标注条目 */
@@ -989,7 +1026,7 @@ interface ProjectTreeProps {
 // 配合上方所有 props 已稳定引用化（useCallback/useMemo + 稳定签名），memo 才能真正生效，
 // 从而消除会话列表的鬼畜/上下乱跳/乱闪（根治抖动的最后一环）。
 const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
-  projects, selectedProjectId, sessions, sessionsByProject, sessionsLoading, expandedProjects, activeSessionId, runningSessionIds, openTabSessions, draftSessions,
+  projects, selectedProjectId, sessions, sessionsByProject, sessionsLoading, expandedProjects, activeSessionId, runningSessionIds, runningStartOrder, openTabSessions, draftSessions,
   onToggleProject, onOpenSession,
   onNewSession, onNewSessionInProject, onRefreshProject, onOpenInExplorer, onCopyText, onDuplicateSession, onExportSession,
   sessionTitles, onRenameSession, sessionOrder, onReorderSessions, onReorderProjects,
@@ -1012,7 +1049,7 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
   // 故同时以归一化路径作为回退匹配键，确保新会话落到正确项目。
   const normPath = (p?: string) => (p ? p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() : '');
   const tabSessionBelongsTo = (s: Session, project: Project) =>
-    s.project_id === project.id || (!!s.project_path && normPath(s.project_path) === normPath(project.path));
+    sessionBelongsToWorkbenchProject(s, project);
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto py-2 px-1">
@@ -1090,20 +1127,14 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
         const projectSessions = pinnedSessions.length > 0
           ? [...pinnedSessions, ...orderedDisk]
           : orderedDisk;
-        // 运行中的落盘会话也强制提到最近区可见位置：避免它因 savedOrder 排到第 6+ 位被 slice 截断，
-        // 表现为「正在运行却不在列表里」。pinned(草稿/未落盘) 已在最前，这里只重排 orderedDisk 部分。
-        const visibleSorted = (() => {
-          const running = projectSessions.filter((s) => runningSessionIds.has(s.id));
-          if (running.length === 0) return projectSessions;
-          const runningIds = new Set(running.map((s) => s.id));
-          const rest = projectSessions.filter((s) => !runningIds.has(s.id));
-          // 运行中的排在 pinned 之后、其余之前（pinned 本身可能也在 running 里，用 Set 去重保序）
-          const pinnedIds = new Set(pinnedSessions.map((s) => s.id));
-          const pinnedPart = projectSessions.filter((s) => pinnedIds.has(s.id));
-          const runningNotPinned = running.filter((s) => !pinnedIds.has(s.id));
-          const restNotPinned = rest.filter((s) => !pinnedIds.has(s.id));
-          return [...pinnedPart, ...runningNotPinned, ...restNotPinned];
-        })();
+        // 运行中的落盘会话仍保证在最近区可见，但只按“进入 streaming 的顺序”排一次；
+        // assistant 后续持续写入 last_message_timestamp 不再让多个运行项互相抢排名。
+        const visibleSorted = orderProjectSessionsForSidebar({
+          projectSessions,
+          pinnedSessionIds: new Set(pinnedSessions.map((s) => s.id)),
+          runningSessionIds,
+          runningStartOrder,
+        });
         const expandedAll = showAll.has(project.id);
         // 截断前用 visibleSorted（pinned + 运行中 已提到最前），保证运行中/草稿会话不被 slice 截掉。
         const visible = expandedAll ? visibleSorted : visibleSorted.slice(0, RECENT_SESSION_COUNT);
