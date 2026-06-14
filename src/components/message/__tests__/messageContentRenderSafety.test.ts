@@ -17,6 +17,11 @@ const readResultSource = readFileSync(
   'utf8',
 );
 
+const userMessageSource = readFileSync(
+  resolve(process.cwd(), 'src/components/message/UserMessage.tsx'),
+  'utf8',
+);
+
 describe('message render safety wiring', () => {
   test('MessageContent gates typewriter and huge markdown through safety policies', () => {
     expect(messageContentSource).toContain('shouldUseIncrementalTypewriter');
@@ -33,5 +38,10 @@ describe('message render safety wiring', () => {
     expect(readResultSource).toContain('countLinesUpTo');
     expect(readResultSource).toMatch(/if \(!isExpanded\) \{\s*return null;\s*\}/);
     expect(readResultSource).toContain('shouldRenderCodeBlockAsPlainText(codeContent)');
+  });
+
+  test('UserMessage detects long prompts with bounded line scanning', () => {
+    expect(userMessageSource).toContain('countLinesUpTo');
+    expect(userMessageSource).not.toContain(".split('\\n').length");
   });
 });

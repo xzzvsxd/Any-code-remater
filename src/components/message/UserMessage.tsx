@@ -13,6 +13,7 @@ import type { RewindCapabilities, RewindMode } from '@/lib/api';
 import { formatTimestamp } from "@/lib/messageUtils";
 import { api } from '@/lib/api';
 import { useTranslation } from "@/hooks/useTranslation";
+import { countLinesUpTo } from "@/lib/markdownRenderSafety";
 
 interface UserMessageProps {
   /** 消息数据 */
@@ -320,16 +321,9 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       return;
     }
 
-    // 计算行数：使用清理后的文本
+    // 计算行数：使用清理后的文本。只扫描到折叠阈值，避免超长历史 prompt 初次挂载时 split 出巨型数组。
     const textToCheck = typeof displayContent === 'string' ? displayContent : text;
-    const lines = textToCheck.split('\n').length;
-
-    // 如果超过 5 行，需要折叠
-    if (lines > 5) {
-      setShouldCollapse(true);
-    } else {
-      setShouldCollapse(false);
-    }
+    setShouldCollapse(countLinesUpTo(textToCheck, 5).exceeded);
   }, [text, isSkills, isCommandOutput, displayContent]);
 
   // 检测撤回能力

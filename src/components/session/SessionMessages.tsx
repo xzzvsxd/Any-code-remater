@@ -9,6 +9,10 @@ import { CliProcessingIndicator } from "./CliProcessingIndicator";
 import type { ExecutionStatusInfo } from "@/components/FloatingPromptInput/types";
 import { evaluateBottomScrollFrame } from "./bottomScrollStabilizer";
 import { shouldPreserveScrollAnchorOnMeasuredSizeChange } from "./virtualizerScrollAdjustmentPolicy";
+import {
+  SESSION_MESSAGES_OVERSCAN,
+  estimateMessageGroupHeight,
+} from "./messageHeightEstimate";
 
 /**
  * ✅ MeasurableItem: 自动监听高度变化的虚拟列表项
@@ -175,49 +179,9 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
         if (cached) return cached;
       }
 
-      // For subagent groups, estimate larger height
-      if (messageGroup.type === 'subagent') {
-        return 400; // Subagent groups are typically larger
-      }
-
-      // For aggregated groups, estimate height based on content
-      if (messageGroup.type === 'aggregated') {
-        // Base height for bubble padding etc
-        let height = 60;
-        messageGroup.messages.forEach(msg => {
-            // Add height for thinking blocks
-            if (msg.type === 'thinking' || (msg.message?.content && Array.isArray(msg.message.content) && msg.message.content.some((c:any) => c.type === 'thinking'))) {
-                height += 100;
-            }
-            // Add height for tool calls
-            if (msg.message?.content && Array.isArray(msg.message.content)) {
-                const toolCalls = msg.message.content.filter((c:any) => c.type === 'tool_use');
-                height += toolCalls.length * 60;
-                
-                // Add height for tool results (if visible)
-                const toolResults = msg.message.content.filter((c:any) => c.type === 'tool_result');
-                height += toolResults.length * 40;
-            }
-        });
-        return Math.max(height, 100);
-      }
-
-      // For normal messages, estimate based on message type
-      const message = messageGroup.message;
-      if (!message) return 200;
-
-      // Estimate different heights for different message types
-      if (message.type === 'system') return 80;  // System messages are smaller
-      if (message.type === 'user') return 150;   // User prompts are medium
-      if (message.type === 'assistant') {
-        // Assistant messages with code blocks are larger
-        const hasCodeBlock = message.content && typeof message.content === 'string' &&
-                            message.content.includes('```');
-        return hasCodeBlock ? 300 : 200;
-      }
-      return 200; // Default fallback
+      return estimateMessageGroupHeight(messageGroups[index]);
     },
-    overscan: 12, // ✅ OPTIMIZED: Increased to 12 to prevent blank areas during fast scrolling
+    overscan: SESSION_MESSAGES_OVERSCAN,
     measureElement: (element) => {
       // Ensure element is fully rendered before measurement
       const el = element as HTMLElement;

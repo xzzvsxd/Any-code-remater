@@ -28,4 +28,9 @@ describe('SessionMessages imperative scrolling invariants', () => {
     expect(source).toMatch(/scrollToTop:\s*\(\)\s*=>\s*{[\s\S]*?cancelPromptScrollSearch\(\);/);
     expect(source).toMatch(/scrollToPrompt:\s*\(promptIndex:\s*number\)\s*=>\s*{[\s\S]*?cancelPromptScrollSearch\(\);/);
   });
+
+  test('virtualizer uses content-aware estimates instead of fixed 150/200px guesses', () => {
+    expect(source).toContain('estimateMessageGroupHeight(messageGroups[index])');
+    expect(source).toContain('overscan: SESSION_MESSAGES_OVERSCAN');
+  });
 });
