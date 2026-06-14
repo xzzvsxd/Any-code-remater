@@ -16,16 +16,17 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, EventTarget, Manager};
 
 /// 批处理窗口：缓冲达到该行数即 flush。
-const MAX_BATCH_LINES: usize = 64;
+const MAX_BATCH_LINES: usize = 32;
 /// 批处理窗口：缓冲达到该字节数即 flush。
 ///
 /// 不能只按行数：Claude/Codex/Gemini 的一条 JSONL 可能包含很大的 tool_result。若 64 条大行
 /// 合成一个巨型 Tauri IPC payload，Linux/WebKitGTK 在序列化、JS bridge 反序列化和 JSON.parse
 /// 阶段会产生明显长任务/内存峰值。这里按 UTF-8 字节估算 batch 体积；单条超大 JSONL 不拆分，
 /// 但会单独成批发送，保证协议完整性。
-const MAX_BATCH_BYTES: usize = 256 * 1024;
-/// 批处理窗口：距上次 flush 超过该时长即 flush（毫秒）。约一帧多一点，兼顾吞吐与延迟。
-const MAX_BATCH_INTERVAL: Duration = Duration::from_millis(16);
+const MAX_BATCH_BYTES: usize = 64 * 1024;
+/// 批处理窗口：距上次 flush 超过该时长即 flush（毫秒）。Linux WebKitGTK 下宁可降低
+/// renderer 更新频率到约 30fps，也不要每 16ms 推 256KB 级 IPC 造成 JS bridge/JSON.parse 长任务。
+const MAX_BATCH_INTERVAL: Duration = Duration::from_millis(32);
 /// session_id 刚出现后，前端需要一小段时间从 global `system:init` 里拿到 sid 并注册
 /// `*-output:<sid>` 监听。此窗口内普通 stream 仍保留少量 global fallback，避免 attach 竞态丢早期行。
 const SESSION_LISTENER_ATTACH_GRACE_BATCHES: usize = 8;
@@ -224,5 +225,12 @@ mod tests {
             MAX_BATCH_BYTES - 1,
             Duration::from_millis(0),
         ));
+    }
+
+    #[test]
+    fn linux_renderer_batch_limits_stay_below_long_task_thresholds() {
+        assert!(MAX_BATCH_LINES <= 32);
+        assert!(MAX_BATCH_BYTES <= 64 * 1024);
+        assert!(MAX_BATCH_INTERVAL >= Duration::from_millis(32));
     }
 }

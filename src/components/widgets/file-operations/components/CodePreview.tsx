@@ -15,6 +15,10 @@ import { useTheme } from "@/contexts/ThemeContext";
 import { useTypewriter } from "@/hooks/useTypewriter";
 import { checkSyntaxHighlightSupport } from "@/lib/syntaxHighlightCompat";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import {
+  shouldRenderCodeBlockAsPlainText,
+  shouldUseIncrementalTypewriter,
+} from "@/lib/markdownRenderSafety";
 
 export interface CodePreviewProps {
   /** 代码内容 */
@@ -54,6 +58,13 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
   const { theme } = useTheme();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [supportsSyntaxHighlight] = useState(() => checkSyntaxHighlightSupport());
+  const shouldPlainText = shouldRenderCodeBlockAsPlainText(codeContent);
+  const shouldEnableTypewriter = shouldUseIncrementalTypewriter(codeContent, {
+    isStreaming,
+    maxChars: 2_000,
+    maxLines: 80,
+    maxLineChars: 500,
+  });
 
   // 使用打字机效果
   const {
@@ -61,13 +72,13 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
     isTyping,
     skipToEnd
   } = useTypewriter(codeContent, {
-    enabled: isStreaming,
+    enabled: shouldEnableTypewriter,
     speed: typewriterSpeed,
     isStreaming,
   });
 
   // 决定显示的内容
-  const textToDisplay = isStreaming ? displayedText : codeContent;
+  const textToDisplay = shouldEnableTypewriter ? displayedText : codeContent;
 
   // 流式输出时自动滚动到底部
   useEffect(() => {
@@ -127,7 +138,7 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
         onDoubleClick={handleDoubleClick}
         title={isTyping ? "双击跳过打字效果" : undefined}
       >
-        {supportsSyntaxHighlight ? (
+        {supportsSyntaxHighlight && !shouldPlainText ? (
           <ErrorBoundary
             fallback={() => (
               <pre className="m-0 p-4 bg-transparent text-xs leading-relaxed overflow-x-auto font-mono text-foreground/80">

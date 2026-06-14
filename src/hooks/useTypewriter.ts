@@ -67,9 +67,18 @@ export function useTypewriter(
   }, [fullText]);
 
   useEffect(() => {
-    // 如果禁用打字机效果，直接显示全部内容
+    // 如果禁用打字机效果，不要把 fullText 镜像进 displayedText state。
+    // 大消息/代码块会关闭 typewriter；若这里仍 setDisplayedText(fullText)，Linux WebKit
+    // renderer 会额外保留一份大字符串并触发无意义 state update，放大白屏风险。
     if (!enabled) {
-      setDisplayedText(fullText);
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      setDisplayedText('');
+      currentIndexRef.current = fullText.length;
+      previousTextLengthRef.current = fullText.length;
+      lastTimeRef.current = 0;
       setIsComplete(true);
       setIsTyping(false);
       return;
@@ -79,6 +88,10 @@ export function useTypewriter(
     if (skipRef.current && !isStreaming) {
       setDisplayedText(fullText);
       return;
+    }
+
+    if (currentIndexRef.current > fullText.length) {
+      currentIndexRef.current = 0;
     }
 
     // 检测是否有新内容追加（流式场景）
@@ -162,8 +175,10 @@ export function useTypewriter(
     };
   }, []);
 
+  const effectiveDisplayedText = enabled ? displayedText : fullText;
+
   return {
-    displayedText,
+    displayedText: effectiveDisplayedText,
     isTyping,
     isComplete,
     skipToEnd

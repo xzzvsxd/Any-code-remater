@@ -114,6 +114,7 @@ const engineDisplayNames: Record<'claude' | 'codex' | 'gemini', string> = {
   codex: 'Codex',
   gemini: 'Gemini',
 };
+const EMPTY_VISIBLE_MESSAGES: ClaudeStreamMessage[] = [];
 
 const getProjectLabel = (path: string) => {
   if (!path) return '';
@@ -154,6 +155,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   } = useMessagesContext();
   const isLoading = isStreaming;
   const setIsLoading = setIsStreaming;
+  const visibleMessages = isActive ? messages : EMPTY_VISIBLE_MESSAGES;
   const [error, setError] = useState<string | null>(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   // 原始 JSONL 已由后端会话文件持久化，导出功能也从规范化后的 messages 生成。
@@ -306,7 +308,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   const [supportsStreamJsonInput, setSupportsStreamJsonInput] = useState(false);
 
   // ✅ Refactored: Use custom Hook for session cost calculation
-  const { stats: costStats, formatCost } = useSessionCostCalculation(messages, executionEngineConfig.engine);
+  const { stats: costStats, formatCost } = useSessionCostCalculation(visibleMessages, executionEngineConfig.engine);
 
   // ✅ Refactored: Use custom Hook for message filtering
   useEffect(() => {
@@ -343,7 +345,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     }
   }, [extractedSessionInfo, projectPath, onSessionInfoChange]);
 
-  const displayableMessages = useDisplayableMessages(messages, {
+  const displayableMessages = useDisplayableMessages(visibleMessages, {
     hideWarmupMessages: filterConfig.hideWarmupMessages
   });
 
@@ -1084,15 +1086,15 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
 
   // 🆕 辅助函数：计算用户消息对应的 promptIndex
   // 只计算真实用户输入，排除系统消息和工具结果
-  const promptIndexByMessage = useMemo(() => buildPromptIndexByMessage(messages), [messages]);
+  const promptIndexByMessage = useMemo(() => buildPromptIndexByMessage(visibleMessages), [visibleMessages]);
   const getPromptIndexForMessage = useCallback((displayableIndex: number): number => {
     return getPromptIndexForDisplayableMessage(
-      messages,
+      visibleMessages,
       displayableMessages,
       displayableIndex,
       promptIndexByMessage,
     );
-  }, [messages, displayableMessages, promptIndexByMessage]);
+  }, [visibleMessages, displayableMessages, promptIndexByMessage]);
 
 
   // 🆕 撤回处理函数 - 支持三种撤回模式
@@ -1236,11 +1238,11 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   // 🌿 计算某条消息（任意类型）可用的分支 promptIndex；-1 表示不可分支
   const getBranchPromptIndexForMessage = useCallback((displayableIndex: number): number => {
     return getBranchPromptIndexForDisplayableMessage(
-      messages,
+      visibleMessages,
       displayableMessages,
       displayableIndex,
     );
-  }, [messages, displayableMessages]);
+  }, [visibleMessages, displayableMessages]);
 
   // 🌿 从某条消息分叉出一个新会话（真分支）：原会话保留，新会话在新 tab 打开
   const handleBranch = useCallback(async (promptIndex: number) => {
@@ -1662,7 +1664,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
             draftTabId={tabIdProp}                   // 🆕 新会话草稿落盘的唯一 id（=tab id）
             sessionModel={session?.model}
             getConversationContext={getConversationContext}
-            messages={messages}                      // 🆕 传递完整消息列表
+            messages={visibleMessages}               // 活跃 tab 才把完整消息交给输入区 UI，后台运行 tab 避免重复重渲染
             isPlanMode={isPlanMode}
             onTogglePlanMode={handleTogglePlanMode}
             sessionCost={formatCost(costStats.totalCost)}
@@ -1715,7 +1717,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
 
       {/* Prompt Navigator - Quick navigation to any user prompt */}
       <PromptNavigator
-        messages={messages}
+        messages={visibleMessages}
         isOpen={showPromptNavigator}
         onClose={() => setShowPromptNavigator(false)}
         onPromptClick={handlePromptNavigation}

@@ -9,7 +9,11 @@ import { copyTextToClipboard } from "@/lib/clipboard";
 import { useTypewriter } from "@/hooks/useTypewriter";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { checkSyntaxHighlightSupport } from "@/lib/syntaxHighlightCompat";
-import { shouldRenderCodeBlockAsPlainText } from "@/lib/markdownRenderSafety";
+import {
+  shouldRenderCodeBlockAsPlainText,
+  shouldRenderMarkdownAsPlainText,
+  shouldUseIncrementalTypewriter,
+} from "@/lib/markdownRenderSafety";
 
 interface CodeBlockRendererProps {
   language: string;
@@ -56,6 +60,42 @@ const PlainTextCodeBlock: React.FC<PlainTextCodeBlockProps> = ({
       </div>
       <pre className="p-3 text-xs font-mono overflow-auto text-foreground/80 whitespace-pre-wrap break-words" style={{ overflowWrap: 'anywhere' }}>
         {code}
+      </pre>
+    </div>
+  );
+};
+
+const LARGE_TEXT_PREVIEW_CHARS = 40_000;
+
+const LargePlainTextContent: React.FC<{ content: string }> = ({ content }) => {
+  const [expanded, setExpanded] = useState(false);
+  const shouldTruncate = content.length > LARGE_TEXT_PREVIEW_CHARS;
+  const visibleContent = shouldTruncate && !expanded
+    ? content.slice(0, LARGE_TEXT_PREVIEW_CHARS)
+    : content;
+
+  return (
+    <div className="my-2 rounded-lg border border-border/50 bg-muted/20 overflow-hidden">
+      <div className="flex items-center justify-between gap-3 px-3 py-2 bg-muted/30 text-xs text-muted-foreground">
+        <span>
+          大内容已使用纯文本安全渲染，避免 Linux/WebKitGTK Markdown 长任务
+        </span>
+        {shouldTruncate && (
+          <button
+            type="button"
+            className="shrink-0 text-primary hover:underline underline-offset-2"
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? '收起预览' : `显示完整 ${content.length.toLocaleString()} 字符`}
+          </button>
+        )}
+      </div>
+      <pre
+        className="m-0 max-h-[520px] overflow-auto whitespace-pre-wrap break-words p-3 text-sm leading-relaxed text-foreground/85"
+        style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
+      >
+        {visibleContent}
+        {shouldTruncate && !expanded ? '\n\n… 已截断预览，点击上方按钮显示完整内容。' : ''}
       </pre>
     </div>
   );
@@ -200,8 +240,8 @@ const MessageContentComponent: React.FC<MessageContentProps> = ({
   const { theme } = useTheme();
   const syntaxTheme = getClaudeSyntaxTheme(theme === 'dark');
 
-  // 判断是否应该启用打字机效果
-  const shouldEnableTypewriter = enableTypewriter && isStreaming;
+  // 打字机效果会触发逐帧 Markdown/Prism 重渲染；大内容/代码块在 Linux WebKit 下直接显示当前流式文本。
+  const shouldEnableTypewriter = enableTypewriter && shouldUseIncrementalTypewriter(content, { isStreaming });
 
   // 使用打字机效果
   const {
@@ -243,30 +283,33 @@ const MessageContentComponent: React.FC<MessageContentProps> = ({
       onDoubleClick={handleDoubleClick}
       title={isTyping ? "双击跳过打字效果" : undefined}
     >
-      <ErrorBoundary
-        onError={(error) => {
-          console.error('[MessageContent] Markdown rendering error:', error);
-        }}
-        fallback={(error) => (
-          <div className="p-4 rounded-md border border-destructive/20 bg-destructive/5 my-2">
-            <p className="text-sm font-medium text-destructive mb-2">
-              渲染内容时出错 (Markdown/Syntax Highlighting)
-            </p>
-            <pre className="text-xs font-mono whitespace-pre-wrap break-words text-muted-foreground bg-background/50 p-2 rounded max-h-[200px] overflow-y-auto" style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
-              {textToDisplay}
-            </pre>
-            <details className="mt-2">
-              <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
-                错误详情
-              </summary>
-              <p className="text-xs text-destructive mt-1 font-mono">
-                {error.message}
+      {shouldRenderMarkdownAsPlainText(textToDisplay) ? (
+        <LargePlainTextContent content={textToDisplay} />
+      ) : (
+        <ErrorBoundary
+          onError={(error) => {
+            console.error('[MessageContent] Markdown rendering error:', error);
+          }}
+          fallback={(error) => (
+            <div className="p-4 rounded-md border border-destructive/20 bg-destructive/5 my-2">
+              <p className="text-sm font-medium text-destructive mb-2">
+                渲染内容时出错 (Markdown/Syntax Highlighting)
               </p>
-            </details>
-          </div>
-        )}
-      >
-        <ReactMarkdown
+              <pre className="text-xs font-mono whitespace-pre-wrap break-words text-muted-foreground bg-background/50 p-2 rounded max-h-[200px] overflow-y-auto" style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+                {textToDisplay}
+              </pre>
+              <details className="mt-2">
+                <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
+                  错误详情
+                </summary>
+                <p className="text-xs text-destructive mt-1 font-mono">
+                  {error.message}
+                </p>
+              </details>
+            </div>
+          )}
+        >
+          <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{
             // 代码块渲染
@@ -366,8 +409,9 @@ const MessageContentComponent: React.FC<MessageContentProps> = ({
         }}
       >
         {textToDisplay}
-      </ReactMarkdown>
-      </ErrorBoundary>
+          </ReactMarkdown>
+        </ErrorBoundary>
+      )}
 
       {/* 流式输出光标指示器 - 只在打字中或流式输出时显示 */}
       {(isStreaming || isTyping) && (
