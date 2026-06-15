@@ -155,6 +155,8 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   } = useMessagesContext();
   const isLoading = isStreaming;
   const setIsLoading = setIsStreaming;
+  const isLoadingRef = useRef(isLoading);
+  isLoadingRef.current = isLoading;
   const visibleMessages = isActive ? messages : EMPTY_VISIBLE_MESSAGES;
   // 长流式输出时 messages 每帧都会变化；把“发送/问答/上下文”回调读取的最新消息放到 ref，
   // 避免 useCallback 依赖 messages 后在后台 tab 中反复重注册 Plan/UserQuestion 回调。
@@ -621,7 +623,12 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   const handleJumpToLatest = useCallback(() => {
     setUserScrolled(false);
     setShouldAutoScroll(true);
-    sessionMessagesRef.current?.scrollToBottom();
+    // streaming 期间只由 useSmartAutoScroll 跟随底部；不要再启动
+    // SessionMessages.scrollToBottom 的长 settle 循环，否则两个 rAF/ResizeObserver
+    // 同时写 scrollTop，底部附近会反复抽动/抖动。
+    if (!isLoadingRef.current) {
+      sessionMessagesRef.current?.scrollToBottom();
+    }
   }, [setShouldAutoScroll, setUserScrolled]);
 
   // 会话切换/进入时稳定置底：每个会话在历史加载完成后强制置底一次。
@@ -632,6 +639,9 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   useEffect(() => {
     const sid = session?.id || 'new_session';
     if (isHistoryLoading) return;
+    // 正在 streaming 时 useSmartAutoScroll 是唯一底部跟随源。
+    // imperative settle 留给历史/空闲态，否则会和 sticky rAF 抢 scrollTop。
+    if (isLoading) return;
     if (messageGroups.length === 0) return;
     if (initialScrolledSessionRef.current === sid) return;
     if (initialScrollPendingSessionRef.current === sid) return;
@@ -643,6 +653,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     const rafId = requestAnimationFrame(() => {
       if (initialScrollPendingSessionRef.current !== sid) return;
       initialScrollPendingSessionRef.current = null;
+      if (isLoadingRef.current) return;
       if (!sessionMessagesRef.current) return;
       sessionMessagesRef.current.scrollToBottom();
       initialScrolledSessionRef.current = sid;
@@ -653,7 +664,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
         initialScrollPendingSessionRef.current = null;
       }
     };
-  }, [session?.id, isHistoryLoading, messageGroups.length, setShouldAutoScroll, setUserScrolled]);
+  }, [session?.id, isHistoryLoading, isLoading, messageGroups.length, setShouldAutoScroll, setUserScrolled]);
 
   // ????????????????????????????
   const handleSendPromptWithScroll = useCallback((prompt: string, model: ModelType, maxThinkingTokens?: number) => {
