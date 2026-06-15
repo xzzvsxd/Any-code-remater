@@ -1196,6 +1196,8 @@
     "draftBadge": "草稿",
     "draftUntitled": "未命名草稿",
     "showAllSessions": "展開全部 {{count}} 個對話",
+    "showSessionsBatch": "展開對話（先顯示 {{count}}/{{total}}）",
+    "showMoreSessions": "再顯示 {{count}} 個對話（{{shown}}/{{total}}）",
     "collapseSessions": "收起對話",
     "ctx": {
       "newSession": "新建對話",

@@ -1207,6 +1207,8 @@
     "draftBadge": "草稿",
     "draftUntitled": "未命名草稿",
     "showAllSessions": "展开全部 {{count}} 个会话",
+    "showSessionsBatch": "展开会话（先显示 {{count}}/{{total}}）",
+    "showMoreSessions": "再显示 {{count}} 个会话（{{shown}}/{{total}}）",
     "collapseSessions": "收起会话",
     "ctx": {
       "newSession": "新建会话",

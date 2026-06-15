@@ -1175,6 +1175,8 @@
     "draftBadge": "Draft",
     "draftUntitled": "Untitled draft",
     "showAllSessions": "Show all {{count}} sessions",
+    "showSessionsBatch": "Expand sessions (show {{count}}/{{total}} first)",
+    "showMoreSessions": "Show {{count}} more sessions ({{shown}}/{{total}})",
     "collapseSessions": "Collapse sessions",
     "ctx": {
       "newSession": "New session",

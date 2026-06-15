@@ -147,6 +147,12 @@ export interface SortableListProps<T extends { id: string }> {
   onReorder: (items: T[]) => void;
   renderItem: (item: T, index: number) => React.ReactNode;
   disabled?: boolean;
+  /**
+   * 超过该数量后退化为纯列表，不挂载 dnd-kit。
+   * Linux WebKit/GTK 对几百个 useSortable/layout measuring 特别敏感，
+   * 大列表场景保留展示与点击能力，牺牲拖拽排序以避免展开/折叠卡死。
+   */
+  disableSortingAbove?: number;
   /** 判断某个项目是否禁用拖拽 */
   isItemDisabled?: (item: T) => boolean;
   /** 自定义列表容器间距类（默认 space-y-4），用于紧凑场景 */
@@ -163,6 +169,7 @@ export function SortableList<T extends { id: string }>({
   onReorder,
   renderItem,
   disabled,
+  disableSortingAbove,
   isItemDisabled,
   listClassName = 'space-y-4',
   customHandle,
@@ -189,7 +196,11 @@ export function SortableList<T extends { id: string }>({
     }
   };
 
-  if (disabled) {
+  const sortingDisabledBySize =
+    typeof disableSortingAbove === 'number' && items.length > disableSortingAbove;
+  const shouldUseDnd = !disabled && !sortingDisabledBySize;
+
+  if (!shouldUseDnd) {
     return (
       <div className={listClassName}>
         {items.map((item, index) => (

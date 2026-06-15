@@ -84,6 +84,8 @@ const MIN_WIDTH = 200;
 const MAX_WIDTH = 480;
 const DEFAULT_WIDTH = 280;
 const RECENT_SESSION_COUNT = 5;
+const WORKBENCH_PROJECT_DND_LIMIT = 80;
+const EXPANDED_SESSION_BATCH_SIZE = 80;
 
 /** 引擎对应的图标与色调 */
 const EngineDot: React.FC<{ engine?: string; active?: boolean }> = ({ engine, active }) => {
@@ -392,9 +394,10 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
   const orderedProjects = React.useMemo(() => {
     const activityOf = (p: Project) => Math.max(p.created_at * 1000 || 0, projectActivityTs[p.id] ?? 0);
     if (projectOrder.length > 0) {
+      const projectOrderIndex = new Map(projectOrder.map((id, index) => [id, index]));
       const indexOf = (id: string) => {
-        const i = projectOrder.indexOf(id);
-        return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+        const i = projectOrderIndex.get(id);
+        return i ?? Number.MAX_SAFE_INTEGER;
       };
       return [...projects].sort((a, b) => {
         const ia = indexOf(a.id);
@@ -1033,7 +1036,7 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
   onRequestDeleteSession, onRequestRemoveProject, onRequestPurgeProject,
 }) => {
   const { t } = useTranslation();
-  const [showAll, setShowAll] = useState<Set<string>>(new Set());
+  const [expandedSessionLimitByProject, setExpandedSessionLimitByProject] = useState<Record<string, number>>({});
   // 右键菜单受控状态：记录当前打开菜单的目标 key
   const [menuFor, setMenuFor] = useState<string | null>(null);
   // 会话 inline 重命名编辑态
@@ -1069,6 +1072,7 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
         items={projects}
         customHandle
         listClassName="space-y-0.5"
+        disableSortingAbove={WORKBENCH_PROJECT_DND_LIMIT}
         onReorder={(items) => onReorderProjects(items.map((p) => p.id))}
         renderItem={(project) => {
         const isExpanded = expandedProjects.has(project.id);
@@ -1135,9 +1139,17 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
           runningSessionIds,
           runningStartOrder,
         });
-        const expandedAll = showAll.has(project.id);
+        const expandedSessionLimit = expandedSessionLimitByProject[project.id] ?? RECENT_SESSION_COUNT;
+        const visibleSessionLimit = Math.min(
+          projectSessions.length,
+          Math.max(RECENT_SESSION_COUNT, expandedSessionLimit),
+        );
+        const sessionListExpanded = visibleSessionLimit > RECENT_SESSION_COUNT;
         // 截断前用 visibleSorted（pinned + 运行中 已提到最前），保证运行中/草稿会话不被 slice 截掉。
-        const visible = expandedAll ? visibleSorted : visibleSorted.slice(0, RECENT_SESSION_COUNT);
+        // 展开大项目时按批次增加渲染上限，避免一次性挂载几百个会话行导致 Linux 前端白屏/卡死。
+        const visible = visibleSorted.slice(0, visibleSessionLimit);
+        const hiddenSessionCount = Math.max(projectSessions.length - visible.length, 0);
+        const nextSessionBatchCount = Math.min(EXPANDED_SESSION_BATCH_SIZE, hiddenSessionCount);
 
         // 该项目下运行中的会话数：取所有已打开标签会话中归属本项目、且处于 streaming 的。
         // 用 openTabSessions（不依赖项目是否展开/缓存是否命中），保证未展开项目也能显示运行标识。
@@ -1189,45 +1201,52 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
                 <EngineCountBadges project={project} isCurrent={isCurrent} />
               </span>
 
-              {/* ⋯ 操作菜单（hover 浮现 / 右键也可触发） */}
-              <DropdownMenu open={menuFor === `proj:${project.id}`} onOpenChange={(o) => setMenuFor(o ? `proj:${project.id}` : null)}>
-                <DropdownMenuTrigger asChild>
+              {/* 项目行操作菜单：懒挂载——仅当前打开的项目行渲染完整 Radix DropdownMenu 树，
+                  其余几百个项目只保留纯 button，避免大工作区展开时常驻几百个菜单 Root/Trigger。 */}
+              {menuFor === `proj:${project.id}` ? (
+                <DropdownMenu open onOpenChange={(o) => { if (!o) setMenuFor(null); }}>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); }}
+                      className="flex-shrink-0 h-5 w-5 rounded flex items-center justify-center text-foreground bg-muted-foreground/15 opacity-100"
+                    >
+                      <MoreHorizontal className="h-3.5 w-3.5" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-52" onClick={(e) => e.stopPropagation()}>
+                    <DropdownMenuItem onClick={() => onNewSessionInProject(project)}>
+                      <Plus className="h-4 w-4 mr-2" />{t('workbench.ctx.newSession')}
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => onOpenInExplorer(project.path)}>
+                      <FolderInput className="h-4 w-4 mr-2" />{t('workbench.ctx.openInExplorer')}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => onCopyText(project.path, t('workbench.ctx.pathCopied'))}>
+                      <Copy className="h-4 w-4 mr-2" />{t('workbench.ctx.copyPath')}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => onRefreshProject(project)}>
+                      <RefreshCw className="h-4 w-4 mr-2" />{t('workbench.ctx.refreshSessions')}
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => onRequestRemoveProject(project)}>
+                      <X className="h-4 w-4 mr-2" />{t('workbench.ctx.removeFromList')}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => onRequestPurgeProject(project)}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />{t('workbench.ctx.deletePermanently')}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : (
                   <button
                     onClick={(e) => { e.stopPropagation(); setMenuFor(`proj:${project.id}`); }}
-                    className={cn(
-                      'flex-shrink-0 h-5 w-5 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted-foreground/15 transition-opacity',
-                      menuFor === `proj:${project.id}` ? 'opacity-100' : 'opacity-0 group-hover/proj:opacity-100'
-                    )}
+                    className="flex-shrink-0 h-5 w-5 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted-foreground/15 transition-opacity opacity-0 group-hover/proj:opacity-100"
                   >
                     <MoreHorizontal className="h-3.5 w-3.5" />
                   </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-52" onClick={(e) => e.stopPropagation()}>
-                  <DropdownMenuItem onClick={() => onNewSessionInProject(project)}>
-                    <Plus className="h-4 w-4 mr-2" />{t('workbench.ctx.newSession')}
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => onOpenInExplorer(project.path)}>
-                    <FolderInput className="h-4 w-4 mr-2" />{t('workbench.ctx.openInExplorer')}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onCopyText(project.path, t('workbench.ctx.pathCopied'))}>
-                    <Copy className="h-4 w-4 mr-2" />{t('workbench.ctx.copyPath')}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onRefreshProject(project)}>
-                    <RefreshCw className="h-4 w-4 mr-2" />{t('workbench.ctx.refreshSessions')}
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => onRequestRemoveProject(project)}>
-                    <X className="h-4 w-4 mr-2" />{t('workbench.ctx.removeFromList')}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => onRequestPurgeProject(project)}
-                    className="text-destructive focus:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4 mr-2" />{t('workbench.ctx.deletePermanently')}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              )}
             </div>
 
             {isExpanded && (
@@ -1243,9 +1262,9 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
                       items={visible}
                       customHandle
                       listClassName="space-y-px"
-                      disabled={expandedAll}
+                      disabled={sessionListExpanded}
                       onReorder={(items) => {
-                        // 拖拽仅在「最近 N 个」视图启用（展开全部时退化为纯列表、不挂 dnd-kit，
+                        // 拖拽仅在「最近 N 个」视图启用（分批展开时退化为纯列表、不挂 dnd-kit，
                         // 避免几百个 useSortable 实例导致 Linux 反复开关文件夹卡死）。
                         // 此时 items 是拖拽后的前 N 个，完整顺序 = 新前 N + 其余会话（保持原相对序）。
                         const movedIds = new Set(items.map((s) => s.id));
@@ -1294,8 +1313,8 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
                                   : 'bg-amber-500/60'
                             )} />
                           )}
-                          {/* 拖拽手柄：仅「最近 N 个」视图可见可用（展开全部时退化纯列表、无拖拽） */}
-                          {!expandedAll && (
+                          {/* 拖拽手柄：仅「最近 N 个」视图可见可用（分批展开时退化纯列表、无拖拽） */}
+                          {!sessionListExpanded && (
                             <SortableDragHandle className="flex-shrink-0 h-4 w-3 opacity-0 group-hover/sess:opacity-100 transition-opacity">
                               <GripVertical className="h-3 w-3" />
                             </SortableDragHandle>
@@ -1401,19 +1420,63 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
                     }}
                     />
                     {projectSessions.length > RECENT_SESSION_COUNT && (
-                      <button
-                        onClick={() => setShowAll((prev) => {
-                          const next = new Set(prev);
-                          if (expandedAll) next.delete(project.id); else next.add(project.id);
-                          return next;
-                        })}
-                        className="w-full flex items-center gap-1.5 px-2 py-1 mt-0.5 text-[10.5px] font-medium text-primary/70 hover:text-primary transition-colors"
-                      >
-                        <MessageSquare className="h-3 w-3" />
-                        {expandedAll
-                          ? t('workbench.collapseSessions')
-                          : t('workbench.showAllSessions', { count: projectSessions.length })}
-                      </button>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <button
+                          onClick={() => setExpandedSessionLimitByProject((prev) => {
+                            const currentLimit = prev[project.id] ?? RECENT_SESSION_COUNT;
+                            const currentVisibleLimit = Math.min(
+                              projectSessions.length,
+                              Math.max(RECENT_SESSION_COUNT, currentLimit),
+                            );
+                            const next = { ...prev };
+
+                            if (currentVisibleLimit <= RECENT_SESSION_COUNT) {
+                              next[project.id] = Math.min(projectSessions.length, EXPANDED_SESSION_BATCH_SIZE);
+                            } else if (currentVisibleLimit < projectSessions.length) {
+                              next[project.id] = Math.min(
+                                projectSessions.length,
+                                currentVisibleLimit + EXPANDED_SESSION_BATCH_SIZE,
+                              );
+                            } else {
+                              delete next[project.id];
+                            }
+
+                            return next;
+                          })}
+                          className={cn(
+                            'flex items-center gap-1.5 px-2 py-1 text-[10.5px] font-medium text-primary/70 hover:text-primary transition-colors',
+                            sessionListExpanded && hiddenSessionCount > 0 ? 'flex-1' : 'w-full',
+                          )}
+                        >
+                          <MessageSquare className="h-3 w-3" />
+                          {!sessionListExpanded
+                            ? projectSessions.length > EXPANDED_SESSION_BATCH_SIZE
+                              ? t('workbench.showSessionsBatch', {
+                                  count: Math.min(projectSessions.length, EXPANDED_SESSION_BATCH_SIZE),
+                                  total: projectSessions.length,
+                                })
+                              : t('workbench.showAllSessions', { count: projectSessions.length })
+                            : hiddenSessionCount > 0
+                              ? t('workbench.showMoreSessions', {
+                                  count: nextSessionBatchCount,
+                                  shown: visible.length,
+                                  total: projectSessions.length,
+                                })
+                              : t('workbench.collapseSessions')}
+                        </button>
+                        {sessionListExpanded && hiddenSessionCount > 0 && (
+                          <button
+                            onClick={() => setExpandedSessionLimitByProject((prev) => {
+                              const next = { ...prev };
+                              delete next[project.id];
+                              return next;
+                            })}
+                            className="flex-shrink-0 px-2 py-1 text-[10.5px] font-medium text-muted-foreground/70 hover:text-foreground transition-colors"
+                          >
+                            {t('workbench.collapseSessions')}
+                          </button>
+                        )}
+                      </div>
                     )}
                   </>
                 )}
