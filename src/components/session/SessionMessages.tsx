@@ -223,6 +223,14 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
     measuredHeightsRef.current.clear();
   }, [sessionId]);
 
+  // 如果历史/空闲态的一次性置底循环尚未结束，随后会话进入 streaming，
+  // 必须立即撤销该 imperative settle。streaming 期间底部跟随只允许
+  // useSmartAutoScroll 写 scrollTop，否则两套 rAF 会在底部抢位置造成抽动。
+  useEffect(() => {
+    if (!isLoading) return;
+    cancelBottomScrollLoop();
+  }, [isLoading]);
+
   useEffect(() => {
     return () => {
       cancelBottomScrollLoop();
@@ -233,6 +241,10 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
   useImperativeHandle(ref, () => ({
     scrollToBottom: () => {
       if (messageGroups.length === 0) return;
+      // streaming 时不允许启动这里的长 settle 循环；粘底已由
+      // useSmartAutoScroll 统一接管。这里的早退也防住旧闭包/外部 ref
+      // 误调用 scrollToBottom 后重新制造双 rAF 抢写。
+      if (isLoading) return;
       cancelBottomScrollLoop();
       cancelPromptScrollSearch();
 

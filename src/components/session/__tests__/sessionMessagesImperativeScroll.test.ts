@@ -22,6 +22,18 @@ describe('SessionMessages imperative scrolling invariants', () => {
     expect(source).toContain('onPointerDownCapture={cancelBottomScrollLoop}');
   });
 
+  test('streaming start cancels any idle bottom-settling loop before sticky auto-scroll takes over', () => {
+    expect(source).toMatch(
+      /useEffect\(\(\)\s*=>\s*{\s*if \(!isLoading\) return;\s*cancelBottomScrollLoop\(\);\s*},\s*\[isLoading\]\);/,
+    );
+  });
+
+  test('scrollToBottom itself never starts the imperative settle loop while streaming', () => {
+    expect(source).toMatch(
+      /scrollToBottom:\s*\(\)\s*=>\s*{[\s\S]*?if \(messageGroups\.length === 0\) return;[\s\S]*?if \(isLoading\) return;[\s\S]*?rowVirtualizer\.scrollToIndex/,
+    );
+  });
+
   test('new imperative scroll commands cancel any pending prompt-navigation retry loop', () => {
     expect(source).toContain('cancelPromptScrollSearch');
     expect(source).toMatch(/scrollToBottom:\s*\(\)\s*=>\s*{[\s\S]*?cancelPromptScrollSearch\(\);/);
