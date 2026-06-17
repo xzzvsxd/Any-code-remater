@@ -1,5 +1,4 @@
 import React, { memo } from "react";
-import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 
 interface MessageBubbleProps {
@@ -31,13 +30,7 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
   const isUser = variant === "user";
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{
-        duration: 0.3,
-        ease: [0.2, 0, 0, 1] // Emphasized easing
-      }}
+    <div
       className={cn(
         "flex w-full mb-2", // Reduced spacing for compact layout
         isUser ? "justify-end" : "justify-start",
@@ -78,7 +71,7 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
           </div>
         </div>
       )}
-    </motion.div>
+    </div>
   );
 };
 

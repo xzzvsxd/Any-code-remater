@@ -15,61 +15,17 @@ import {
 } from "./messageHeightEstimate";
 
 /**
- * ✅ MeasurableItem: 自动监听高度变化的虚拟列表项
- * 
- * 使用 ResizeObserver 并在内容变化时自动通知虚拟列表重新测量。
- * 仅对正在流式输出的消息进行防抖，历史消息立即更新以防止滚动抖动。
+ * 虚拟列表行。
+ *
+ * 只把 DOM 节点交给 TanStack Virtual 的 measureElement。
+ * 不再叠加组件自己的 ResizeObserver：TanStack Virtual 内部已经会观察被测元素，
+ * 双 observer 会在长历史/顶部区域制造重复测量和 rAF 风暴，表现为滚动抖动与卡顿。
  */
-const MeasurableItem = ({ virtualItem, itemKey, measureElement, isStreaming, children, ...props }: any) => {
-  const elRef = useRef<HTMLDivElement>(null);
-  const measureRef = useRef(measureElement);
-  
-  // 保持 measureElement 引用最新
-  useEffect(() => {
-    measureRef.current = measureElement;
-  }, [measureElement]);
-
-  useEffect(() => {
-    const el = elRef.current;
-    if (!el) return;
-
-    // 初始测量 - 立即执行确保占位准确
-    measureRef.current(el);
-
-    let frameId: number;
-
-    // 创建观察者
-    const observer = new ResizeObserver(() => {
-      if (isStreaming) {
-        // ✅ 流式消息：使用防抖，避免每帧重绘导致的性能问题
-        cancelAnimationFrame(frameId);
-        frameId = requestAnimationFrame(() => {
-          if (elRef.current) {
-            measureRef.current(elRef.current);
-          }
-        });
-      } else {
-        // ✅ 历史消息：立即响应（通过 rAF 避免 Loop 错误），确保向上滚动时高度修正及时，减少抖动
-        requestAnimationFrame(() => {
-          if (elRef.current) {
-            measureRef.current(elRef.current);
-          }
-        });
-      }
-    });
-
-    observer.observe(el);
-
-    return () => {
-      observer.disconnect();
-      cancelAnimationFrame(frameId);
-    };
-  }, [isStreaming]); // 添加 isStreaming 依赖
-
+const MeasurableItem = ({ virtualItem, itemKey, measureElement, children, ...props }: any) => {
   return (
     <div
       {...props}
-      ref={elRef}
+      ref={measureElement}
       data-index={virtualItem.index}
       data-item-key={itemKey}
     >
@@ -182,6 +138,10 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       return estimateMessageGroupHeight(messageGroups[index]);
     },
     overscan: SESSION_MESSAGES_OVERSCAN,
+    // 让 TanStack Virtual 把 ResizeObserver 测量合并进 rAF。
+    // WebKitGTK/Windows WebView 下，长消息和代码块重排会连续触发 RO；
+    // 直接同步测量会造成布局抖动和顶部历史滚动卡顿。
+    useAnimationFrameWithResizeObserver: true,
     measureElement: (element) => {
       // Ensure element is fully rendered before measurement
       const el = element as HTMLElement;
@@ -514,10 +474,9 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
                 virtualItem={virtualItem}
                 itemKey={virtualItem.key}
                 measureElement={rowVirtualizer.measureElement}
-                isStreaming={isStreaming}
-                className="absolute inset-x-4"
+                className="absolute inset-x-4 top-0"
                 style={{
-                  top: virtualItem.start,
+                  transform: `translateY(${virtualItem.start}px)`,
                 }}
               >
                 {/* group 容器：hover 时在右上角显示分支按钮，不打断现有消息渲染 */}

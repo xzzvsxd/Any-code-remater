@@ -1,7 +1,7 @@
 import type { MessageGroup } from "@/lib/subagentGrouping";
 import type { ClaudeStreamMessage } from "@/types/claude";
 
-export const SESSION_MESSAGES_OVERSCAN = 6;
+export const SESSION_MESSAGES_OVERSCAN = 4;
 
 const DEFAULT_ESTIMATE = 220;
 const MAX_NORMAL_MESSAGE_ESTIMATE = 1_200;
