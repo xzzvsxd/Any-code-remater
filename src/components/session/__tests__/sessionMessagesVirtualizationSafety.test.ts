@@ -22,6 +22,11 @@ const cliProcessingIndicatorSource = readFileSync(
   'utf8',
 );
 
+const toolsListSource = readFileSync(
+  resolve(process.cwd(), 'src/components/widgets/system/components/ToolsList.tsx'),
+  'utf8',
+);
+
 describe('session message virtualization safety', () => {
   test('does not layer a custom ResizeObserver on top of TanStack Virtual row measurement', () => {
     expect(sessionMessagesSource).not.toContain('new ResizeObserver');
@@ -47,5 +52,18 @@ describe('session message virtualization safety', () => {
     expect(cliProcessingIndicatorSource).not.toContain('framer-motion');
     expect(cliProcessingIndicatorSource).not.toContain('<motion.');
     expect(cliProcessingIndicatorSource).not.toContain('<AnimatePresence');
+  });
+
+  test('bottom processing indicator avoids continuous pulse animations on Linux WebKit', () => {
+    expect(cliProcessingIndicatorSource).not.toContain('animate-pulse');
+  });
+
+  test('bottom processing indicator avoids sub-second text timer churn', () => {
+    expect(cliProcessingIndicatorSource).not.toContain('}, 400);');
+  });
+
+  test('system init tools list avoids per-tool svg icons in Linux scroll containers', () => {
+    expect(toolsListSource).not.toContain('<Icon className=');
+    expect(toolsListSource).not.toContain('getToolIcon(tool)');
   });
 });

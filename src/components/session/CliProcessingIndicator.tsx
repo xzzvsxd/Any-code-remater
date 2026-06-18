@@ -52,13 +52,13 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
     }
   }, [isProcessing, initialVerbIndex]);
 
-  // 动态省略号动画
+  // 低频省略号更新：Linux WebKitGTK 下滚动容器内高频文本变化会放大 repaint/reflow 压力。
   useEffect(() => {
     if (!isProcessing) return;
 
     const dotInterval = setInterval(() => {
       setDotCount((prev) => (prev + 1) % 4);
-    }, 400);
+    }, 1000);
 
     return () => clearInterval(dotInterval);
   }, [isProcessing]);
@@ -107,8 +107,8 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
   return (
     <div className="w-full max-w-5xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-[85%] mx-auto px-4 py-3">
       <div className="flex items-center gap-2 font-mono text-sm">
-        {/* 星号指示器：用 CSS 动画，避免在滚动容器内跑每帧 JS motion */}
-        <span className="text-amber-500 dark:text-amber-400 font-bold animate-pulse">
+        {/* 星号指示器：保持静态，避免 Linux WebKitGTK 在滚动容器内持续重绘 */}
+        <span className="text-amber-500 dark:text-amber-400 font-bold">
           ✦
         </span>
 
@@ -149,7 +149,7 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
             </>
           )}
           <span className="inline-flex items-center gap-1">
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500/70 animate-pulse" />
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500/70" />
             {t('cliIndicator.thinking', 'thinking')}
           </span>
           )
@@ -162,9 +162,9 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
         </div>
       )}
 
-      {/* 底部进度提示：CSS pulse 代替 JS transform 动画，降低 WebView/Linux 主线程压力 */}
+      {/* 底部进度提示：静态色条，避免 Linux WebKitGTK 在长会话滚动容器内持续合成/重绘 */}
       <div className="mt-2 h-[2px] bg-muted-foreground/10 rounded-full overflow-hidden">
-        <div className="h-full w-full bg-gradient-to-r from-amber-500/30 via-amber-400 to-amber-500/30 animate-pulse" />
+        <div className="h-full w-full bg-amber-500/40" />
       </div>
     </div>
   );

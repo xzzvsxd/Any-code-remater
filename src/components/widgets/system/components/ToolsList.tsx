@@ -5,11 +5,7 @@
  */
 
 import React from "react";
-import {
-  Wrench, CheckSquare, Terminal, FolderSearch, Search, List, LogOut,
-  FileText, Edit3, FilePlus, Book, BookOpen, Globe, ListChecks, ListPlus,
-  Globe2, Package, Package2, ChevronDown, type LucideIcon
-} from "lucide-react";
+import { Wrench, Package, Package2, ChevronDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
@@ -21,37 +17,6 @@ export interface ToolsListProps {
   /** 切换 MCP 展开状态 */
   onMcpToggle: () => void;
 }
-
-// 工具图标映射
-const toolIcons: Record<string, LucideIcon> = {
-  'task': CheckSquare,
-  'bash': Terminal,
-  'glob': FolderSearch,
-  'grep': Search,
-  'ls': List,
-  'exit_plan_mode': LogOut,
-  'exitplanmode': LogOut,
-  'enter_plan_mode': Search,
-  'enterplanmode': Search,
-  'read': FileText,
-  'edit': Edit3,
-  'multiedit': Edit3,
-  'write': FilePlus,
-  'notebookread': Book,
-  'notebookedit': BookOpen,
-  'webfetch': Globe,
-  'todoread': ListChecks,
-  'todowrite': ListPlus,
-  'websearch': Globe2,
-};
-
-/**
- * 获取工具图标
- */
-const getToolIcon = (toolName: string): LucideIcon => {
-  const normalizedName = toolName.toLowerCase();
-  return toolIcons[normalizedName] || Wrench;
-};
 
 /**
  * 格式化 MCP 工具名称
@@ -123,19 +88,15 @@ export const ToolsList: React.FC<ToolsListProps> = ({
             </span>
           </div>
           <div className="flex flex-wrap gap-1.5">
-            {regularTools.map((tool, idx) => {
-              const Icon = getToolIcon(tool);
-              return (
-                <Badge
-                  key={idx}
-                  variant="secondary"
-                  className="text-xs py-0.5 px-2 flex items-center gap-1"
-                >
-                  <Icon className="h-3 w-3" />
-                  {tool}
-                </Badge>
-              );
-            })}
+            {regularTools.map((tool, idx) => (
+              <Badge
+                key={`${tool}-${idx}`}
+                variant="secondary"
+                className="text-xs py-0.5 px-2 font-mono font-normal"
+              >
+                {tool}
+              </Badge>
+            ))}
           </div>
         </div>
       )}

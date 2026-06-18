@@ -59,6 +59,45 @@ describe('message height estimation for virtualized history navigation', () => {
     expect(estimateMessageGroupHeight(hugeUser)).toBeLessThanOrEqual(260);
   });
 
+  test('reserves realistic height for system init cards with many tools', () => {
+    const systemInit = normalGroup({
+      type: 'system',
+      subtype: 'init',
+      session_id: '29ecedbe-2430-465b-958f-99c406aa5519',
+      model: 'claude-opus-4-8[1m]',
+      cwd: '/home/grandthief/桌面/Juhe',
+      tools: [
+        'Task',
+        'TaskOutput',
+        'Bash',
+        'Glob',
+        'Grep',
+        'ExitPlanMode',
+        'Read',
+        'Edit',
+        'Write',
+        'NotebookEdit',
+        'WebFetch',
+        'TodoWrite',
+        'WebSearch',
+        'TaskStop',
+        'AskUserQuestion',
+        'Skill',
+        'EnterPlanMode',
+        'EnterWorktree',
+        'ToolSearch',
+        'mcp__ask_user__ask_question',
+        'mcp__tool_search__search',
+      ],
+      message: {
+        role: 'system',
+        content: [],
+      },
+    } as ClaudeStreamMessage);
+
+    expect(estimateMessageGroupHeight(systemInit)).toBeGreaterThanOrEqual(260);
+  });
+
   test('limits overscan so top jumps do not mount too many unmeasured long rows at once', () => {
     expect(SESSION_MESSAGES_OVERSCAN).toBeLessThanOrEqual(8);
   });

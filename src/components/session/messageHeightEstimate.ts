@@ -187,10 +187,34 @@ const estimateUserHeight = (message: ClaudeStreamMessage): number => {
   return clamp(78 + textHeight + stats.images * 150, 120, 260);
 };
 
+const estimateSystemInitHeight = (message: ClaudeStreamMessage): number => {
+  const raw = message as any;
+  const tools = Array.isArray(raw.tools) ? raw.tools : [];
+  const cwd = String(raw.cwd ?? '');
+  const model = String(raw.model ?? '');
+  const sessionId = String(raw.session_id ?? raw.sessionId ?? '');
+
+  // SystemInitializedWidget 实际包含 header + 2~3 行会话信息 + tool badges。
+  // 旧估算只看 message.content，init 消息通常为空，导致首测 80px → 实际几百 px，
+  // Linux/WebKitGTK 下会放大虚拟列表重测、ResizeObserver 和贴底修正的卡顿。
+  const infoRows =
+    (sessionId ? 1 : 0)
+    + (model ? 1 : 0)
+    + (cwd ? 1 : 0);
+  const toolRows = tools.length > 0 ? Math.ceil(tools.length / 6) : 0;
+  const cwdWrapExtra = cwd.length > 60 ? 24 : 0;
+
+  return clamp(120 + infoRows * 28 + toolRows * 28 + cwdWrapExtra, 180, 420);
+};
+
 const estimateNormalMessageHeight = (message: ClaudeStreamMessage | undefined): number => {
   if (!message) return DEFAULT_ESTIMATE;
 
   if (message.type === 'system') {
+    if ((message as any).subtype === 'init') {
+      return estimateSystemInitHeight(message);
+    }
+
     const stats = getMessageContentStats(message);
     return clamp(76 + stats.lines * 18, 80, 320);
   }
