@@ -12,6 +12,11 @@ const claudeCodeSessionSource = readFileSync(
   'utf8',
 );
 
+const promptExecutionSource = readFileSync(
+  resolve(process.cwd(), 'src/hooks/usePromptExecution.ts'),
+  'utf8',
+);
+
 describe('MessagesProvider background derivation safety', () => {
   test('can skip expensive tool-result derivation for inactive background sessions', () => {
     expect(messagesContextSource).toContain('deriveToolResults?: boolean');
@@ -23,5 +28,15 @@ describe('MessagesProvider background derivation safety', () => {
 
   test('ClaudeCodeSession only derives tool results for the active tab', () => {
     expect(claudeCodeSessionSource).toContain('deriveToolResults={props.isActive !== false}');
+  });
+
+  test('exposes an immediate append path for user-submitted optimistic messages', () => {
+    expect(messagesContextSource).toContain('appendMessageImmediate');
+    expect(messagesContextSource).toContain('rawSetMessagesRef.current((prev) => prev.concat(message))');
+  });
+
+  test('prompt execution uses immediate append for optimistic user-visible prompts', () => {
+    expect(promptExecutionSource).toContain('appendMessageImmediate(commandMessage)');
+    expect(promptExecutionSource).toContain('appendMessageImmediate(userMessage)');
   });
 });

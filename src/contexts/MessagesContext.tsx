@@ -26,6 +26,7 @@ interface MessagesDataContextValue {
 interface MessagesActionsContextValue {
   setMessages: React.Dispatch<React.SetStateAction<ClaudeStreamMessage[]>>;
   appendMessage: (message: ClaudeStreamMessage) => void;
+  appendMessageImmediate: (message: ClaudeStreamMessage) => void;
   appendMessages: (messages: ClaudeStreamMessage[]) => void;
   setIsStreaming: React.Dispatch<React.SetStateAction<boolean>>;
   setFilterConfig: React.Dispatch<React.SetStateAction<MessageFilterConfig>>;
@@ -138,6 +139,15 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({
     appendBatchedRef.current!.enqueue(message);
   }, []);
 
+  const appendMessageImmediate = React.useCallback((message: ClaudeStreamMessage) => {
+    // 用户刚提交的 prompt 必须同步进入 UI。若继续走 rAF append 队列，极端时序下后续
+    // history/reset 直接 setMessages 可能覆盖尚未 flush 的 optimistic user message，
+    // 表现为“prompt 已发送但偶发不显示”。streaming 输出仍走 appendMessage 批处理。
+    batchedRef.current!.flushNow();
+    appendBatchedRef.current!.flushNow();
+    rawSetMessagesRef.current((prev) => prev.concat(message));
+  }, []);
+
   const appendMessages = React.useCallback((messages: ClaudeStreamMessage[]) => {
     if (messages.length === 0) return;
     batchedRef.current!.flushNow();
@@ -149,11 +159,12 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({
     () => ({
       setMessages: batchedSetMessages,
       appendMessage,
+      appendMessageImmediate,
       appendMessages,
       setIsStreaming,
       setFilterConfig,
     }),
-    [batchedSetMessages, appendMessage, appendMessages, setIsStreaming, setFilterConfig]
+    [batchedSetMessages, appendMessage, appendMessageImmediate, appendMessages, setIsStreaming, setFilterConfig]
   );
 
   // ✅ 性能优化: 数据独立缓存

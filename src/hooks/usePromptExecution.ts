@@ -84,6 +84,7 @@ interface UsePromptExecutionConfig {
   setError: (error: string | null) => void;
   setMessages: React.Dispatch<React.SetStateAction<ClaudeStreamMessage[]>>;
   appendMessage: (message: ClaudeStreamMessage) => void;
+  appendMessageImmediate: (message: ClaudeStreamMessage) => void;
   setClaudeSessionId: (id: string | null) => void;
   setLastTranslationResult: (result: TranslationResult | null) => void;
   setQueuedPrompts: React.Dispatch<React.SetStateAction<QueuedPrompt[]>>;
@@ -176,6 +177,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
     setError,
     setMessages,
     appendMessage,
+    appendMessageImmediate,
     setClaudeSessionId,
     setLastTranslationResult,
     setQueuedPrompts,
@@ -1872,7 +1874,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             ...(executionEngine === 'codex' ? { engine: 'codex' as const } : {}),
             ...(executionEngine === 'gemini' ? { engine: 'gemini' as const } : {})
           };
-          appendMessage(commandMessage);
+          appendMessageImmediate(commandMessage);
         } else {
           // 普通用户消息
           const userMessage: ClaudeStreamMessage = {
@@ -1895,7 +1897,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
               translatedText: userInputTranslation.translatedText
             } : undefined
           };
-          appendMessage(userMessage);
+          appendMessageImmediate(userMessage);
         }
       }
 
@@ -2076,6 +2078,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
     setError,
     setMessages,
     appendMessage,
+    appendMessageImmediate,
     setClaudeSessionId,
     setLastTranslationResult,
     setQueuedPrompts,
