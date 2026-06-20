@@ -18,7 +18,7 @@
  * PERCENT_USED = CURRENT_TOKENS * 100 / CONTEXT_SIZE
  */
 
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { getContextWindowSize } from '@/lib/tokenCounter';
 import { getRuntimeModelFromMessages } from '@/lib/claudeModelSelection';
 import { isSubagentMessage } from '@/lib/subagentGrouping';
@@ -35,6 +35,14 @@ export interface UseContextWindowUsageResult extends ContextWindowUsage {
   formattedPercentage: string;
   /** 格式化的 token 使用字符串 */
   formattedTokens: string;
+}
+
+interface ContextUsageCache {
+  result: UseContextWindowUsageResult;
+  lastMessageCount: number;
+  initialized: boolean;
+  model?: string;
+  engine?: string;
 }
 
 /**
@@ -192,12 +200,50 @@ export function useContextWindowUsage(
   model?: string,
   engine?: string
 ): UseContextWindowUsageResult {
-  return useMemo(() => {
-    // 上下文窗口只统计主对话：过滤掉子代理（Task）消息，避免子对话的 usage 把主对话统计带偏。
-    const mainMessages = messages.filter(m => !isSubagentMessage(m));
+  const cacheRef = useRef<ContextUsageCache>({
+    result: buildDefaultResult(getContextWindowSize(model, engine)),
+    lastMessageCount: 0,
+    initialized: false,
+    model,
+    engine,
+  });
 
+  return useMemo(() => {
     // 获取上下文窗口大小（根据引擎和模型）
     let contextWindowSize = getContextWindowSize(model, engine);
+    const cache = cacheRef.current;
+
+    if (messages.length === 0) {
+      const defaultResult = buildDefaultResult(contextWindowSize);
+      cache.result = defaultResult;
+      cache.lastMessageCount = 0;
+      cache.initialized = true;
+      cache.model = model;
+      cache.engine = engine;
+      return defaultResult;
+    }
+
+    if (messages.length < cache.lastMessageCount || cache.model !== model || cache.engine !== engine) {
+      cache.result = buildDefaultResult(contextWindowSize);
+      cache.lastMessageCount = 0;
+      cache.initialized = false;
+      cache.model = model;
+      cache.engine = engine;
+    }
+
+    // 普通流式文本增量不会改变 context usage、运行时 model 或 context window size。
+    // 先只扫描新增后缀是否含这些信号；没有就复用上次结果，避免每帧分配 mainMessages 并多次倒扫长历史。
+    const latestContextSignal = cache.initialized && messages.length > cache.lastMessageCount
+      ? findLatestContextUsageSignalInRange(messages, cache.lastMessageCount, engine)
+      : findLatestContextUsageSignalInRange(messages, 0, engine);
+
+    if (cache.initialized && !latestContextSignal && messages.length > cache.lastMessageCount) {
+      cache.lastMessageCount = messages.length;
+      return cache.result;
+    }
+
+    // 上下文窗口只统计主对话：过滤掉子代理（Task）消息，避免子对话的 usage 把主对话统计带偏。
+    const mainMessages = messages.filter(m => !isSubagentMessage(m));
 
     // Codex: prefer runtime-reported context window when available (token_count events)
     if (engine === 'codex') {
@@ -240,24 +286,15 @@ export function useContextWindowUsage(
     }
 
     // 默认返回值
-    const defaultResult: UseContextWindowUsageResult = {
-      currentTokens: 0,
-      contextWindowSize,
-      percentage: 0,
-      breakdown: {
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheCreationTokens: 0,
-        cacheReadTokens: 0,
-      },
-      level: 'low' as ContextUsageLevel,
-      hasData: false,
-      formattedPercentage: '0%',
-      formattedTokens: `0 / ${formatK(contextWindowSize)}`,
-    };
+    const defaultResult = buildDefaultResult(contextWindowSize);
 
     // 如果没有消息，返回默认值
     if (mainMessages.length === 0) {
+      cache.result = defaultResult;
+      cache.lastMessageCount = messages.length;
+      cache.initialized = true;
+      cache.model = model;
+      cache.engine = engine;
       return defaultResult;
     }
 
@@ -265,6 +302,11 @@ export function useContextWindowUsage(
     const currentUsage = extractCurrentUsage(mainMessages, engine, contextWindowSize);
 
     if (!currentUsage) {
+      cache.result = defaultResult;
+      cache.lastMessageCount = messages.length;
+      cache.initialized = true;
+      cache.model = model;
+      cache.engine = engine;
       return defaultResult;
     }
 
@@ -288,7 +330,7 @@ export function useContextWindowUsage(
     const formattedPercentage = `${percentage.toFixed(1)}%`;
     const formattedTokens = `${formatK(currentTokens)} / ${formatK(contextWindowSize)}`;
 
-    return {
+    const result: UseContextWindowUsageResult = {
       currentTokens,
       contextWindowSize,
       percentage,
@@ -303,8 +345,59 @@ export function useContextWindowUsage(
       formattedPercentage,
       formattedTokens,
     };
+
+    cache.result = result;
+    cache.lastMessageCount = messages.length;
+    cache.initialized = true;
+    cache.model = model;
+    cache.engine = engine;
+    return result;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, messages.length, model, engine]);
+}
+
+function buildDefaultResult(contextWindowSize: number): UseContextWindowUsageResult {
+  return {
+    currentTokens: 0,
+    contextWindowSize,
+    percentage: 0,
+    breakdown: {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+    },
+    level: 'low' as ContextUsageLevel,
+    hasData: false,
+    formattedPercentage: '0%',
+    formattedTokens: `0 / ${formatK(contextWindowSize)}`,
+  };
+}
+
+function hasContextUsageSignal(message: ClaudeStreamMessage, engine?: string): boolean {
+  if (isSubagentMessage(message)) return false;
+
+  const candidate = message as any;
+  if (candidate?.context_window?.current_usage) return true;
+  if (typeof candidate?.context_window?.context_window_size === 'number') return true;
+  if (typeof candidate?.context_window_size === 'number') return true;
+  if (typeof candidate?.codexMetadata?.modelContextWindow === 'number') return true;
+  if (typeof candidate?.model === 'string' || typeof candidate?.message?.model === 'string') return true;
+  return Boolean(getUsageCandidate(candidate, engine));
+}
+
+function findLatestContextUsageSignalInRange(
+  messages: ClaudeStreamMessage[],
+  startIndex: number,
+  engine?: string,
+): ClaudeStreamMessage | null {
+  const start = Math.max(0, Math.min(startIndex, messages.length));
+  for (let i = messages.length - 1; i >= start; i--) {
+    if (hasContextUsageSignal(messages[i], engine)) {
+      return messages[i];
+    }
+  }
+  return null;
 }
 
 /**

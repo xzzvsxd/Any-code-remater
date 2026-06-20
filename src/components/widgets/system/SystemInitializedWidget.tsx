@@ -5,7 +5,7 @@
  * 主组件 (~100行) + ToolsList 子组件 (~180行)
  */
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Settings, Fingerprint, Cpu, FolderOpen } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { ToolsList } from "./components/ToolsList";
@@ -24,11 +24,32 @@ export interface SystemInitializedWidgetProps {
 }
 
 /**
+ * 格式化时间戳
+ */
+const formatTimestamp = (timestamp: string | undefined): string => {
+  if (!timestamp) return '';
+
+  try {
+    const date = new Date(timestamp);
+    if (isNaN(date.getTime())) return '';
+
+    return date.toLocaleTimeString('en-US', {
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    });
+  } catch {
+    return '';
+  }
+};
+
+/**
  * 系统初始化 Widget
  *
  * 展示会话初始化信息，包括会话 ID、模型、工作目录和可用工具
  */
-export const SystemInitializedWidget: React.FC<SystemInitializedWidgetProps> = ({
+export const SystemInitializedWidget = React.memo<SystemInitializedWidgetProps>(({
   sessionId,
   model,
   cwd,
@@ -36,27 +57,7 @@ export const SystemInitializedWidget: React.FC<SystemInitializedWidgetProps> = (
   timestamp,
 }) => {
   const [mcpExpanded, setMcpExpanded] = useState(false);
-
-  /**
-   * 格式化时间戳
-   */
-  const formatTimestamp = (timestamp: string | undefined): string => {
-    if (!timestamp) return '';
-
-    try {
-      const date = new Date(timestamp);
-      if (isNaN(date.getTime())) return '';
-
-      return date.toLocaleTimeString('en-US', {
-        hour12: false,
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-      });
-    } catch {
-      return '';
-    }
-  };
+  const formattedTimestamp = useMemo(() => formatTimestamp(timestamp), [timestamp]);
 
   return (
     <Card className="border-blue-500/20 bg-blue-500/5">
@@ -67,9 +68,9 @@ export const SystemInitializedWidget: React.FC<SystemInitializedWidgetProps> = (
             {/* 头部 */}
             <div className="flex items-center justify-between">
               <h4 className="font-semibold text-sm">System Initialized</h4>
-              {formatTimestamp(timestamp) && (
+              {formattedTimestamp && (
                 <span className="text-xs text-muted-foreground font-mono">
-                  {formatTimestamp(timestamp)}
+                  {formattedTimestamp}
                 </span>
               )}
             </div>
@@ -118,4 +119,6 @@ export const SystemInitializedWidget: React.FC<SystemInitializedWidgetProps> = (
       </CardContent>
     </Card>
   );
-};
+});
+
+SystemInitializedWidget.displayName = 'SystemInitializedWidget';

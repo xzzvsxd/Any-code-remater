@@ -22,6 +22,21 @@ const userMessageSource = readFileSync(
   'utf8',
 );
 
+const thinkingBlockSource = readFileSync(
+  resolve(process.cwd(), 'src/components/message/ThinkingBlock.tsx'),
+  'utf8',
+);
+
+const sessionMessagesSource = readFileSync(
+  resolve(process.cwd(), 'src/components/session/SessionMessages.tsx'),
+  'utf8',
+);
+
+const animationsCssSource = readFileSync(
+  resolve(process.cwd(), 'src/styles/animations.css'),
+  'utf8',
+);
+
 describe('message render safety wiring', () => {
   test('MessageContent gates typewriter and huge markdown through safety policies', () => {
     expect(messageContentSource).toContain('shouldUseIncrementalTypewriter');
@@ -43,5 +58,19 @@ describe('message render safety wiring', () => {
   test('UserMessage detects long prompts with bounded line scanning', () => {
     expect(userMessageSource).toContain('countLinesUpTo');
     expect(userMessageSource).not.toContain(".split('\\n').length");
+  });
+
+  test('streaming message row cursors avoid continuous pulse animations', () => {
+    expect(messageContentSource).not.toContain('animate-pulse');
+    expect(thinkingBlockSource).not.toContain('animate-pulse');
+    expect(codePreviewSource).not.toContain('animate-pulse');
+  });
+
+  test('message scroll container disables continuous Tailwind animations inside streamed history', () => {
+    expect(sessionMessagesSource).toContain('session-message-scroll');
+    expect(animationsCssSource).toContain('.session-message-scroll .animate-spin');
+    expect(animationsCssSource).toContain('.session-message-scroll .animate-pulse');
+    expect(animationsCssSource).toContain('.session-message-scroll .animate-bounce');
+    expect(animationsCssSource).toContain('animation: none !important');
   });
 });

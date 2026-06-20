@@ -44,7 +44,12 @@ import { codexConverter } from '@/lib/codexConverter';
 import { convertGeminiSessionDetailToClaudeMessages } from '@/lib/geminiConverter';
 import { formatClaudeModelLabel, resolveClaudeContinuationModel } from '@/lib/claudeModelSelection';
 import { buildQueueStorageKey, loadQueuedPrompts, saveQueuedPrompts } from '@/lib/queuedPromptsStore';
-import { buildPromptIndexByMessage, getPromptIndexForDisplayableMessage, getBranchPromptIndexForDisplayableMessage } from '@/lib/promptIndex';
+import {
+  buildBranchPromptIndexByMessage,
+  buildPromptIndexByMessage,
+  getBranchPromptIndexForDisplayableMessage,
+  getPromptIndexForDisplayableMessage,
+} from '@/lib/promptIndex';
 import { loadUiOnlySessionMessages, mergeUiOnlySessionMessages, pruneUiOnlySessionMessagesAfter } from '@/lib/uiOnlySessionEvents';
 import { prepareRecentProjects } from '@/lib/recentProjects';
 import { safeRandomUUID } from '@/lib/browserCompat';
@@ -1253,13 +1258,18 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   }, [effectiveSession, projectPath, claudeSettings?.hideWarmupMessages, executionEngineConfig.engine]);
 
   // 🌿 计算某条消息（任意类型）可用的分支 promptIndex；-1 表示不可分支
+  const branchPromptIndexByMessage = useMemo(
+    () => buildBranchPromptIndexByMessage(visibleMessages),
+    [visibleMessages]
+  );
   const getBranchPromptIndexForMessage = useCallback((displayableIndex: number): number => {
     return getBranchPromptIndexForDisplayableMessage(
       visibleMessages,
       displayableMessages,
       displayableIndex,
+      branchPromptIndexByMessage,
     );
-  }, [visibleMessages, displayableMessages]);
+  }, [visibleMessages, displayableMessages, branchPromptIndexByMessage]);
 
   // 🌿 从某条消息分叉出一个新会话（真分支）：原会话保留，新会话在新 tab 打开
   const handleBranch = useCallback(async (promptIndex: number) => {

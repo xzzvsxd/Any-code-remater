@@ -87,7 +87,7 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
           {textToDisplay}
           {/* 打字中光标 */}
           {isTyping && (
-            <span className="inline-block w-1 h-3 ml-0.5 bg-amber-500 animate-pulse rounded-sm" />
+            <span className="inline-block w-1 h-3 ml-0.5 bg-amber-500 rounded-sm" />
           )}
         </>
       );
@@ -105,7 +105,7 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
         <span>{part.trim()}</span>
         {/* 只在最后一部分且正在打字时显示光标 */}
         {index === parts.length - 1 && isTyping && (
-          <span className="inline-block w-1 h-3 ml-0.5 bg-amber-500 animate-pulse rounded-sm" />
+          <span className="inline-block w-1 h-3 ml-0.5 bg-amber-500 rounded-sm" />
         )}
       </React.Fragment>
     ));
@@ -147,7 +147,7 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
 
         {/* 打字中指示器 */}
         {isTyping && (
-          <span className="inline-block w-1.5 h-3 bg-amber-500 animate-pulse rounded-full" />
+          <span className="inline-block w-1.5 h-3 bg-amber-500 rounded-full" />
         )}
 
         <span className="ml-auto flex items-center gap-2">

@@ -283,7 +283,7 @@ const MessageContentComponent: React.FC<MessageContentProps> = ({
       onDoubleClick={handleDoubleClick}
       title={isTyping ? "双击跳过打字效果" : undefined}
     >
-      {shouldRenderMarkdownAsPlainText(textToDisplay) ? (
+      {shouldRenderMarkdownAsPlainText(textToDisplay, { isStreaming }) ? (
         <LargePlainTextContent content={textToDisplay} />
       ) : (
         <ErrorBoundary
@@ -419,8 +419,8 @@ const MessageContentComponent: React.FC<MessageContentProps> = ({
           className={cn(
             "inline-block w-1.5 h-4 ml-1 rounded-full",
             isTyping
-              ? "bg-primary animate-pulse"
-              : "bg-primary/50 animate-pulse"
+              ? "bg-primary"
+              : "bg-primary/50"
           )}
         />
       )}

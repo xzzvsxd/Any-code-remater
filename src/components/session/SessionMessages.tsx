@@ -224,7 +224,10 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       const MAX_DURATION = 2400; // ms 超时上限，覆盖大会话的渐进重测
       const MIN_SETTLE_DURATION = 800; // ms 最短稳定窗口，覆盖代码高亮/折叠块等延迟测高
       const STABLE_FRAMES = 4;   // 连续稳定帧数
-      const BOTTOM_THRESHOLD = 16; // 与 streaming 粘底死区一致，吸收 WebKit/虚拟列表微抖
+      // 历史/空闲初始置底必须比 streaming 粘底更严格。
+      // 16px 死区适合吸收流式微抖，但初次进入会话时会把 2~16px 的晚到测高漂移误判为
+      // “已贴底”，从而留下肉眼可见的底部空隙/上弹。这里仅保留 2px 亚像素容差。
+      const INITIAL_BOTTOM_THRESHOLD = 2;
       let stableCount = 0;
       let lastScrollHeight = -1;
 
@@ -242,7 +245,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
           stableFrames: STABLE_FRAMES,
           elapsedMs: performance.now() - startTs,
           minSettleMs: MIN_SETTLE_DURATION,
-          bottomThresholdPx: BOTTOM_THRESHOLD,
+          bottomThresholdPx: INITIAL_BOTTOM_THRESHOLD,
         });
         lastScrollHeight = scrollHeight;
         stableCount = decision.nextStableCount;
@@ -412,7 +415,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
     // 消息区域现在是 Flex 容器的一部分，自然与输入区域分离
     <div
       ref={parentRef}
-      className="flex-1 overflow-y-auto relative"
+      className="session-message-scroll flex-1 overflow-y-auto relative"
       onWheelCapture={cancelBottomScrollLoop}
       onTouchStartCapture={cancelBottomScrollLoop}
       onPointerDownCapture={cancelBottomScrollLoop}

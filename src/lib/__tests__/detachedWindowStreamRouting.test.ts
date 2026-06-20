@@ -26,16 +26,18 @@ describe('detached session window stream routing contract', () => {
     const attachBody = source.slice(attachStart, attachEnd);
 
     const markAttachedIndex = attachBody.indexOf('hasAttachedSessionListeners = true;');
-    const outputListenIndex = attachBody.indexOf('const specificOutputUnlisten = await listen');
-    const completeListenIndex = attachBody.indexOf('const specificCompleteUnlisten = await listen');
+    const outputListenIndex = attachBody.indexOf('const specificOutputUnlisten = registerSessionUnlisten(await listen');
+    const completeListenIndex = attachBody.indexOf('const specificCompleteUnlisten = registerSessionUnlisten(await listen');
 
+    expect(outputListenIndex).toBeGreaterThanOrEqual(0);
+    expect(completeListenIndex).toBeGreaterThanOrEqual(0);
     expect(markAttachedIndex).toBeGreaterThan(outputListenIndex);
     expect(markAttachedIndex).toBeGreaterThan(completeListenIndex);
   });
 
   test('decides whether a global Claude output is fallback-eligible when the event is received, not later when the queue consumes it', () => {
     const source = readSource('src/hooks/usePromptExecution.ts');
-    const genericStart = source.indexOf("const genericOutputUnlisten = await listen<ClaudeGlobalEventPayload<string | string[]>>('claude-output'");
+    const genericStart = source.indexOf("const genericOutputUnlisten = registerRuntimeUnlisten(await listen<ClaudeGlobalEventPayload<string | string[]>>('claude-output'");
     const genericEnd = source.indexOf('// 🔒 CRITICAL FIX: 全局事件现在格式为 { tab_id: string | null, payload: string }', genericStart + 1);
     const genericBody = source.slice(genericStart, genericEnd);
 

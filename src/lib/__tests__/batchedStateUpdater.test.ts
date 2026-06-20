@@ -3,6 +3,7 @@ import {
   createBatchedAppendUpdater,
   createBatchedUpdater,
 } from '../stream/batchedStateUpdater';
+import { readFileSync } from 'node:fs';
 
 type RafCallback = FrameRequestCallback;
 
@@ -60,6 +61,12 @@ describe('batched state updaters', () => {
     expect(runNextFrame()).toBe(true);
     expect(state).toEqual([1, 2, 3]);
     expect(rafCallbacks.size).toBe(0);
+  });
+
+  test('keeps the default generic updater frame budget low enough for long histories', () => {
+    const source = readFileSync('src/lib/stream/batchedStateUpdater.ts', 'utf8');
+
+    expect(source).toContain('const DEFAULT_MAX_UPDATES_PER_FRAME = 16');
   });
 
   test('coalesces append-only updates into one concat per frame', () => {

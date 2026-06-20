@@ -6,6 +6,7 @@ type PromptContentItem = {
 };
 
 export type PromptIndexByMessage = WeakMap<object, number>;
+export type BranchPromptIndexByMessage = WeakMap<object, number>;
 
 /**
  * 提取后端 prompt_tracker 会计数的用户文本。
@@ -104,6 +105,33 @@ export function buildPromptIndexByMessage(
   return promptIndexByMessage;
 }
 
+export function buildBranchPromptIndexByMessage(
+  messages: Array<ClaudeStreamMessage | unknown>,
+): BranchPromptIndexByMessage {
+  const branchIndexByMessage: BranchPromptIndexByMessage = new WeakMap();
+  let promptIndex = 0;
+  let hasSeenTrackedPrompt = false;
+
+  for (const message of messages) {
+    if (typeof message !== 'object' || message === null) continue;
+
+    if (isTrackedUserPrompt(message)) {
+      // 点在 user prompt 上：分支回到该 prompt 之前，允许重写这一问。
+      branchIndexByMessage.set(message, promptIndex);
+      promptIndex += 1;
+      hasSeenTrackedPrompt = true;
+      continue;
+    }
+
+    if (hasSeenTrackedPrompt) {
+      // 点在 assistant / 中断 / 其他非 prompt 节点上：保留到最近一轮之后。
+      branchIndexByMessage.set(message, promptIndex);
+    }
+  }
+
+  return branchIndexByMessage;
+}
+
 /**
  * displayableMessages 是 messages 的过滤视图。这里先用对象引用找回完整
  * messages 中的真实位置，再交给 getPromptIndexForMessageInList 计算。
@@ -166,9 +194,14 @@ export function getBranchPromptIndexForDisplayableMessage(
   messages: Array<ClaudeStreamMessage | unknown>,
   displayableMessages: Array<ClaudeStreamMessage | unknown>,
   displayableIndex: number,
+  branchIndexByMessage?: BranchPromptIndexByMessage,
 ): number {
   const displayableMessage = displayableMessages[displayableIndex];
   if (!displayableMessage) return -1;
+
+  if (branchIndexByMessage && typeof displayableMessage === 'object') {
+    return branchIndexByMessage.get(displayableMessage) ?? -1;
+  }
 
   const actualIndex = messages.findIndex((message) => message === displayableMessage);
   return getBranchPromptIndexForMessageInList(messages, actualIndex);

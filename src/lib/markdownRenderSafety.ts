@@ -2,6 +2,8 @@ export const MAX_SYNTAX_HIGHLIGHT_CHARS = 80_000;
 export const MAX_SYNTAX_HIGHLIGHT_LINES = 2_000;
 export const MAX_MARKDOWN_RENDER_CHARS = 120_000;
 export const MAX_MARKDOWN_RENDER_LINES = 3_000;
+export const MAX_STREAMING_MARKDOWN_RENDER_CHARS = 24_000;
+export const MAX_STREAMING_MARKDOWN_RENDER_LINES = 800;
 export const MAX_INCREMENTAL_TYPEWRITER_CHARS = 12_000;
 export const MAX_INCREMENTAL_TYPEWRITER_LINES = 200;
 export const MAX_INCREMENTAL_TYPEWRITER_LINE_CHARS = 2_000;
@@ -11,6 +13,12 @@ export interface IncrementalTypewriterOptions {
   maxChars?: number;
   maxLines?: number;
   maxLineChars?: number;
+}
+
+export interface MarkdownRenderOptions {
+  isStreaming?: boolean;
+  maxChars?: number;
+  maxLines?: number;
 }
 
 export interface BoundedLineCount {
@@ -62,12 +70,30 @@ export function shouldRenderCodeBlockAsPlainText(code: string): boolean {
  * WebKitGTK 下容易把 renderer 主线程拖成白屏。超过阈值时改走“有界纯文本预览”，
  * 保留复制/展开能力，但默认不构造庞大的 Markdown AST/DOM。
  */
-export function shouldRenderMarkdownAsPlainText(content: string): boolean {
-  if (content.length > MAX_MARKDOWN_RENDER_CHARS) {
+export function shouldRenderMarkdownAsPlainText(
+  content: string,
+  options: MarkdownRenderOptions = {},
+): boolean {
+  const maxChars = Math.max(
+    1,
+    Math.floor(
+      options.maxChars
+      ?? (options.isStreaming ? MAX_STREAMING_MARKDOWN_RENDER_CHARS : MAX_MARKDOWN_RENDER_CHARS),
+    ),
+  );
+  const maxLines = Math.max(
+    1,
+    Math.floor(
+      options.maxLines
+      ?? (options.isStreaming ? MAX_STREAMING_MARKDOWN_RENDER_LINES : MAX_MARKDOWN_RENDER_LINES),
+    ),
+  );
+
+  if (content.length > maxChars) {
     return true;
   }
 
-  return countLinesUpTo(content, MAX_MARKDOWN_RENDER_LINES).exceeded;
+  return countLinesUpTo(content, maxLines).exceeded;
 }
 
 /**

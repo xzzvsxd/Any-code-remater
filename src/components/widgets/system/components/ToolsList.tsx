@@ -4,7 +4,7 @@
  * 从 SystemInitializedWidget 中提取，用于展示可用工具列表
  */
 
-import React from "react";
+import React, { useMemo } from "react";
 import { Wrench, Package, Package2, ChevronDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -49,24 +49,33 @@ const formatMcpToolName = (toolName: string) => {
 /**
  * 工具列表展示组件
  */
-export const ToolsList: React.FC<ToolsListProps> = ({
+export const ToolsList = React.memo<ToolsListProps>(({
   tools,
   mcpExpanded,
   onMcpToggle,
 }) => {
   // 分离常规工具和 MCP 工具
-  const regularTools = tools.filter(tool => !tool.startsWith('mcp__'));
-  const mcpTools = tools.filter(tool => tool.startsWith('mcp__'));
+  const regularTools = useMemo(
+    () => tools.filter(tool => !tool.startsWith('mcp__')),
+    [tools]
+  );
+  const mcpTools = useMemo(
+    () => tools.filter(tool => tool.startsWith('mcp__')),
+    [tools]
+  );
 
   // 按提供商分组 MCP 工具
-  const mcpToolsByProvider = mcpTools.reduce((acc, tool) => {
-    const { provider } = formatMcpToolName(tool);
-    if (!acc[provider]) {
-      acc[provider] = [];
-    }
-    acc[provider].push(tool);
-    return acc;
-  }, {} as Record<string, string[]>);
+  const mcpToolsByProvider = useMemo(
+    () => mcpTools.reduce((acc, tool) => {
+      const { provider } = formatMcpToolName(tool);
+      if (!acc[provider]) {
+        acc[provider] = [];
+      }
+      acc[provider].push(tool);
+      return acc;
+    }, {} as Record<string, string[]>),
+    [mcpTools]
+  );
 
   if (tools.length === 0) {
     return (
@@ -147,4 +156,6 @@ export const ToolsList: React.FC<ToolsListProps> = ({
       )}
     </div>
   );
-};
+});
+
+ToolsList.displayName = 'ToolsList';

@@ -149,3 +149,18 @@
 .image-move-to-input {
   animation: moveToInput 0.8s ease-in-out forwards;
 }
+
+/*
+ * Linux/WebKitGTK hardening:
+ * The session history is a virtualized scroll container that can hold large
+ * Markdown, syntax highlighted code, and tool widgets. Continuous Tailwind
+ * animations inside that container (spinners/pulses/bounces) force repeated
+ * repaint/compositing work even when the assistant is only "thinking" with no
+ * new output. Keep settings/sidebar animations intact, but make streamed
+ * history rows static to prevent renderer jank/freezes.
+ */
+.session-message-scroll .animate-spin,
+.session-message-scroll .animate-pulse,
+.session-message-scroll .animate-bounce {
+  animation: none !important;
+}

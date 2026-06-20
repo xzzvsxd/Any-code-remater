@@ -39,6 +39,9 @@ export function extractTaggedThinkingFromText(rawText: unknown): TaggedThinkingE
   if (!originalText) {
     return { text: '', thinkingBlocks: [] };
   }
+  if (!/<thinking>/i.test(originalText)) {
+    return { text: originalText.trim(), thinkingBlocks: [] };
+  }
 
   const thinkingBlocks: string[] = [];
 

@@ -40,6 +40,9 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           "tag=v$version" >> $env:GITHUB_OUTPUT
 
+      - name: Verify release version metadata
+        run: node scripts/verify-release-version.mjs "${{ steps.version.outputs.version }}"
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -47,9 +50,11 @@ jobs:
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
+        continue-on-error: true
         with:
           workspaces: "./src-tauri -> target"
           key: windows-x86_64-pc-windows-msvc-rust-${{ hashFiles('**/Cargo.lock') }}
+          save-if: ${{ false }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2

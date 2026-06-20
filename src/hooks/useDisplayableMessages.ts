@@ -11,7 +11,7 @@ import type { ClaudeStreamMessage } from '@/types/claude';
 /**
  * 过滤选项
  */
-interface DisplayableMessagesOptions {
+export interface DisplayableMessagesOptions {
   /** 是否隐藏 Warmup 消息及其回复 */
   hideWarmupMessages?: boolean;
   /** 是否隐藏启动期间的系统警告消息 */
@@ -89,6 +89,140 @@ function isWarmupMessage(message: ClaudeStreamMessage): boolean {
   return trimmedText.toLowerCase().startsWith('warmup');
 }
 
+const TOOLS_WITH_DEDICATED_WIDGETS = new Set([
+  'task',
+  'edit',
+  'multiedit',
+  'todowrite',
+  'ls',
+  'read',
+  'glob',
+  'bash',
+  'write',
+  'grep',
+]);
+
+function shouldSkipToolResultForToolUse(toolUse: any): boolean {
+  const toolName = typeof toolUse?.name === 'string' ? toolUse.name : '';
+  const normalizedToolName = toolName.toLowerCase();
+  return TOOLS_WITH_DEDICATED_WIDGETS.has(normalizedToolName) || toolName.startsWith('mcp__');
+}
+
+function rememberSkippableToolUses(message: ClaudeStreamMessage, skippableToolUseIds: Set<string>): void {
+  if (message.type !== 'assistant') return;
+  const content = message.message?.content;
+  if (!Array.isArray(content)) return;
+
+  for (const item of content) {
+    if (item?.type !== 'tool_use' || !item.id) continue;
+    if (shouldSkipToolResultForToolUse(item)) {
+      skippableToolUseIds.add(item.id);
+    }
+  }
+}
+
+function buildWarmupHiddenIndices(messages: ClaudeStreamMessage[], hideWarmupMessages: boolean): Set<number> {
+  const warmupIndices = new Set<number>();
+  if (!hideWarmupMessages) return warmupIndices;
+
+  messages.forEach((msg, idx) => {
+    if (isWarmupMessage(msg)) {
+      warmupIndices.add(idx);
+      // 找到紧跟其后的 assistant 回复（Warmup 的响应）
+      if (idx + 1 < messages.length && messages[idx + 1].type === 'assistant') {
+        warmupIndices.add(idx + 1);
+      }
+    }
+  });
+
+  return warmupIndices;
+}
+
+function hasVisibleUserContent(message: ClaudeStreamMessage, skippableToolUseIds: Set<string>): boolean {
+  const msg = message.message;
+  if (!msg) return true;
+
+  // 检查是否有空内容
+  if (!msg.content || (Array.isArray(msg.content) && msg.content.length === 0)) {
+    return false;
+  }
+
+  if (!Array.isArray(msg.content)) {
+    return true;
+  }
+
+  for (const content of msg.content) {
+    // 如果有文本内容，保留消息
+    if (content.type === 'text') {
+      return true;
+    }
+
+    // 工具结果只在「此前已看到」对应 tool_use 且该工具已有专用 Widget 时跳过。
+    // 旧实现对每个 tool_result 从当前位置回扫全部历史；长会话/大量工具输出会把过滤变成
+    // O(n * gap) 主线程长任务。这里随线性扫描维护已见 tool_use 索引，语义仍等价于“只看前文”。
+    if (content.type === 'tool_result') {
+      const toolUseId = content.tool_use_id;
+      if (!toolUseId || !skippableToolUseIds.has(toolUseId)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+export function filterDisplayableMessages(
+  messages: ClaudeStreamMessage[],
+  options: DisplayableMessagesOptions = {},
+): ClaudeStreamMessage[] {
+  // 默认隐藏 Warmup（undefined 时为 true），只有明确设置为 false 时才显示
+  const hideWarmupMessages = options.hideWarmupMessages !== false;
+  // 默认隐藏启动警告（undefined 时为 true）
+  const hideStartupWarnings = options.hideStartupWarnings !== false;
+  const warmupIndices = buildWarmupHiddenIndices(messages, hideWarmupMessages);
+  const skippableToolUseIds = new Set<string>();
+  const displayableMessages: ClaudeStreamMessage[] = [];
+
+  messages.forEach((message, index) => {
+    let shouldDisplay = true;
+
+    // 规则 0：隐藏 Warmup 消息及其回复
+    if (hideWarmupMessages && warmupIndices.has(index)) {
+      shouldDisplay = false;
+    }
+
+    // 规则 0.5：隐藏启动期间的系统警告消息
+    if (shouldDisplay && hideStartupWarnings && isStartupWarningMessage(message)) {
+      shouldDisplay = false;
+    }
+
+    // 规则 1：跳过没有实际内容的元消息
+    if (shouldDisplay && message.isMeta && !message.leafUuid && !message.summary) {
+      shouldDisplay = false;
+    }
+
+    // 规则 2 & 3：处理用户消息
+    if (shouldDisplay && message.type === 'user' && message.message) {
+      // 跳过元消息标记的用户消息
+      if (message.isMeta) {
+        shouldDisplay = false;
+      } else if (!hasVisibleUserContent(message, skippableToolUseIds)) {
+        shouldDisplay = false;
+      }
+    }
+
+    if (shouldDisplay) {
+      displayableMessages.push(message);
+    }
+
+    // 必须在当前消息判定之后记录 tool_use：旧逻辑只回看 index - 1 之前的消息，
+    // 不能让同条消息或未来消息影响当前 tool_result 的可见性。
+    rememberSkippableToolUses(message, skippableToolUseIds);
+  });
+
+  return displayableMessages;
+}
+
 /**
  * 过滤出可显示的消息
  *
@@ -110,129 +244,7 @@ export function useDisplayableMessages(
   messages: ClaudeStreamMessage[],
   options: DisplayableMessagesOptions = {}
 ): ClaudeStreamMessage[] {
-  // 默认隐藏 Warmup（undefined 时为 true），只有明确设置为 false 时才显示
-  const hideWarmupMessages = options.hideWarmupMessages !== false;
-  // 默认隐藏启动警告（undefined 时为 true）
-  const hideStartupWarnings = options.hideStartupWarnings !== false;
-
   return useMemo(() => {
-    // 如果需要隐藏 Warmup，先找到所有 Warmup 消息的索引
-    const warmupIndices = new Set<number>();
-
-    if (hideWarmupMessages) {
-      messages.forEach((msg, idx) => {
-        if (isWarmupMessage(msg)) {
-          warmupIndices.add(idx);
-          // 找到紧跟其后的 assistant 回复（Warmup 的响应）
-          if (idx + 1 < messages.length && messages[idx + 1].type === 'assistant') {
-            warmupIndices.add(idx + 1);
-          }
-        }
-      });
-      
-    }
-
-    return messages.filter((message, index) => {
-      // 规则 0：隐藏 Warmup 消息及其回复
-      if (hideWarmupMessages && warmupIndices.has(index)) {
-        return false;
-      }
-      // 规则 0.5：隐藏启动期间的系统警告消息
-      if (hideStartupWarnings && isStartupWarningMessage(message)) {
-        return false;
-      }
-      // 规则 1：跳过没有实际内容的元消息
-      if (message.isMeta && !message.leafUuid && !message.summary) {
-        return false;
-      }
-
-      // 规则 2 & 3：处理用户消息
-      if (message.type === 'user' && message.message) {
-        // 跳过元消息标记的用户消息
-        if (message.isMeta) return false;
-
-        const msg = message.message;
-
-        // 检查是否有空内容
-        if (!msg.content || (Array.isArray(msg.content) && msg.content.length === 0)) {
-          return false;
-        }
-
-        // 检查是否只包含工具结果
-        if (Array.isArray(msg.content)) {
-          let hasVisibleContent = false;
-
-          for (const content of msg.content) {
-            // 如果有文本内容，保留消息
-            if (content.type === 'text') {
-              hasVisibleContent = true;
-              break;
-            }
-
-            // 检查工具结果是否会被跳过（已在 assistant 消息中显示）
-            if (content.type === 'tool_result') {
-              let willBeSkipped = false;
-
-              if (content.tool_use_id) {
-                // 向前查找匹配的 tool_use
-                for (let i = index - 1; i >= 0; i--) {
-                  const prevMsg = messages[i];
-
-                  if (
-                    prevMsg.type === 'assistant' &&
-                    prevMsg.message?.content &&
-                    Array.isArray(prevMsg.message.content)
-                  ) {
-                    const toolUse = prevMsg.message.content.find(
-                      (c: any) => c.type === 'tool_use' && c.id === content.tool_use_id
-                    );
-
-                    if (toolUse) {
-                      const toolName = toolUse.name?.toLowerCase();
-
-                      // 这些工具有专用的 Widget，结果不需要单独显示
-                      const toolsWithWidgets = [
-                        'task',
-                        'edit',
-                        'multiedit',
-                        'todowrite',
-                        'ls',
-                        'read',
-                        'glob',
-                        'bash',
-                        'write',
-                        'grep'
-                      ];
-
-                      if (
-                        toolsWithWidgets.includes(toolName) ||
-                        toolUse.name?.startsWith('mcp__')
-                      ) {
-                        willBeSkipped = true;
-                      }
-                      break;
-                    }
-                  }
-                }
-              }
-
-              // 如果工具结果不会被跳过，说明有可见内容
-              if (!willBeSkipped) {
-                hasVisibleContent = true;
-                break;
-              }
-            }
-          }
-
-          // 如果没有可见内容，过滤掉这条消息
-          if (!hasVisibleContent) {
-            return false;
-          }
-        }
-      }
-
-      // 其他情况保留消息
-      return true;
-    });
-  }, [messages, hideWarmupMessages, hideStartupWarnings]);
+    return filterDisplayableMessages(messages, options);
+  }, [messages, options.hideWarmupMessages, options.hideStartupWarnings]);
 }

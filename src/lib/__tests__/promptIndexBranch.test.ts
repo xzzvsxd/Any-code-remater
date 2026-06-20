@@ -1,5 +1,9 @@
 ﻿import { describe, expect, test } from 'vitest';
-import { getBranchPromptIndexForMessageInList } from '../promptIndex';
+import {
+  buildBranchPromptIndexByMessage,
+  getBranchPromptIndexForDisplayableMessage,
+  getBranchPromptIndexForMessageInList,
+} from '../promptIndex';
 
 const user = (text: string) => ({
   type: 'user',
@@ -34,5 +38,22 @@ describe('branch prompt index mapping', () => {
     const messages = [assistant('system preface'), user('first')];
 
     expect(getBranchPromptIndexForMessageInList(messages, 0)).toBe(-1);
+  });
+
+  test('precomputes branch prompt indexes for O(1) virtual row rendering', () => {
+    const messages = [
+      assistant('system preface'),
+      user('first'),
+      assistant('first answer'),
+      user('second'),
+      assistant('second answer'),
+    ];
+    const branchIndexByMessage = buildBranchPromptIndexByMessage(messages);
+
+    expect(getBranchPromptIndexForDisplayableMessage(messages, messages, 0, branchIndexByMessage)).toBe(-1);
+    expect(getBranchPromptIndexForDisplayableMessage(messages, messages, 1, branchIndexByMessage)).toBe(0);
+    expect(getBranchPromptIndexForDisplayableMessage(messages, messages, 2, branchIndexByMessage)).toBe(1);
+    expect(getBranchPromptIndexForDisplayableMessage(messages, messages, 3, branchIndexByMessage)).toBe(1);
+    expect(getBranchPromptIndexForDisplayableMessage(messages, messages, 4, branchIndexByMessage)).toBe(2);
   });
 });

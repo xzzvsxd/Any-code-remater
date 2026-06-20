@@ -34,6 +34,13 @@ describe('markdown render safety', () => {
     expect(shouldRenderMarkdownAsPlainText(Array.from({ length: 3_001 }, () => 'line').join('\n'))).toBe(true);
   });
 
+  test('uses stricter plain-text fallback for large streaming markdown before it can freeze WebKit', () => {
+    const mediumMarkdown = 'x'.repeat(24_001);
+
+    expect(shouldRenderMarkdownAsPlainText(mediumMarkdown)).toBe(false);
+    expect(shouldRenderMarkdownAsPlainText(mediumMarkdown, { isStreaming: true })).toBe(true);
+  });
+
   test('counts lines with an upper bound for collapsed huge content summaries', () => {
     expect(countLinesUpTo('a\nb\nc', 10)).toEqual({ lineCount: 3, exceeded: false });
     expect(countLinesUpTo(Array.from({ length: 20 }, () => 'x').join('\n'), 5)).toEqual({

@@ -30,6 +30,8 @@ import { normalizeStreamLines, AsyncQueue, consumeYielding } from '@/lib/stream'
 import { safeRandomUUID } from '@/lib/browserCompat';
 import { resolveClaudeExecutionMode, shouldAcceptClaudeGlobalMessage, shouldAttachClaudeSessionListeners } from '@/lib/claudeExecutionRouting';
 import { resolveExecutionRunTabId } from '@/lib/executionRunTabId';
+import { createTerminalEventGate } from '@/lib/terminalEventGate';
+import { createCrossChannelDuplicateGuard } from '@/lib/stream/crossChannelDuplicateGuard';
 
 // ============================================================================
 // Type Definitions
@@ -217,15 +219,28 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
     isFirstPrompt,
   });
 
+  const safeRuntimeUnlisten = useCallback((unlisten: UnlistenFn) => {
+    if (!unlisten || typeof unlisten !== 'function') {
+      return;
+    }
+
+    try {
+      unlisten();
+    } catch (error) {
+      console.warn('[usePromptExecution] Failed to remove runtime listener:', error);
+    }
+  }, []);
+
   const cleanupRuntimeListeners = useCallback(() => {
-    unlistenRefs.current.forEach((unlisten) => {
-      if (unlisten && typeof unlisten === 'function') {
-        unlisten();
-      }
-    });
+    unlistenRefs.current.forEach(safeRuntimeUnlisten);
     unlistenRefs.current = [];
     isListeningRef.current = false;
-  }, [unlistenRefs, isListeningRef]);
+  }, [unlistenRefs, isListeningRef, safeRuntimeUnlisten]);
+
+  const registerRuntimeUnlisten = useCallback((unlisten: UnlistenFn) => {
+    unlistenRefs.current.push(unlisten);
+    return unlisten;
+  }, [unlistenRefs]);
 
   const bindCancelSessionId = useCallback((sessionId: string | null) => {
     const safeSessionId = sessionId?.trim() || null;
@@ -410,6 +425,8 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
       appendMessage(message);
     };
 
+    const activeTaskQueues: Array<{ done: () => void }> = [];
+
     try {
       setIsLoading(true);
       setError(null);
@@ -442,6 +459,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
       let codexPendingPromptRecord: PendingPromptRecord | null = null;
       let geminiPendingPromptRecord: PendingPromptRecord | null = null;
       let hasNotifiedCompletion = false;
+      const terminalEventGate = createTerminalEventGate();
       const isCurrentRunEventTab = (eventTabId: string | null) => eventTabId === tabIdRef.current;
 
       const notifyCompletionIfIdle = async (
@@ -553,7 +571,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
       if (!isListeningRef.current && isActive) {
         // Clean up previous listeners
-        unlistenRefs.current.forEach(unlisten => unlisten && typeof unlisten === 'function' && unlisten());
+        unlistenRefs.current.forEach(safeRuntimeUnlisten);
         unlistenRefs.current = [];
 
         // Mark as setting up listeners
@@ -573,14 +591,15 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
           // 🔧 FIX: Track current Codex session ID for channel isolation
           let currentCodexSessionId: string | null = null;
-          // 🔧 FIX: Track processed message IDs to prevent duplicates
-          const processedCodexMessages = new Set<string>();
+          // 🔧 FIX: Drop global/session overlap duplicates without dropping repeated deltas from one channel.
+          const codexDuplicateGuard = createCrossChannelDuplicateGuard<'global' | 'session'>();
           // 🔧 FIX: Track pending prompt recording Promise to avoid race condition
           let pendingPromptRecordingPromise: Promise<void> | null = null;
 
           // 🚀 修复 Linux/WebKit「前端卡死、后端仍在跑」（Codex 主发送路径）：见 Claude 路径同款注释。
           // 回调只把处理逻辑包成 thunk 入队（同步瞬时返回），消费循环串行 await，不阻塞 event loop。
           const codexTaskQueue = new AsyncQueue<() => Promise<void>>();
+          activeTaskQueues.push(codexTaskQueue);
           (async () => {
             try {
               await consumeYielding(
@@ -606,15 +625,14 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           };
 
           // Helper function to process Codex output
-          const processCodexOutputLine = async (payload: string) => {
+          const processCodexOutputLine = async (payload: string, source: 'global' | 'session') => {
             if (!isMountedRef.current) return;
 
-            // 🔧 FIX: Deduplicate messages
+            // 🔧 FIX: Deduplicate only global/session overlap; identical same-channel deltas are valid.
             const messageId = getCodexMessageId(payload);
-            if (processedCodexMessages.has(messageId)) {
+            if (!codexDuplicateGuard.shouldProcess(messageId, source)) {
               return;
             }
-            processedCodexMessages.add(messageId);
 
             // 🔧 CRITICAL FIX: Parse JSONL to detect turn.completed event
             let isTurnCompleted = false;
@@ -695,14 +713,15 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
           // 批量协议适配：后端可能把多行 JSONL 合并为 string[] 一次 emit。
           // 拆行后逐行入队（瞬时返回），由消费循环串行处理，不在事件回调里 await。
-          const processCodexOutput = (payload: string | string[]) => {
+          const processCodexOutput = (payload: string | string[], source: 'global' | 'session') => {
             for (const line of normalizeStreamLines(payload)) {
-              codexTaskQueue.enqueue(() => processCodexOutputLine(line));
+              codexTaskQueue.enqueue(() => processCodexOutputLine(line, source));
             }
           };
 
           // Helper function to process Codex completion
           const processCodexComplete = async () => {
+            if (!terminalEventGate.tryStart('complete')) return;
             const completedSessionId = currentCodexSessionId || codexPendingPromptRecord?.sessionId || null;
             setIsLoading(false);
             hasActiveSessionRef.current = false;
@@ -710,7 +729,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             isListeningRef.current = false;
 
             // 🆕 Clean up listeners to prevent memory leak
-            unlistenRefs.current.forEach(u => u && typeof u === 'function' && u());
+            unlistenRefs.current.forEach(safeRuntimeUnlisten);
             unlistenRefs.current = [];
 
             // 🔧 FIX: Wait for pending prompt recording to complete (race condition fix)
@@ -761,6 +780,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
           // Helper function to process Codex errors (确保退出加载态并清理监听，避免前端“无反应”)
           const processCodexError = async (payload: string) => {
+            if (!terminalEventGate.tryStart('error')) return;
             const parsed = parseCodexErrorPayload(payload);
             setError(parsed.message);
             appendExecutionSystemMessage(
@@ -782,27 +802,38 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
           // Helper function to attach session-specific listeners
           const attachCodexSessionListeners = async (sessionId: string) => {
-            const specificOutputUnlisten = await listen<string | string[]>(`codex-output:${sessionId}`, (evt) => {
-              processCodexOutput(evt.payload);
-            });
+            const createdSessionUnlisteners: UnlistenFn[] = [];
+            const registerSessionUnlisten = (unlisten: UnlistenFn) => {
+              createdSessionUnlisteners.push(unlisten);
+              return unlisten;
+            };
 
-            const specificCompleteUnlisten = await listen<boolean>(`codex-complete:${sessionId}`, () => {
-              // 入队：排在已入队 output 之后收尾。
-              codexTaskQueue.enqueue(() => processCodexComplete());
-            });
+            try {
+              const specificOutputUnlisten = registerSessionUnlisten(await listen<string | string[]>(`codex-output:${sessionId}`, (evt) => {
+                processCodexOutput(evt.payload, 'session');
+              }));
 
-            const specificErrorUnlisten = await listen<string>(`codex-error:${sessionId}`, (evt) => {
-              // 入队：排在已入队 output 之后处理错误。
-              codexTaskQueue.enqueue(() => processCodexError(evt.payload));
-            });
+              const specificCompleteUnlisten = registerSessionUnlisten(await listen<boolean>(`codex-complete:${sessionId}`, () => {
+                // 入队：排在已入队 output 之后收尾。
+                codexTaskQueue.enqueue(() => processCodexComplete());
+              }));
 
-            // Replace existing listeners with session-specific ones
-            unlistenRefs.current.forEach((u) => u && typeof u === 'function' && u());
-            unlistenRefs.current = [specificOutputUnlisten, specificCompleteUnlisten, specificErrorUnlisten];
+              const specificErrorUnlisten = registerSessionUnlisten(await listen<string>(`codex-error:${sessionId}`, (evt) => {
+                // 入队：排在已入队 output 之后处理错误。
+                codexTaskQueue.enqueue(() => processCodexError(evt.payload));
+              }));
+
+              // Replace existing listeners with session-specific ones
+              unlistenRefs.current.forEach(safeRuntimeUnlisten);
+              unlistenRefs.current = [specificOutputUnlisten, specificCompleteUnlisten, specificErrorUnlisten];
+            } catch (error) {
+              createdSessionUnlisteners.forEach(safeRuntimeUnlisten);
+              throw error;
+            }
           };
 
           // 🔧 FIX: Listen for session init event to get session ID for channel isolation
-          const codexSessionInitUnlisten = await listen<EngineGlobalEventPayload<{ type: string; session_id: string }>>('codex-session-init', async (evt) => {
+          const codexSessionInitUnlisten = registerRuntimeUnlisten(await listen<EngineGlobalEventPayload<{ type: string; session_id: string }>>('codex-session-init', async (evt) => {
             // 🔧 FIX: Only process if this tab has an active session
             if (!hasActiveSessionRef.current) return;
             const { tabId: eventTabId, payload } = normalizeEngineGlobalPayload(evt.payload);
@@ -818,13 +849,13 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
               // Switch to session-specific listeners
               await attachCodexSessionListeners(currentCodexSessionId);
             }
-          });
+          }));
 
           // 🔧 FIX: 移除全局监听器,避免跨会话串流
           // Listen for Codex JSONL output (global fallback) - REMOVED to prevent cross-session data leakage
           // 问题: 多个标签页都监听全局 'codex-output' 事件,导致消息被多个会话接收
           // 解决: 仅在会话ID未知的早期阶段处理全局事件,且必须验证会话归属
-          const codexOutputUnlisten = await listen<EngineGlobalEventPayload<string | string[]>>('codex-output', (evt) => {
+          const codexOutputUnlisten = registerRuntimeUnlisten(await listen<EngineGlobalEventPayload<string | string[]>>('codex-output', (evt) => {
             // 🔧 CRITICAL FIX: 只在尚未收到会话ID时处理全局事件
             if (!hasActiveSessionRef.current) return;
             const { tabId: eventTabId, payload } = normalizeEngineGlobalPayload(evt.payload);
@@ -837,11 +868,11 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
               return;
             }
             // 只在会话ID未知的早期阶段处理
-            processCodexOutput(payload);
-          });
+            processCodexOutput(payload, 'global');
+          }));
 
           // Listen for Codex errors
-          const codexErrorUnlisten = await listen<EngineGlobalEventPayload<string>>('codex-error', async (evt) => {
+          const codexErrorUnlisten = registerRuntimeUnlisten(await listen<EngineGlobalEventPayload<string>>('codex-error', async (evt) => {
             // 🔧 FIX: Only process if this tab has an active session
             if (!hasActiveSessionRef.current) return;
 
@@ -866,11 +897,11 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
             // 入队：排在已入队 output 之后处理错误。
             codexTaskQueue.enqueue(() => processCodexError(payload));
-          });
+          }));
 
           // 🔧 FIX: 移除全局完成事件监听器,避免跨会话串流
           // Listen for Codex completion (global fallback) - FIXED to prevent cross-session interference
-          const codexCompleteUnlisten = await listen<EngineGlobalEventPayload<boolean>>('codex-complete', async (evt) => {
+          const codexCompleteUnlisten = registerRuntimeUnlisten(await listen<EngineGlobalEventPayload<boolean>>('codex-complete', async (evt) => {
             // 🔧 CRITICAL FIX: 只在尚未收到会话ID时处理全局事件
             if (!hasActiveSessionRef.current) return;
             const { tabId: eventTabId } = normalizeEngineGlobalPayload(evt.payload);
@@ -885,7 +916,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
             // 入队：排在已入队 output 之后收尾。
             codexTaskQueue.enqueue(() => processCodexComplete());
-          });
+          }));
 
           unlistenRefs.current = [codexSessionInitUnlisten, codexOutputUnlisten, codexErrorUnlisten, codexCompleteUnlisten];
         } else if (executionEngine === 'gemini') {
@@ -895,8 +926,8 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
           // 🔧 Track current Gemini session ID for channel isolation
           let currentGeminiSessionId: string | null = null;
-          // 🔧 Track processed message IDs to prevent duplicates
-          const processedGeminiMessages = new Set<string>();
+          // 🔧 Drop global/session overlap duplicates without dropping repeated deltas from one channel.
+          const geminiDuplicateGuard = createCrossChannelDuplicateGuard<'global' | 'session'>();
           // 🔧 FIX: Track pending prompt recording Promise to avoid race condition
           let pendingGeminiPromptRecordingPromise: Promise<void> | null = null;
 
@@ -904,6 +935,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           // processGeminiOutputLine 虽是同步函数，但 delta 合并逻辑重；回调只入队（瞬时返回），
           // 消费循环串行执行，避免高频事件在回调里连续重活淹没 event loop。
           const geminiTaskQueue = new AsyncQueue<() => Promise<void>>();
+          activeTaskQueues.push(geminiTaskQueue);
           (async () => {
             try {
               await consumeYielding(
@@ -1021,15 +1053,14 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           };
 
           // Helper function to process Gemini output
-          const processGeminiOutputLine = (payload: string) => {
+          const processGeminiOutputLine = (payload: string, source: 'global' | 'session') => {
             if (!isMountedRef.current) return;
 
-            // 🔧 FIX: Deduplicate messages
+            // 🔧 FIX: Deduplicate only global/session overlap; identical same-channel deltas are valid.
             const messageId = getGeminiMessageId(payload);
-            if (processedGeminiMessages.has(messageId)) {
+            if (!geminiDuplicateGuard.shouldProcess(messageId, source)) {
               return;
             }
-            processedGeminiMessages.add(messageId);
 
             try {
               const data = JSON.parse(payload);
@@ -1158,14 +1189,15 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
           // 批量协议适配：后端可能把多行合并为 string[] 一次 emit。
           // 拆行后逐行入队（瞬时返回），由消费循环串行执行，不在事件回调里连续干重活。
-          const processGeminiOutput = (payload: string | string[]) => {
+          const processGeminiOutput = (payload: string | string[], source: 'global' | 'session') => {
             for (const line of normalizeStreamLines(payload)) {
-              geminiTaskQueue.enqueue(async () => processGeminiOutputLine(line));
+              geminiTaskQueue.enqueue(async () => processGeminiOutputLine(line, source));
             }
           };
 
           // Helper function to process Gemini completion
           const processGeminiComplete = async () => {
+            if (!terminalEventGate.tryStart('complete')) return;
             const completedSessionId = currentGeminiSessionId || geminiPendingPromptRecord?.sessionId || null;
             setIsLoading(false);
             hasActiveSessionRef.current = false;
@@ -1173,7 +1205,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             isListeningRef.current = false;
 
             // Clean up listeners
-            unlistenRefs.current.forEach(u => u && typeof u === 'function' && u());
+            unlistenRefs.current.forEach(safeRuntimeUnlisten);
             unlistenRefs.current = [];
 
             // 🔧 FIX: Wait for pending prompt recording to complete (race condition fix)
@@ -1208,6 +1240,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           };
 
           const processGeminiError = (payload: string) => {
+            if (!terminalEventGate.tryStart('error')) return;
             console.error('[usePromptExecution] Gemini error:', payload);
             let errorMessage = payload;
             try {
@@ -1232,27 +1265,38 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
           // Helper function to attach session-specific listeners
           const attachGeminiSessionListeners = async (sessionId: string) => {
-            const specificOutputUnlisten = await listen<string | string[]>(`gemini-output:${sessionId}`, (evt) => {
-              processGeminiOutput(evt.payload);
-            });
+            const createdSessionUnlisteners: UnlistenFn[] = [];
+            const registerSessionUnlisten = (unlisten: UnlistenFn) => {
+              createdSessionUnlisteners.push(unlisten);
+              return unlisten;
+            };
 
-            const specificCompleteUnlisten = await listen<boolean>(`gemini-complete:${sessionId}`, () => {
-              // 入队：排在已入队 output 之后收尾。
-              geminiTaskQueue.enqueue(() => processGeminiComplete());
-            });
+            try {
+              registerSessionUnlisten(await listen<string | string[]>(`gemini-output:${sessionId}`, (evt) => {
+                processGeminiOutput(evt.payload, 'session');
+              }));
 
-            const specificErrorUnlisten = await listen<string>(`gemini-error:${sessionId}`, (evt) => {
-              // 入队：排在已入队 output 之后处理错误。
-              geminiTaskQueue.enqueue(async () => processGeminiError(evt.payload));
-            });
+              registerSessionUnlisten(await listen<boolean>(`gemini-complete:${sessionId}`, () => {
+                // 入队：排在已入队 output 之后收尾。
+                geminiTaskQueue.enqueue(() => processGeminiComplete());
+              }));
 
-            // 🔧 FIX: Append session-specific listeners instead of replacing all
-            // This preserves global listeners like geminiCliSessionIdUnlisten
-            unlistenRefs.current.push(specificOutputUnlisten, specificCompleteUnlisten, specificErrorUnlisten);
+              registerSessionUnlisten(await listen<string>(`gemini-error:${sessionId}`, (evt) => {
+                // 入队：排在已入队 output 之后处理错误。
+                geminiTaskQueue.enqueue(async () => processGeminiError(evt.payload));
+              }));
+
+              // 🔧 FIX: Append session-specific listeners instead of replacing all
+              // This preserves global listeners like geminiCliSessionIdUnlisten
+              unlistenRefs.current.push(...createdSessionUnlisteners);
+            } catch (error) {
+              createdSessionUnlisteners.forEach(safeRuntimeUnlisten);
+              throw error;
+            }
           };
 
           // Listen for session init event (backend emits this with backend channel ID)
-          const geminiSessionInitUnlisten = await listen<EngineGlobalEventPayload<any>>('gemini-session-init', async (evt) => {
+          const geminiSessionInitUnlisten = registerRuntimeUnlisten(await listen<EngineGlobalEventPayload<any>>('gemini-session-init', async (evt) => {
             if (!hasActiveSessionRef.current) return;
             // 🔧 FIX: evt.payload is already an object, no need to JSON.parse
             const { tabId: eventTabId, payload: data } = normalizeEngineGlobalPayload(evt.payload);
@@ -1271,11 +1315,11 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
               // Switch to session-specific listeners
               await attachGeminiSessionListeners(backendSessionId);
             }
-          });
+          }));
 
           // 🔧 FIX: Listen for real Gemini CLI session ID (emitted when CLI returns init event)
           // This is the REAL session ID that should be used for prompt recording
-          const geminiCliSessionIdUnlisten = await listen<EngineGlobalEventPayload<{ backend_session_id: string; cli_session_id: string }>>('gemini-cli-session-id', async (evt) => {
+          const geminiCliSessionIdUnlisten = registerRuntimeUnlisten(await listen<EngineGlobalEventPayload<{ backend_session_id: string; cli_session_id: string }>>('gemini-cli-session-id', async (evt) => {
             if (!hasActiveSessionRef.current) return;
             const { tabId: eventTabId, payload } = normalizeEngineGlobalPayload(evt.payload);
             if (!isCurrentRunEventTab(eventTabId)) {
@@ -1319,11 +1363,11 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             if (geminiPendingInfo) {
               geminiPendingInfo.sessionId = realCliSessionId;
             }
-          });
+          }));
 
           // 🔧 FIX: 移除全局监听器,避免跨会话串流
           // Listen for Gemini output (global fallback) - FIXED to prevent cross-session data leakage
-          const geminiOutputUnlisten = await listen<EngineGlobalEventPayload<string | string[]>>('gemini-output', (evt) => {
+          const geminiOutputUnlisten = registerRuntimeUnlisten(await listen<EngineGlobalEventPayload<string | string[]>>('gemini-output', (evt) => {
             // 🔧 CRITICAL FIX: 只在尚未收到会话ID时处理全局事件
             if (!hasActiveSessionRef.current) return;
             const { tabId: eventTabId, payload } = normalizeEngineGlobalPayload(evt.payload);
@@ -1336,11 +1380,11 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
               return;
             }
             // 只在会话ID未知的早期阶段处理
-            processGeminiOutput(payload);
-          });
+            processGeminiOutput(payload, 'global');
+          }));
 
           // Listen for Gemini errors
-          const geminiErrorUnlisten = await listen<EngineGlobalEventPayload<string>>('gemini-error', (evt) => {
+          const geminiErrorUnlisten = registerRuntimeUnlisten(await listen<EngineGlobalEventPayload<string>>('gemini-error', (evt) => {
             if (!hasActiveSessionRef.current) return;
             const { tabId: eventTabId, payload } = normalizeEngineGlobalPayload(evt.payload);
             if (!isCurrentRunEventTab(eventTabId)) {
@@ -1348,11 +1392,11 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             }
             // 入队：排在已入队 output 之后处理错误。
             geminiTaskQueue.enqueue(async () => processGeminiError(payload));
-          });
+          }));
 
           // 🔧 FIX: 移除全局完成事件监听器,避免跨会话串流
           // Listen for Gemini completion (global fallback) - FIXED to prevent cross-session interference
-          const geminiCompleteUnlisten = await listen<EngineGlobalEventPayload<boolean>>('gemini-complete', async (evt) => {
+          const geminiCompleteUnlisten = registerRuntimeUnlisten(await listen<EngineGlobalEventPayload<boolean>>('gemini-complete', async (evt) => {
             // 🔧 CRITICAL FIX: 只在尚未收到会话ID时处理全局事件
             if (!hasActiveSessionRef.current) return;
             const { tabId: eventTabId } = normalizeEngineGlobalPayload(evt.payload);
@@ -1367,7 +1411,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
             // 入队：排在已入队 output 之后收尾。
             geminiTaskQueue.enqueue(() => processGeminiComplete());
-          });
+          }));
 
           unlistenRefs.current = [geminiSessionInitUnlisten, geminiCliSessionIdUnlisten, geminiOutputUnlisten, geminiErrorUnlisten, geminiCompleteUnlisten];
         } else {
@@ -1390,8 +1434,8 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         // Only ignore generic messages AFTER we've attached session-specific listeners
         let hasAttachedSessionListeners = false;
 
-        // 🔧 FIX: Track processed message IDs to prevent duplicates from global and session-specific channels
-        const processedClaudeMessages = new Set<string>();
+        // 🔧 FIX: Drop global/session overlap duplicates without dropping repeated deltas from one channel.
+        const claudeDuplicateGuard = createCrossChannelDuplicateGuard<'global' | 'session'>();
 
         // 🔧 FIX: Track pending prompt recording Promise to avoid race condition
         let pendingClaudePromptRecordingPromise: Promise<void> | null = null;
@@ -1403,6 +1447,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         // 现改为：回调只把「处理逻辑」包成 thunk 入队（同步、瞬时返回），真正的处理放到下面独立的
         // 消费循环里串行 await（保序但不阻塞 event loop）。与 useSessionStream 的修复同构。
         const claudeTaskQueue = new AsyncQueue<() => Promise<void>>();
+        activeTaskQueues.push(claudeTaskQueue);
         (async () => {
           try {
             await consumeYielding(
@@ -1439,12 +1484,19 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         // Helper: Attach Session-Specific Listeners
         // ====================================================================
         const attachSessionSpecificListeners = async (sid: string) => {
-          const specificOutputUnlisten = await listen<string | string[]>(`claude-output:${sid}`, (evt) => {
+          const createdSessionUnlisteners: UnlistenFn[] = [];
+          const registerSessionUnlisten = (unlisten: UnlistenFn) => {
+            createdSessionUnlisteners.push(unlisten);
+            return unlisten;
+          };
+
+          try {
+          const specificOutputUnlisten = registerSessionUnlisten(await listen<string | string[]>(`claude-output:${sid}`, (evt) => {
             // 批量协议适配：payload 可能是 string（单行）或 string[]（后端节流合并多行）。
             // 回调只逐行入队（同步、瞬时返回），真正处理放到消费循环里，不阻塞 event loop。
             for (const line of normalizeStreamLines(evt.payload)) {
               claudeTaskQueue.enqueue(async () => {
-                await handleStreamMessage(line, userInputTranslation || undefined);
+                await handleStreamMessage(line, 'session', userInputTranslation || undefined);
 
                 // Handle user message recording in session-specific listener
                 try {
@@ -1496,21 +1548,21 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
                 }
               });
             }
-          });
+          }));
 
-          const specificErrorUnlisten = await listen<string>(`claude-error:${sid}`, (evt) => {
+          const specificErrorUnlisten = registerSessionUnlisten(await listen<string>(`claude-error:${sid}`, (evt) => {
             // 入队：排在已入队的 output thunk 之后执行，保证错误处理不抢在未处理消息前面。
             claudeTaskQueue.enqueue(async () => {
               processClaudeError(evt.payload);
             });
-          });
+          }));
 
-          const specificCompleteUnlisten = await listen<boolean>(`claude-complete:${sid}`, () => {
+          const specificCompleteUnlisten = registerSessionUnlisten(await listen<boolean>(`claude-complete:${sid}`, () => {
             // 入队：complete 排在所有已入队 output 之后，确保收尾前消息全部处理完。
             claudeTaskQueue.enqueue(async () => {
               await processComplete();
             });
-          });
+          }));
 
           // 只有三个 session-specific 监听器都真正注册成功后，才能停止接收 global fallback。
           // 后端 stream_batcher 在 system:init 后只保留很短的 global grace window；
@@ -1519,25 +1571,31 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           hasAttachedSessionListeners = true;
 
           // Replace existing unlisten refs with these new ones (after cleaning up)
-          unlistenRefs.current.forEach((u) => u && typeof u === 'function' && u());
+          unlistenRefs.current.forEach(safeRuntimeUnlisten);
           unlistenRefs.current = [specificOutputUnlisten, specificErrorUnlisten, specificCompleteUnlisten];
+          } catch (error) {
+            createdSessionUnlisteners.forEach(safeRuntimeUnlisten);
+            throw error;
+          }
         };
 
         // ====================================================================
         // Helper: Process Stream Message
         // ====================================================================
-        async function handleStreamMessage(payload: string, currentTranslationResult?: TranslationResult) {
+        async function handleStreamMessage(
+          payload: string,
+          source: 'global' | 'session',
+          currentTranslationResult?: TranslationResult,
+        ) {
           try {
             // Don't process if component unmounted
             if (!isMountedRef.current) return;
 
-            // 🔧 FIX: Deduplicate messages to prevent duplicate processing
-            // This can happen when both global and session-specific listeners receive the same message
+            // 🔧 FIX: Deduplicate only global/session overlap; identical same-channel deltas are valid.
             const messageId = getClaudeMessageId(payload);
-            if (processedClaudeMessages.has(messageId)) {
+            if (!claudeDuplicateGuard.shouldProcess(messageId, source)) {
               return;
             }
-            processedClaudeMessages.add(messageId);
 
             // Store raw JSONL
             appendRawJsonlOutput(payload);
@@ -1556,6 +1614,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         // Helper: Process Completion
         // ====================================================================
         const processComplete = async () => {
+          if (!terminalEventGate.tryStart('complete')) return;
           const completedSessionId = currentSessionId || effectiveSession?.id || claudeSessionId || null;
 
 
@@ -1596,7 +1655,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           isListeningRef.current = false;
 
           // 🆕 Clean up listeners to prevent memory leak
-          unlistenRefs.current.forEach(u => u && typeof u === 'function' && u());
+          unlistenRefs.current.forEach(safeRuntimeUnlisten);
           unlistenRefs.current = [];
 
           // Reset currentSessionId to allow detection of new session_id
@@ -1609,6 +1668,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         };
 
         const processClaudeError = (payload: string) => {
+          if (!terminalEventGate.tryStart('error')) return;
           console.error('Claude error:', payload);
           setError(payload);
           appendExecutionSystemMessage(
@@ -1631,7 +1691,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         // Generic Listeners (Catch-all) - FIXED to prevent cross-session data leakage
         // ====================================================================
         // 🔒 CRITICAL FIX: 全局事件现在格式为 { tab_id: string | null, payload: string }
-        const genericOutputUnlisten = await listen<ClaudeGlobalEventPayload<string | string[]>>('claude-output', async (event) => {
+        const genericOutputUnlisten = registerRuntimeUnlisten(await listen<ClaudeGlobalEventPayload<string | string[]>>('claude-output', async (event) => {
           // 🔧 CRITICAL FIX: 只在尚未收到会话ID时处理全局事件
           if (!hasActiveSessionRef.current) return;
 
@@ -1669,7 +1729,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
                 // Always process the message if we haven't established a session yet
                 // Or if it is the init message
-                await handleStreamMessage(messagePayload, userInputTranslation || undefined);
+                await handleStreamMessage(messagePayload, 'global', userInputTranslation || undefined);
 
                 if (msg.type === 'system' && msg.subtype === 'init' && msg.session_id) {
                   // Cache model display name from init message for dynamic model selector
@@ -1775,10 +1835,10 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
               }
             }); // enqueue thunk
           }
-        });
+        }));
 
         // 🔒 CRITICAL FIX: 全局事件现在格式为 { tab_id: string | null, payload: string }
-        const genericErrorUnlisten = await listen<ClaudeGlobalEventPayload<string>>('claude-error', (evt) => {
+        const genericErrorUnlisten = registerRuntimeUnlisten(await listen<ClaudeGlobalEventPayload<string>>('claude-error', (evt) => {
           // 🔧 FIX: Only process if this tab has an active session
           if (!hasActiveSessionRef.current) return;
 
@@ -1792,10 +1852,10 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           claudeTaskQueue.enqueue(async () => {
             processClaudeError(errorPayload);
           });
-        });
+        }));
 
         // 🔒 CRITICAL FIX: 全局事件现在格式为 { tab_id: string | null, payload: boolean }
-        const genericCompleteUnlisten = await listen<ClaudeGlobalEventPayload<boolean>>('claude-complete', (evt) => {
+        const genericCompleteUnlisten = registerRuntimeUnlisten(await listen<ClaudeGlobalEventPayload<boolean>>('claude-complete', (evt) => {
           // 🔧 FIX: Only process if this tab has an active session
           if (!hasActiveSessionRef.current) return;
 
@@ -1809,7 +1869,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           claudeTaskQueue.enqueue(async () => {
             await processComplete();
           });
-        });
+        }));
 
         // Store the generic unlisteners for now; they may be replaced later.
         unlistenRefs.current = [genericOutputUnlisten, genericErrorUnlisten, genericCompleteUnlisten];
@@ -2051,6 +2111,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         `⚠️ ${engineNames[executionEngine]} 上游返回错误，本次运行已停止监听。错误详情只展示在前端并保存为 UI 事件，不会带入下一次对话上下文。`,
         errorMessage
       );
+      activeTaskQueues.forEach(queue => queue.done());
       resetRuntimeState();
     }
   }, [
@@ -2070,6 +2131,8 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
     hasActiveSessionRef,
     activeSessionIdRef,
     bindCancelSessionId,
+    registerRuntimeUnlisten,
+    safeRuntimeUnlisten,
     unlistenRefs,
     isMountedRef,
     isListeningRef,

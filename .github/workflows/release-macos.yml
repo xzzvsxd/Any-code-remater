@@ -60,6 +60,9 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
+      - name: Verify release version metadata
+        run: node scripts/verify-release-version.mjs "${{ steps.version.outputs.version }}"
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -67,9 +70,11 @@ jobs:
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
+        continue-on-error: true
         with:
           workspaces: "./src-tauri -> target"
           key: macos-${{ matrix.rust-target }}-rust-${{ hashFiles('**/Cargo.lock') }}
+          save-if: ${{ false }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -214,6 +219,9 @@ jobs:
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Verify release version metadata
+        run: node scripts/verify-release-version.mjs "${{ steps.version.outputs.version }}"
 
       - name: Download macOS artifacts
         uses: actions/download-artifact@v4

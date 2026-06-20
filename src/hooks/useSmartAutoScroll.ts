@@ -46,13 +46,47 @@ const PROGRAMMATIC_SCROLL_GUARD_MS = 120;
 const DIRECT_SCROLL_GESTURE_WINDOW_MS = 1000;
 
 /**
- * 计算最后一条消息的内容哈希，用于检测内容变化
+ * 轻量估算消息内容长度，用于检测最后一条消息是否发生了“足以重启粘底循环”的变化。
+ *
+ * 不能在这里 JSON.stringify：最后一条消息可能是大段工具输出 / 代码 / MCP 结果。
+ * streaming 期间每次 displayableMessages 变化都会走这里，完整 stringify 会复制整段内容并阻塞
+ * WebKit 主线程。这里只读取已知字段的 string.length，不创建大字符串副本。
  */
+function getMessageContentLengthHint(value: unknown): number {
+  if (value == null) return 0;
+  if (typeof value === 'string') return value.length;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value).length;
+
+  if (Array.isArray(value)) {
+    let total = 0;
+    for (const item of value) {
+      total += getMessageContentLengthHint(item);
+    }
+    return total;
+  }
+
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    let total = 0;
+
+    if (typeof record.text === 'string') total += record.text.length;
+    if (typeof record.content === 'string') total += record.content.length;
+    if (typeof record.result === 'string') total += record.result.length;
+    if (typeof record.name === 'string') total += record.name.length;
+    if (typeof record.type === 'string') total += record.type.length;
+
+    // 对嵌套对象只加入 key 数量作为结构变化提示，避免深层 stringify/递归复制大对象。
+    return total + Object.keys(record).length;
+  }
+
+  return 0;
+}
+
 function getLastMessageContentHash(messages: ClaudeStreamMessage[]): string {
   if (messages.length === 0) return '';
 
   const lastMessage = messages[messages.length - 1];
-  const contentLength = JSON.stringify(lastMessage.message?.content || '').length;
+  const contentLength = getMessageContentLengthHint(lastMessage.message?.content);
 
   return `${messages.length}-${lastMessage.type}-${contentLength}`;
 }

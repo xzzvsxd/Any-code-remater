@@ -41,6 +41,12 @@ describe('SessionMessages imperative scrolling invariants', () => {
     expect(source).toMatch(/scrollToPrompt:\s*\(promptIndex:\s*number\)\s*=>\s*{[\s\S]*?cancelPromptScrollSearch\(\);/);
   });
 
+  test('idle initial bottom settling uses a tight threshold so it cannot leave a visible bottom gap', () => {
+    expect(source).toContain('const INITIAL_BOTTOM_THRESHOLD = 2');
+    expect(source).toContain('bottomThresholdPx: INITIAL_BOTTOM_THRESHOLD');
+    expect(source).not.toContain('const BOTTOM_THRESHOLD = 16; // 与 streaming 粘底死区一致');
+  });
+
   test('virtualizer uses content-aware estimates instead of fixed 150/200px guesses', () => {
     expect(source).toContain('estimateMessageGroupHeight(messageGroups[index])');
     expect(source).toContain('overscan: SESSION_MESSAGES_OVERSCAN');

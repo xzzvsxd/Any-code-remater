@@ -61,75 +61,71 @@ const EMPTY_STATS: SessionCostStats = {
  * console.log(formatCost(stats.totalCost)); // "$0.0123"
  */
 export function useSessionCostCalculation(messages: ClaudeStreamMessage[], engine?: string): SessionCostResult {
-  const codexCacheRef = useRef<{
+  const costCacheRef = useRef<{
     stats: SessionCostStats;
     lastUsageFingerprint: string | null;
     lastMessageCount: number;
+    lastMessages: ClaudeStreamMessage[] | null;
+    engine?: string;
+    initialized: boolean;
   }>({
     stats: EMPTY_STATS,
     lastUsageFingerprint: null,
     lastMessageCount: 0,
+    lastMessages: null,
+    engine: undefined,
+    initialized: false,
   });
 
   // 计算总成本和统计
   const stats = useMemo(() => {
-    // Codex 会话在流式过程中会产生大量 item.updated 等事件，但只有 turn.completed 才带 usage。
-    // 为避免每条事件都 O(n) 重算费用，Codex 仅在检测到新的 usage 时才重新聚合。
-    if (engine === 'codex') {
-      const cache = codexCacheRef.current;
-
-      if (messages.length === 0) {
-        cache.stats = EMPTY_STATS;
-        cache.lastUsageFingerprint = null;
-        cache.lastMessageCount = 0;
-        return cache.stats;
-      }
-
-      // 会话切换/重置：长度回退则清空缓存
-      if (messages.length < cache.lastMessageCount) {
-        cache.stats = EMPTY_STATS;
-        cache.lastUsageFingerprint = null;
-        cache.lastMessageCount = 0;
-      }
-
-      const last = messages[messages.length - 1] as any;
-      const usage = extractUsageCandidate(last);
-
-      // 末尾没有 usage -> 费用不可能变化，直接复用缓存
-      if (!usage) {
-        cache.lastMessageCount = messages.length;
-        return cache.stats;
-      }
-
-      const fingerprint = buildUsageFingerprint(last, usage, messages.length);
-      if (fingerprint === cache.lastUsageFingerprint) {
-        cache.lastMessageCount = messages.length;
-        return cache.stats;
-      }
-
-      const { totals, events, firstEventTimestampMs, lastEventTimestampMs } = aggregateSessionCost(messages);
-      const durationSeconds = calculateSessionDuration(messages, firstEventTimestampMs, lastEventTimestampMs);
-      const apiDurationSeconds = events.length * 5;
-
-      const nextStats: SessionCostStats = {
-        totalCost: totals.totalCost,
-        totalTokens: totals.totalTokens,
-        inputTokens: totals.inputTokens,
-        outputTokens: totals.outputTokens,
-        cacheReadTokens: totals.cacheReadTokens,
-        cacheWriteTokens: totals.cacheWriteTokens,
-        durationSeconds,
-        apiDurationSeconds,
-      };
-
-      cache.stats = nextStats;
-      cache.lastUsageFingerprint = fingerprint;
-      cache.lastMessageCount = messages.length;
-      return nextStats;
-    }
+    const cache = costCacheRef.current;
 
     if (messages.length === 0) {
+      cache.stats = EMPTY_STATS;
+      cache.lastUsageFingerprint = null;
+      cache.lastMessageCount = 0;
+      cache.lastMessages = messages;
+      cache.engine = engine;
+      cache.initialized = true;
       return EMPTY_STATS;
+    }
+
+    // 会话切换/重置：长度回退或引擎变化时清空缓存。
+    if (messages.length < cache.lastMessageCount || cache.engine !== engine) {
+      cache.stats = EMPTY_STATS;
+      cache.lastUsageFingerprint = null;
+      cache.lastMessageCount = 0;
+      cache.lastMessages = null;
+      cache.engine = engine;
+      cache.initialized = false;
+    }
+
+    // Claude/Gemini/Codex 流式过程中都会产生大量“无 usage 的内容增量”。
+    // 费用只会在新增 usage 快照/增量时变化；若本轮 append 的后缀没有 usage，直接复用缓存，
+    // 避免每帧 aggregateSessionCost(messages) 全量扫长历史。
+    const latestUsageMessage = cache.initialized && messages.length > cache.lastMessageCount
+      ? findLatestUsageMessageInRange(messages, cache.lastMessageCount)
+      : findLatestUsageMessageInRange(messages, 0);
+
+    if (cache.initialized && !latestUsageMessage && messages.length > cache.lastMessageCount) {
+      cache.lastMessageCount = messages.length;
+      cache.lastMessages = messages;
+      return cache.stats;
+    }
+
+    const fingerprint = latestUsageMessage
+      ? buildUsageFingerprint(latestUsageMessage.message, latestUsageMessage.usage, messages.length)
+      : `no-usage:${engine ?? ''}:${messages.length}`;
+
+    if (
+      cache.initialized &&
+      fingerprint === cache.lastUsageFingerprint &&
+      messages.length >= cache.lastMessageCount
+    ) {
+      cache.lastMessageCount = messages.length;
+      cache.lastMessages = messages;
+      return cache.stats;
     }
 
     const {
@@ -145,7 +141,7 @@ export function useSessionCostCalculation(messages: ClaudeStreamMessage[], engin
     // 目前使用简化估算：每条唯一 assistant 消息平均 2-10 秒
     const apiDurationSeconds = events.length * 5; // 粗略估算
 
-    return {
+    const nextStats: SessionCostStats = {
       totalCost: totals.totalCost,
       totalTokens: totals.totalTokens,
       inputTokens: totals.inputTokens,
@@ -155,6 +151,14 @@ export function useSessionCostCalculation(messages: ClaudeStreamMessage[], engin
       durationSeconds,
       apiDurationSeconds
     };
+
+    cache.stats = nextStats;
+    cache.lastUsageFingerprint = fingerprint;
+    cache.lastMessageCount = messages.length;
+    cache.lastMessages = messages;
+    cache.engine = engine;
+    cache.initialized = true;
+    return nextStats;
   }, [messages, engine]);
 
   return { 
@@ -228,6 +232,20 @@ function extractTimestampMs(message: ClaudeStreamMessage): number | undefined {
 function extractUsageCandidate(message: any): any | null {
   const usage = message?.usage || message?.message?.usage || message?.codexMetadata?.usage;
   return usage && typeof usage === 'object' ? usage : null;
+}
+
+function findLatestUsageMessageInRange(
+  messages: ClaudeStreamMessage[],
+  startIndex: number,
+): { message: ClaudeStreamMessage; usage: any; index: number } | null {
+  const start = Math.max(0, Math.min(startIndex, messages.length));
+  for (let i = messages.length - 1; i >= start; i--) {
+    const usage = extractUsageCandidate(messages[i]);
+    if (usage) {
+      return { message: messages[i], usage, index: i };
+    }
+  }
+  return null;
 }
 
 function buildUsageFingerprint(message: any, usage: any, messageCount: number): string {

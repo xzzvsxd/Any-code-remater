@@ -110,7 +110,7 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
           <span className="text-xs font-mono text-muted-foreground">预览</span>
           {/* 打字中指示器 */}
           {isTyping && (
-            <span className="inline-block w-1.5 h-3 bg-emerald-500 animate-pulse rounded-full" />
+            <span className="inline-block w-1.5 h-3 bg-emerald-500 rounded-full" />
           )}
         </div>
         {truncated && onMaximize && (
@@ -170,7 +170,7 @@ export const CodePreview: React.FC<CodePreviewProps> = ({
         )}
         {/* 打字中光标 */}
         {isTyping && (
-          <span className="inline-block w-2 h-4 ml-1 mb-4 bg-emerald-500 animate-pulse rounded-sm" />
+          <span className="inline-block w-2 h-4 ml-1 mb-4 bg-emerald-500 rounded-sm" />
         )}
       </div>
     </div>

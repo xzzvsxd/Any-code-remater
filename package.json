@@ -14,7 +14,9 @@
     "tauri:build-fast": "tauri build --profile dev-release",
     "tauri:dev": "tauri dev",
     "typecheck": "tsc --noEmit",
-    "validate": "npm run typecheck && npm run check:nsis-upgrade && npm run check:release-rust-cache && npm run check:stream-batcher-targeted-emit",
+    "validate": "npm run typecheck && npm run check:version-consistency && npm run check:release-version-gates && npm run check:nsis-upgrade && npm run check:release-rust-cache && npm run check:stream-batcher-targeted-emit",
+    "check:version-consistency": "node scripts/check-version-consistency.mjs",
+    "check:release-version-gates": "node scripts/check-release-version-gates.mjs",
     "check:nsis-upgrade": "node scripts/check-nsis-upgrade-mode.mjs",
     "check:release-rust-cache": "node scripts/check-release-rust-cache-mode.mjs",
     "check:stream-batcher-targeted-emit": "node scripts/check-stream-batcher-targeted-emit.mjs"

@@ -50,7 +50,7 @@ export interface BatchedAppendUpdater<T> {
   dispose: () => void;
 }
 
-const DEFAULT_MAX_UPDATES_PER_FRAME = 64;
+const DEFAULT_MAX_UPDATES_PER_FRAME = 16;
 const DEFAULT_MAX_APPEND_ITEMS_PER_FRAME = 128;
 /**
  * WebKitGTK 在窗口被遮挡、最小化或合成线程异常时可能暂停 rAF，但 Tauri IPC 仍继续送达。
