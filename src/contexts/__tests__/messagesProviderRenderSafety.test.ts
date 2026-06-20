@@ -21,9 +21,10 @@ describe('MessagesProvider background derivation safety', () => {
   test('can skip expensive tool-result derivation for inactive background sessions', () => {
     expect(messagesContextSource).toContain('deriveToolResults?: boolean');
     expect(messagesContextSource).toContain('EMPTY_TOOL_RESULTS');
-    expect(messagesContextSource).toMatch(
-      /deriveToolResults\s*\?\s*buildToolResultMap\(messages\)\s*:\s*EMPTY_TOOL_RESULTS/,
-    );
+    expect(messagesContextSource).toContain('if (!deriveToolResults)');
+    expect(messagesContextSource).toContain('return EMPTY_TOOL_RESULTS');
+    expect(messagesContextSource).toContain('toolResultCacheRef');
+    expect(messagesContextSource).toContain('appendToolResultsFromMessage(cache.results, messages[index])');
   });
 
   test('ClaudeCodeSession only derives tool results for the active tab', () => {

@@ -130,7 +130,7 @@ export function getParentToolUseId(message: ClaudeStreamMessage): string | null 
  * - 'thinking': 仅包含思考内容
  * - null: 包含文本或其他不可聚合内容
  */
-function getTechnicalMessageType(message: ClaudeStreamMessage): 'tool' | 'thinking' | null {
+export function getTechnicalMessageType(message: ClaudeStreamMessage): 'tool' | 'thinking' | null {
   // Thinking 类型的消息
   if (message.type === 'thinking') return 'thinking';
   

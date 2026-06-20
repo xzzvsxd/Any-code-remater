@@ -36,28 +36,38 @@ const MessagesDataContext = React.createContext<MessagesDataContextValue | undef
 const MessagesActionsContext = React.createContext<MessagesActionsContextValue | undefined>(undefined);
 const EMPTY_TOOL_RESULTS = new Map<string, ToolResultEntry>();
 
-const buildToolResultMap = (messages: ClaudeStreamMessage[]): Map<string, ToolResultEntry> => {
-  const results = new Map<string, ToolResultEntry>();
+const appendToolResultsFromMessage = (
+  results: Map<string, ToolResultEntry>,
+  msg: ClaudeStreamMessage,
+): void => {
+  const content = msg.message?.content;
+  if (!Array.isArray(content)) return;
 
-  messages.forEach((msg) => {
-    const content = msg.message?.content;
-
-    if (Array.isArray(content)) {
-      content.forEach((item: any) => {
-        if (item && item.type === "tool_result" && item.tool_use_id) {
-          results.set(item.tool_use_id, {
-            toolUseId: item.tool_use_id,
-            content: item.content ?? item.result ?? item,
-            isError: Boolean(item.is_error),
-            sourceMessage: msg,
-          });
-        }
+  content.forEach((item: any) => {
+    if (item && item.type === "tool_result" && item.tool_use_id) {
+      results.set(item.tool_use_id, {
+        toolUseId: item.tool_use_id,
+        content: item.content ?? item.result ?? item,
+        isError: Boolean(item.is_error),
+        sourceMessage: msg,
       });
     }
   });
+};
 
+const buildToolResultMap = (messages: ClaudeStreamMessage[]): Map<string, ToolResultEntry> => {
+  const results = new Map<string, ToolResultEntry>();
+  messages.forEach((msg) => appendToolResultsFromMessage(results, msg));
   return results;
 };
+
+interface ToolResultMapCache {
+  messages: ClaudeStreamMessage[];
+  processedLength: number;
+  firstMessage?: ClaudeStreamMessage;
+  lastProcessedMessage?: ClaudeStreamMessage;
+  results: Map<string, ToolResultEntry>;
+}
 
 interface MessagesProviderProps {
   initialMessages?: ClaudeStreamMessage[];
@@ -87,10 +97,41 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({
         : defaultFilterConfig.hideWarmupMessages,
   });
 
-  const toolResults = React.useMemo(
-    () => (deriveToolResults ? buildToolResultMap(messages) : EMPTY_TOOL_RESULTS),
-    [deriveToolResults, messages]
-  );
+  const toolResultCacheRef = React.useRef<ToolResultMapCache | null>(null);
+  const toolResults = React.useMemo(() => {
+    if (!deriveToolResults) {
+      return EMPTY_TOOL_RESULTS;
+    }
+
+    const cache = toolResultCacheRef.current;
+    const canExtendAppendOnly =
+      cache !== null &&
+      messages.length >= cache.processedLength &&
+      (cache.processedLength === 0 ||
+        messages[cache.processedLength - 1] === cache.lastProcessedMessage) &&
+      (cache.firstMessage === undefined || messages[0] === cache.firstMessage);
+
+    if (canExtendAppendOnly) {
+      for (let index = cache.processedLength; index < messages.length; index++) {
+        appendToolResultsFromMessage(cache.results, messages[index]);
+      }
+      cache.messages = messages;
+      cache.processedLength = messages.length;
+      cache.firstMessage = messages[0];
+      cache.lastProcessedMessage = messages[messages.length - 1];
+      return cache.results;
+    }
+
+    const rebuilt = buildToolResultMap(messages);
+    toolResultCacheRef.current = {
+      messages,
+      processedLength: messages.length,
+      firstMessage: messages[0],
+      lastProcessedMessage: messages[messages.length - 1],
+      results: rebuilt,
+    };
+    return rebuilt;
+  }, [deriveToolResults, messages]);
 
   // 🚀 性能（修复 Linux/WebKit streaming 渲染风暴）：streaming 期间每条消息一次 setMessages
   // → 全量重渲染 + 虚拟列表重测，高频时主线程被打满。这里把对外暴露的 setMessages 包一层

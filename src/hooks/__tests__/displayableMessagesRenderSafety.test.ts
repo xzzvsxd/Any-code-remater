@@ -35,4 +35,12 @@ describe('displayable message filtering render safety', () => {
     expect(source).not.toMatch(/for \(let i = index - 1; i >= 0; i--\)/);
     expect(source).toContain('filterDisplayableMessages');
   });
+
+  test('hook keeps an append-only suffix cache for streaming updates', async () => {
+    const source = await import('node:fs').then(fs => fs.readFileSync('src/hooks/useDisplayableMessages.ts', 'utf8'));
+
+    expect(source).toContain('DisplayableMessagesCache');
+    expect(source).toContain('canUseAppendFastPath');
+    expect(source).toContain('for (let index = cache.processedLength; index < messages.length; index++)');
+  });
 });

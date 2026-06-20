@@ -188,7 +188,6 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   const [isCancellingExecution, setIsCancellingExecution] = useState(false);
   const [executionStartedAt, setExecutionStartedAt] = useState<number | null>(null);
   const [lastOutputAt, setLastOutputAt] = useState<number | null>(null);
-  const [executionClockTick, setExecutionClockTick] = useState(0);
   const executionStartedAtRef = useRef<number | null>(null);
   const lastOutputAtRef = useRef<number | null>(null);
 
@@ -223,18 +222,6 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   useEffect(() => {
     lastOutputAtRef.current = lastOutputAt;
   }, [lastOutputAt]);
-
-  useEffect(() => {
-    if (!isLoading) {
-      return;
-    }
-
-    const timer = window.setInterval(() => {
-      setExecutionClockTick(tick => tick + 1);
-    }, 1000);
-
-    return () => window.clearInterval(timer);
-  }, [isLoading]);
 
   // 🔧 FIX: Track whether this component instance was created as a "new session" (no session prop).
   // When true, we must NOT auto-load/resume any session even if the session prop later
@@ -386,9 +373,6 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
         ? `取消只会影响当前会话${projectLabel ? `（${projectLabel}）` : ''}，不会断开其他对话。`
         : '正在启动进程，拿到当前会话 ID 后即可安全取消。';
 
-    // executionClockTick 用于每秒刷新 useMemo，值本身不参与计算。
-    void executionClockTick;
-
     return {
       engine,
       engineName,
@@ -396,6 +380,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       canCancel,
       isCancelling: isCancellingExecution,
       startedAt,
+      lastOutputAt: outputAt,
       elapsedSeconds,
       idleSeconds,
       activeSessionId: cancelSessionId,
@@ -406,7 +391,6 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   }, [
     executionEngineConfig.engine,
     executionStartedAt,
-    executionClockTick,
     isCancellingExecution,
     isLoading,
     lastOutputAt,
@@ -1002,7 +986,9 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
         subtype: "execution-cancelled",
         result: `已取消当前 ${engineDisplayNames[executionEngineConfig.engine]} 会话，其他对话不会受影响。`,
         engine: executionEngineConfig.engine,
-        elapsedSeconds: executionStatus.elapsedSeconds,
+        elapsedSeconds: executionStartedAtRef.current
+          ? Math.max(0, Math.floor((Date.now() - executionStartedAtRef.current) / 1000))
+          : executionStatus.elapsedSeconds,
         timestamp: new Date().toISOString(),
         receivedAt: new Date().toISOString()
       };

@@ -5,6 +5,8 @@ interface CliProcessingIndicatorProps {
   isProcessing: boolean;
   onCancel?: () => void;
   engineName?: string;
+  startedAt?: number | null;
+  lastOutputAt?: number | null;
   elapsedSeconds?: number;
   idleSeconds?: number;
   canCancel?: boolean;
@@ -31,6 +33,8 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
   isProcessing,
   onCancel,
   engineName = "AI",
+  startedAt,
+  lastOutputAt,
   elapsedSeconds = 0,
   idleSeconds = 0,
   canCancel = true,
@@ -92,14 +96,22 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
   const currentVerb = PROCESSING_VERBS[verbIndex];
   const dots = ".".repeat(dotCount);
   const paddedDots = dots.padEnd(3, " ");
+  const now = Date.now();
+  const liveElapsedSeconds = isProcessing && startedAt
+    ? Math.max(0, Math.floor((now - startedAt) / 1000))
+    : elapsedSeconds;
+  const outputAt = lastOutputAt ?? startedAt;
+  const liveIdleSeconds = isProcessing && outputAt
+    ? Math.max(0, Math.floor((now - outputAt) / 1000))
+    : idleSeconds;
   const formatElapsed = (seconds: number) => {
     const safeSeconds = Math.max(0, Math.floor(seconds));
     const minutes = Math.floor(safeSeconds / 60);
     const remainingSeconds = safeSeconds % 60;
     return `${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
   };
-  const idleNotice = idleSeconds >= 60
-    ? `长时间无新输出（${formatElapsed(idleSeconds)}），${engineName} 可能仍在后台执行`
+  const idleNotice = liveIdleSeconds >= 60
+    ? `长时间无新输出（${formatElapsed(liveIdleSeconds)}），${engineName} 可能仍在后台执行`
     : null;
 
   if (!isProcessing) return null;
@@ -125,7 +137,7 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
         {/* 提示信息 */}
         <span className="text-muted-foreground/60 text-xs">
           (
-          <span className="font-mono">已运行 {formatElapsed(elapsedSeconds)}</span>
+          <span className="font-mono">已运行 {formatElapsed(liveElapsedSeconds)}</span>
           <span className="mx-1">·</span>
           {onCancel && canCancel && !isCancelling && (
             <button

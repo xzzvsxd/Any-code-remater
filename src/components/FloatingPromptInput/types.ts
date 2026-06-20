@@ -71,6 +71,8 @@ export interface ExecutionStatusInfo {
   isCancelling?: boolean;
   /** 当前运行开始时间（ms timestamp） */
   startedAt?: number | null;
+  /** 最近一次收到输出的时间（ms timestamp） */
+  lastOutputAt?: number | null;
   /** 已运行秒数 */
   elapsedSeconds: number;
   /** 距离上次输出的秒数 */

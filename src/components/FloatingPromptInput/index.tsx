@@ -3,7 +3,7 @@ import { AnimatePresence } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import { ArrowDown, LoaderCircle, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { FloatingPromptInputProps, FloatingPromptInputRef, ThinkingMode, ThinkingEffort, ModelType, ModelConfig } from "./types";
+import { FloatingPromptInputProps, FloatingPromptInputRef, ThinkingMode, ThinkingEffort, ModelType, ModelConfig, type ExecutionStatusInfo } from "./types";
 import { getModels } from "./constants";
 import { MODEL_NAMES_UPDATED_EVENT } from "@/lib/modelNameParser";
 import { toClaudeImageMention } from "@/lib/imagePath";
@@ -17,6 +17,7 @@ import { useCustomSlashCommands } from "./hooks/useCustomSlashCommands";
 import { usePluginSlashCommands } from "./hooks/usePluginSlashCommands";
 import { api } from "@/lib/api";
 import { getEnabledProviders } from "@/lib/promptEnhancementService";
+import { formatDuration } from "@/lib/pricing";
 import { inputReducer, initialState } from "./reducer";
 import { getDefaultModel } from "./defaultModelStorage";
 import { resolveSelectedModelName } from "./resolveModelName";
@@ -34,6 +35,61 @@ import {
 
 // Re-export types for external use
 export type { FloatingPromptInputRef, FloatingPromptInputProps, ThinkingMode, ModelType, ExecutionStatusInfo } from "./types";
+
+const ProcessingStatusCopy: React.FC<{ executionStatus?: ExecutionStatusInfo }> = ({ executionStatus }) => {
+  const { t } = useTranslation();
+  const [, setClockTick] = useState(0);
+
+  useEffect(() => {
+    if (!executionStatus?.isRunning) return;
+    const timer = window.setInterval(() => {
+      setClockTick((tick) => (tick + 1) % 1_000_000);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [executionStatus?.isRunning]);
+
+  if (!executionStatus) {
+    return (
+      <>
+        <div className="text-sm font-medium text-foreground/90">
+          {t('floatingInput.processingStatus', '处理中')}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          {t('floatingInput.processingStatusHint', '正在持续输出，你可以继续查看历史消息')}
+        </div>
+      </>
+    );
+  }
+
+  const now = Date.now();
+  const startedAt = executionStatus.startedAt ?? now;
+  const outputAt = executionStatus.lastOutputAt ?? startedAt;
+  const elapsedSeconds = executionStatus.isRunning
+    ? Math.max(0, Math.floor((now - startedAt) / 1000))
+    : executionStatus.elapsedSeconds;
+  const idleSeconds = executionStatus.isRunning
+    ? Math.max(0, Math.floor((now - outputAt) / 1000))
+    : executionStatus.idleSeconds;
+  const statusLabel = executionStatus.isCancelling
+    ? `正在取消当前 ${executionStatus.engineName} 会话...`
+    : `${executionStatus.engineName} 正在执行 · 已运行 ${formatDuration(elapsedSeconds)}`;
+  const statusHint = idleSeconds >= 60
+    ? `已 ${formatDuration(idleSeconds)} 无新输出，可能仍在后台执行。完成后会弹出提醒。`
+    : executionStatus.canCancel
+      ? `取消只会影响当前会话${executionStatus.projectLabel ? `（${executionStatus.projectLabel}）` : ''}，不会断开其他对话。`
+      : '正在启动进程，拿到当前会话 ID 后即可安全取消。';
+
+  return (
+    <>
+      <div className="text-sm font-medium text-foreground/90">
+        {statusLabel}
+      </div>
+      <div className="text-xs text-muted-foreground">
+        {statusHint}
+      </div>
+    </>
+  );
+};
 
 /**
  * FloatingPromptInput - Refactored modular component
@@ -750,14 +806,9 @@ const FloatingPromptInputInner = (
                 )}
               >
                 <div className="flex min-w-0 items-start gap-2 sm:items-center">
-                  <LoaderCircle className="mt-0.5 h-4 w-4 flex-shrink-0 animate-spin text-amber-500 sm:mt-0" />
+                  <LoaderCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500 sm:mt-0" />
                   <div className="min-w-0">
-                    <div className="text-sm font-medium text-foreground/90">
-                      {executionStatus?.statusLabel || t('floatingInput.processingStatus', '处理中')}
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      {executionStatus?.statusHint || t('floatingInput.processingStatusHint', '正在持续输出，你可以继续查看历史消息')}
-                    </div>
+                    <ProcessingStatusCopy executionStatus={executionStatus} />
                   </div>
                 </div>
 

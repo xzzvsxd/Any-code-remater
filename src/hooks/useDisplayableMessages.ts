@@ -5,7 +5,7 @@
  * 负责过滤出应该在 UI 中显示的消息
  */
 
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import type { ClaudeStreamMessage } from '@/types/claude';
 
 /**
@@ -138,6 +138,20 @@ function buildWarmupHiddenIndices(messages: ClaudeStreamMessage[], hideWarmupMes
   return warmupIndices;
 }
 
+interface DisplayableFilterState {
+  displayableMessages: ClaudeStreamMessage[];
+  skippableToolUseIds: Set<string>;
+}
+
+interface DisplayableMessagesCache extends DisplayableFilterState {
+  messages: ClaudeStreamMessage[];
+  processedLength: number;
+  firstMessage?: ClaudeStreamMessage;
+  lastProcessedMessage?: ClaudeStreamMessage;
+  hideWarmupMessages: boolean;
+  hideStartupWarnings: boolean;
+}
+
 function hasVisibleUserContent(message: ClaudeStreamMessage, skippableToolUseIds: Set<string>): boolean {
   const msg = message.message;
   if (!msg) return true;
@@ -171,10 +185,49 @@ function hasVisibleUserContent(message: ClaudeStreamMessage, skippableToolUseIds
   return false;
 }
 
-export function filterDisplayableMessages(
+function shouldDisplayMessageAtIndex(
+  messages: ClaudeStreamMessage[],
+  index: number,
+  hideWarmupMessages: boolean,
+  hideStartupWarnings: boolean,
+  warmupIndices: Set<number> | null,
+  skippableToolUseIds: Set<string>,
+): boolean {
+  const message = messages[index];
+  let shouldDisplay = true;
+
+  // 规则 0：隐藏 Warmup 消息及其回复
+  if (hideWarmupMessages && warmupIndices?.has(index)) {
+    shouldDisplay = false;
+  }
+
+  // 规则 0.5：隐藏启动期间的系统警告消息
+  if (shouldDisplay && hideStartupWarnings && isStartupWarningMessage(message)) {
+    shouldDisplay = false;
+  }
+
+  // 规则 1：跳过没有实际内容的元消息
+  if (shouldDisplay && message.isMeta && !message.leafUuid && !message.summary) {
+    shouldDisplay = false;
+  }
+
+  // 规则 2 & 3：处理用户消息
+  if (shouldDisplay && message.type === 'user' && message.message) {
+    // 跳过元消息标记的用户消息
+    if (message.isMeta) {
+      shouldDisplay = false;
+    } else if (!hasVisibleUserContent(message, skippableToolUseIds)) {
+      shouldDisplay = false;
+    }
+  }
+
+  return shouldDisplay;
+}
+
+function filterDisplayableMessagesWithState(
   messages: ClaudeStreamMessage[],
   options: DisplayableMessagesOptions = {},
-): ClaudeStreamMessage[] {
+): DisplayableFilterState {
   // 默认隐藏 Warmup（undefined 时为 true），只有明确设置为 false 时才显示
   const hideWarmupMessages = options.hideWarmupMessages !== false;
   // 默认隐藏启动警告（undefined 时为 true）
@@ -184,32 +237,14 @@ export function filterDisplayableMessages(
   const displayableMessages: ClaudeStreamMessage[] = [];
 
   messages.forEach((message, index) => {
-    let shouldDisplay = true;
-
-    // 规则 0：隐藏 Warmup 消息及其回复
-    if (hideWarmupMessages && warmupIndices.has(index)) {
-      shouldDisplay = false;
-    }
-
-    // 规则 0.5：隐藏启动期间的系统警告消息
-    if (shouldDisplay && hideStartupWarnings && isStartupWarningMessage(message)) {
-      shouldDisplay = false;
-    }
-
-    // 规则 1：跳过没有实际内容的元消息
-    if (shouldDisplay && message.isMeta && !message.leafUuid && !message.summary) {
-      shouldDisplay = false;
-    }
-
-    // 规则 2 & 3：处理用户消息
-    if (shouldDisplay && message.type === 'user' && message.message) {
-      // 跳过元消息标记的用户消息
-      if (message.isMeta) {
-        shouldDisplay = false;
-      } else if (!hasVisibleUserContent(message, skippableToolUseIds)) {
-        shouldDisplay = false;
-      }
-    }
+    const shouldDisplay = shouldDisplayMessageAtIndex(
+      messages,
+      index,
+      hideWarmupMessages,
+      hideStartupWarnings,
+      warmupIndices,
+      skippableToolUseIds,
+    );
 
     if (shouldDisplay) {
       displayableMessages.push(message);
@@ -220,7 +255,14 @@ export function filterDisplayableMessages(
     rememberSkippableToolUses(message, skippableToolUseIds);
   });
 
-  return displayableMessages;
+  return { displayableMessages, skippableToolUseIds };
+}
+
+export function filterDisplayableMessages(
+  messages: ClaudeStreamMessage[],
+  options: DisplayableMessagesOptions = {},
+): ClaudeStreamMessage[] {
+  return filterDisplayableMessagesWithState(messages, options).displayableMessages;
 }
 
 /**
@@ -244,7 +286,80 @@ export function useDisplayableMessages(
   messages: ClaudeStreamMessage[],
   options: DisplayableMessagesOptions = {}
 ): ClaudeStreamMessage[] {
+  const cacheRef = useRef<DisplayableMessagesCache | null>(null);
+
   return useMemo(() => {
-    return filterDisplayableMessages(messages, options);
+    const hideWarmupMessages = options.hideWarmupMessages !== false;
+    const hideStartupWarnings = options.hideStartupWarnings !== false;
+    const cache = cacheRef.current;
+    const canUseAppendFastPath =
+      cache !== null &&
+      cache.hideWarmupMessages === hideWarmupMessages &&
+      cache.hideStartupWarnings === hideStartupWarnings &&
+      messages.length >= cache.processedLength &&
+      (cache.processedLength === 0 ||
+        messages[cache.processedLength - 1] === cache.lastProcessedMessage) &&
+      (cache.firstMessage === undefined || messages[0] === cache.firstMessage);
+
+    if (canUseAppendFastPath) {
+      let displayableMessages = cache.displayableMessages;
+      const appendedDisplayableMessages: ClaudeStreamMessage[] = [];
+      const skippableToolUseIds = new Set(cache.skippableToolUseIds);
+      let usedFastPath = true;
+
+      for (let index = cache.processedLength; index < messages.length; index++) {
+        // Warmup 会影响“下一条 assistant 回复”的显示状态；这类跨边界规则走全量路径更安全。
+        if (
+          hideWarmupMessages &&
+          (isWarmupMessage(messages[index]) ||
+            (index > 0 && isWarmupMessage(messages[index - 1]) && messages[index].type === 'assistant'))
+        ) {
+          usedFastPath = false;
+          break;
+        }
+
+        if (shouldDisplayMessageAtIndex(
+          messages,
+          index,
+          hideWarmupMessages,
+          hideStartupWarnings,
+          null,
+          skippableToolUseIds,
+        )) {
+          appendedDisplayableMessages.push(messages[index]);
+        }
+        rememberSkippableToolUses(messages[index], skippableToolUseIds);
+      }
+
+      if (usedFastPath) {
+        if (appendedDisplayableMessages.length > 0) {
+          displayableMessages = displayableMessages.concat(appendedDisplayableMessages);
+        }
+        cacheRef.current = {
+          messages,
+          displayableMessages,
+          skippableToolUseIds,
+          processedLength: messages.length,
+          firstMessage: messages[0],
+          lastProcessedMessage: messages[messages.length - 1],
+          hideWarmupMessages,
+          hideStartupWarnings,
+        };
+        return displayableMessages;
+      }
+    }
+
+    const nextState = filterDisplayableMessagesWithState(messages, options);
+    cacheRef.current = {
+      messages,
+      displayableMessages: nextState.displayableMessages,
+      skippableToolUseIds: nextState.skippableToolUseIds,
+      processedLength: messages.length,
+      firstMessage: messages[0],
+      lastProcessedMessage: messages[messages.length - 1],
+      hideWarmupMessages,
+      hideStartupWarnings,
+    };
+    return nextState.displayableMessages;
   }, [messages, options.hideWarmupMessages, options.hideStartupWarnings]);
 }
