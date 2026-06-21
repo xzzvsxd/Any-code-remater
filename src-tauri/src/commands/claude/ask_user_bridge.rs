@@ -14,6 +14,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
@@ -56,6 +57,12 @@ pub struct AskUserQuestionEvent {
     pub questions: serde_json::Value,
     /// plan 类型携带计划文本；question 类型为 null。
     pub plan: serde_json::Value,
+    /// 前端展示倒计时用：后端最长等待秒数。
+    #[serde(rename = "timeoutSeconds")]
+    pub timeout_seconds: u64,
+    /// 前端展示倒计时用：本次等待截止毫秒时间戳。
+    #[serde(rename = "expiresAtMs")]
+    pub expires_at_ms: u64,
 }
 
 /// MCP handler POST /ask 的请求体。
@@ -280,12 +287,20 @@ async fn handle_conn(
         .kind
         .clone()
         .unwrap_or_else(|| "question".to_string());
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let expires_at_ms = now_ms.saturating_add(ASK_TIMEOUT_SECS.saturating_mul(1000));
+
     let evt = AskUserQuestionEvent {
         request_id: parsed.request_id.clone(),
         session_id: parsed.session_id.clone(),
         kind: kind.clone(),
         questions: parsed.questions.clone(),
         plan: parsed.plan.clone(),
+        timeout_seconds: ASK_TIMEOUT_SECS,
+        expires_at_ms,
     };
     // 按类型 emit 不同事件：plan → ask-user-plan，question → ask-user-question。
     // 同时各带一条按 sessionId 的事件，前端任择其一监听。

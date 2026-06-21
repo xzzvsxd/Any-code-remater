@@ -52,6 +52,7 @@ import { usePromptIndexMaps } from '@/hooks/usePromptIndexMaps';
 import { loadUiOnlySessionMessages, mergeUiOnlySessionMessages, pruneUiOnlySessionMessagesAfter } from '@/lib/uiOnlySessionEvents';
 import { prepareRecentProjects } from '@/lib/recentProjects';
 import { safeRandomUUID } from '@/lib/browserCompat';
+import { getSessionDisplayTitle } from '@/lib/sessionDisplayTitle';
 import { SessionHeader } from "./session/SessionHeader";
 import { SessionMessages, type SessionMessagesRef } from "./session/SessionMessages";
 
@@ -276,6 +277,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     pendingApproval,
     approvePlan,
     rejectPlan,
+    deferPlanDecision,
     closeApprovalDialog,
     setSendPromptCallback,
     triggerBridgePlan,
@@ -286,6 +288,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     pendingQuestion,
     showQuestionDialog,
     submitAnswers,
+    deferQuestionResponse,
     closeQuestionDialog,
     setSendMessageCallback,
     triggerBridgeQuestion,
@@ -653,6 +656,62 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     processMessageWithTranslation
   });
 
+  const [sessionTitles, setSessionTitles] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let mounted = true;
+
+    api.getSessionMeta()
+      .then((meta) => {
+        if (mounted) {
+          setSessionTitles(meta.titles || {});
+        }
+      })
+      .catch((error) => {
+        console.warn('[ClaudeCodeSession] Failed to load session titles:', error);
+      });
+
+    const handleTitleChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId?: string; title?: string }>).detail;
+      const sessionId = detail?.sessionId;
+      if (!sessionId) return;
+
+      const title = detail?.title?.trim() ?? '';
+      setSessionTitles((prev) => {
+        const next = { ...prev };
+        if (title) next[sessionId] = title;
+        else delete next[sessionId];
+        return next;
+      });
+    };
+
+    window.addEventListener('session-title-changed', handleTitleChanged);
+    return () => {
+      mounted = false;
+      window.removeEventListener('session-title-changed', handleTitleChanged);
+    };
+  }, []);
+
+  const interactionSessionTitle = useMemo(() => {
+    const sessionForTitle = effectiveSession || session || null;
+    const realSessionId = sessionForTitle?.id || claudeSessionId || '';
+    const customTitle = realSessionId ? sessionTitles[realSessionId]?.trim() : '';
+    if (customTitle) {
+      return customTitle;
+    }
+
+    if (sessionForTitle?.first_message?.trim()) {
+      return getSessionDisplayTitle(sessionForTitle, sessionTitles);
+    }
+
+    const projectLabel = getProjectLabel(projectPath);
+    if (projectLabel) {
+      return projectLabel;
+    }
+
+    return sessionForTitle?.id || '当前会话';
+  }, [claudeSessionId, effectiveSession, projectPath, session, sessionTitles]);
+
   const handleJumpToLatest = useCallback(() => {
     setUserScrolled(false);
     setShouldAutoScroll(true);
@@ -745,23 +804,23 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     const matchTab = (sessionId: string) => !sessionId || !runTabId || sessionId === runTabId;
     (async () => {
       try {
-        unQ = await listen<{ requestId: string; sessionId: string; questions: unknown }>(
+        unQ = await listen<{ requestId: string; sessionId: string; questions: unknown; timeoutSeconds?: number; expiresAtMs?: number }>(
           "ask-user-question",
           (event) => {
-            const { requestId, sessionId, questions } = event.payload || ({} as any);
+            const { requestId, sessionId, questions, timeoutSeconds, expiresAtMs } = event.payload || ({} as any);
             if (!matchTab(sessionId)) return;
             if (!requestId || !Array.isArray(questions)) return;
-            triggerBridgeQuestion(requestId, sessionId || "", questions as any);
+            triggerBridgeQuestion(requestId, sessionId || "", questions as any, { timeoutSeconds, expiresAtMs });
             void notifyUserInputNeeded("question");
           }
         );
-        unP = await listen<{ requestId: string; sessionId: string; plan: unknown }>(
+        unP = await listen<{ requestId: string; sessionId: string; plan: unknown; timeoutSeconds?: number; expiresAtMs?: number }>(
           "ask-user-plan",
           (event) => {
-            const { requestId, sessionId, plan } = event.payload || ({} as any);
+            const { requestId, sessionId, plan, timeoutSeconds, expiresAtMs } = event.payload || ({} as any);
             if (!matchTab(sessionId)) return;
             if (!requestId || typeof plan !== "string") return;
-            triggerBridgePlan(requestId, sessionId || "", plan);
+            triggerBridgePlan(requestId, sessionId || "", plan, { timeoutSeconds, expiresAtMs });
             void notifyUserInputNeeded("plan");
           }
         );
@@ -1778,6 +1837,9 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
           onReject={rejectPlan}
           continuesAsNewTurn={!supportsStreamJsonInput}
           canDefer={!pendingApproval?.requestId}
+          sessionTitle={interactionSessionTitle}
+          expiresAtMs={pendingApproval?.expiresAtMs}
+          onDeferDecision={deferPlanDecision}
         />
 
         {/* 🆕 User Question Dialog - AskUserQuestion 自动触发 */}
@@ -1789,6 +1851,9 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
           onSubmit={submitAnswers}
           continuesAsNewTurn={!supportsStreamJsonInput}
           canDefer={!pendingQuestion?.requestId}
+          sessionTitle={interactionSessionTitle}
+          expiresAtMs={pendingQuestion?.expiresAtMs}
+          onDeferResponse={deferQuestionResponse}
         />
       </div>
 

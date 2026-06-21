@@ -8,7 +8,7 @@
  */
 
 import { useState, useMemo, useEffect } from "react";
-import { HelpCircle, Send, XCircle, CheckCircle, Check, PenLine } from "lucide-react";
+import { HelpCircle, Send, XCircle, CheckCircle, Check, PenLine, Clock } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -23,6 +23,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import type { Question, UserAnswers } from "@/contexts/UserQuestionContext";
 import { getQuestionKey, normalizeQuestions } from "@/lib/askUserQuestionUtils";
+import { formatInteractionCountdown, getInteractionRemainingMs } from "@/lib/interactionDeadline";
 
 export interface AskUserQuestionDialogProps {
   /** 是否显示对话框 */
@@ -39,6 +40,12 @@ export interface AskUserQuestionDialogProps {
   resetKey?: string;
   /** 是否允许稍后回答；阻塞式 bridge 请求不允许关闭后悬挂 */
   canDefer?: boolean;
+  /** 当前交互所属会话标题（优先传入用户备注标题） */
+  sessionTitle?: string;
+  /** 阻塞式 bridge 请求的超时时刻（毫秒时间戳） */
+  expiresAtMs?: number;
+  /** 暂时不回答：bridge 请求会回灌“用户暂不回答”，非 bridge 请求则退化为关闭 */
+  onDeferResponse?: () => void;
 }
 
 /**
@@ -52,6 +59,9 @@ export function AskUserQuestionDialog({
   continuesAsNewTurn = false,
   resetKey,
   canDefer = true,
+  sessionTitle,
+  expiresAtMs,
+  onDeferResponse,
 }: AskUserQuestionDialogProps) {
   // 用户选择的答案
   const [selectedAnswers, setSelectedAnswers] = useState<UserAnswers>({});
@@ -59,7 +69,9 @@ export function AskUserQuestionDialog({
   const [customInputs, setCustomInputs] = useState<Record<string, string>>({});
   // 标记哪些问题选择了"自由输入"模式
   const [usingCustom, setUsingCustom] = useState<Record<string, boolean>>({});
+  const [remainingMs, setRemainingMs] = useState(0);
   const safeQuestions = useMemo(() => normalizeQuestions(questions), [questions]);
+  const trimmedSessionTitle = sessionTitle?.trim() ?? "";
 
   // 每次重新打开对话框，或同一个打开的对话框切换到下一批问题时清空旧选择。
   // 否则连续 ask-user / request_user_input 会复用上一批选择，造成“第二遍弹了但内容/选择不对”。
@@ -70,6 +82,21 @@ export function AskUserQuestionDialog({
       setUsingCustom({});
     }
   }, [open, resetKey]);
+
+  useEffect(() => {
+    if (!open || !expiresAtMs) {
+      setRemainingMs(0);
+      return;
+    }
+
+    const updateRemaining = () => {
+      setRemainingMs(getInteractionRemainingMs(expiresAtMs));
+    };
+
+    updateRemaining();
+    const timer = window.setInterval(updateRemaining, 1000);
+    return () => window.clearInterval(timer);
+  }, [open, expiresAtMs]);
 
   // 处理单选
   const handleSingleSelect = (questionKey: string, optionLabel: string) => {
@@ -174,6 +201,20 @@ export function AskUserQuestionDialog({
     // 保留选择，用户可能稍后继续
   };
 
+  const handleDeferResponse = () => {
+    if (onDeferResponse) {
+      onDeferResponse();
+      setSelectedAnswers({});
+      setCustomInputs({});
+      setUsingCustom({});
+      return;
+    }
+
+    handleClose();
+  };
+
+  const countdownText = expiresAtMs ? formatInteractionCountdown(remainingMs) : "";
+
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && canDefer && handleClose()}>
       <DialogContent
@@ -193,13 +234,32 @@ export function AskUserQuestionDialog({
                 <HelpCircle className="h-[18px] w-[18px] text-blue-500" />
               )}
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <DialogTitle className="text-base leading-tight">Claude 正在询问你</DialogTitle>
               <DialogDescription className="text-xs mt-0.5">
                 {continuesAsNewTurn
                   ? "本轮对话已结束，提交答案后将作为新一轮继续"
                   : "选择答案后提交，Claude 将据此继续"}
               </DialogDescription>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                {trimmedSessionTitle && (
+                  <span
+                    className="inline-flex max-w-[22rem] items-center gap-1 rounded-full border border-border/70 bg-muted/50 px-2 py-0.5"
+                    title={trimmedSessionTitle}
+                  >
+                    <span className="shrink-0">当前会话：</span>
+                    <span className="truncate font-medium text-foreground/80">
+                      {trimmedSessionTitle}
+                    </span>
+                  </span>
+                )}
+                {countdownText && (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/25 bg-amber-500/10 px-2 py-0.5 text-amber-700 dark:text-amber-300">
+                    <Clock className="h-3 w-3" />
+                    <span>剩余 {countdownText}</span>
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </DialogHeader>
@@ -420,15 +480,15 @@ export function AskUserQuestionDialog({
             )}
           </div>
           <div className="flex items-center gap-2">
-            {canDefer && (
+            {(canDefer || onDeferResponse) && (
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={handleClose}
+                onClick={handleDeferResponse}
                 className="gap-1.5 text-muted-foreground"
               >
                 <XCircle className="h-4 w-4" />
-                稍后回答
+                暂时没想好，暂时不回答
               </Button>
             )}
             <Button

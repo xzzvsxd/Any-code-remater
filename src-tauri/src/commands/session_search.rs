@@ -4,8 +4,8 @@
 //! 并行读取其原始会话文件做不区分大小写的子串匹配；命中即通过 emit 单条吐回，
 //! 前端流式 append，不阻塞 UI。搜索完成后 emit 结束事件。
 //!
-//! 设计取舍（KISS）：直接对会话文件原始文本做子串匹配即可满足"找内容"的诉求，
-//! 不逐引擎做结构化解析——关键词只要出现在某条消息的内容里就能命中。
+//! 设计取舍：按引擎定位文件后，只抽取消息/输出正文做子串匹配，避免 session_id、
+//! project_path、model 等元数据导致“没包含关键词的会话也显示”。
 
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter};
@@ -98,9 +98,139 @@ pub async fn search_sessions_content(
 
 /// 读取单个会话的原始文本并统计关键词出现次数（不区分大小写）。读不到则返回 None。
 fn match_session(item: &SearchSessionItem, keyword_lower: &str) -> Option<usize> {
-    let content = read_session_text(item)?;
-    let count = content.to_lowercase().matches(keyword_lower).count();
+    let raw = read_session_text(item)?;
+    let content = extract_searchable_session_text(&raw);
+    let haystack = if content.trim().is_empty() { raw } else { content };
+    let count = haystack.to_lowercase().matches(keyword_lower).count();
     Some(count)
+}
+
+/// 从 Claude/Codex/Gemini 的 JSON/JSONL 会话中提取正文文本。
+/// 搜索必须面向用户可感知的会话内容，而不是原始 JSON 元数据。
+fn extract_searchable_session_text(raw: &str) -> String {
+    let mut out = String::new();
+    let mut parsed_any_json = false;
+
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            parsed_any_json = true;
+            collect_searchable_text(&value, false, &mut out);
+        }
+    }
+
+    if parsed_any_json {
+        return out;
+    }
+
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) {
+        collect_searchable_text(&value, false, &mut out);
+        return out;
+    }
+
+    raw.to_string()
+}
+
+fn collect_searchable_text(value: &serde_json::Value, parent_allowed: bool, out: &mut String) {
+    match value {
+        serde_json::Value::String(text) => {
+            if parent_allowed && !looks_like_metadata_value(text) {
+                out.push_str(text);
+                out.push('\n');
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_searchable_text(item, parent_allowed, out);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (key, child) in map {
+                if is_excluded_metadata_key(key) {
+                    continue;
+                }
+
+                let allowed = parent_allowed || is_searchable_text_key(key);
+                collect_searchable_text(child, allowed, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_searchable_text_key(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "content"
+            | "text"
+            | "message"
+            | "messages"
+            | "prompt"
+            | "question"
+            | "answer"
+            | "output"
+            | "stdout"
+            | "stderr"
+            | "result"
+            | "summary"
+            | "transcript"
+            | "command"
+            | "args"
+    )
+}
+
+fn is_excluded_metadata_key(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "id"
+            | "uuid"
+            | "session_id"
+            | "sessionid"
+            | "request_id"
+            | "requestid"
+            | "parent_uuid"
+            | "parentuuid"
+            | "project_id"
+            | "projectid"
+            | "project_path"
+            | "projectpath"
+            | "cwd"
+            | "path"
+            | "file"
+            | "filename"
+            | "model"
+            | "role"
+            | "type"
+            | "timestamp"
+            | "created_at"
+            | "createdat"
+            | "updated_at"
+            | "updatedat"
+            | "version"
+            | "git_branch"
+            | "gitbranch"
+    )
+}
+
+fn looks_like_metadata_value(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    let is_uuid_like = trimmed.len() >= 32
+        && trimmed
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() || c == '-');
+    if is_uuid_like {
+        return true;
+    }
+
+    false
 }
 
 /// 按引擎定位会话文件并读取其全部文本内容。

@@ -16,7 +16,8 @@ import { cn, filterValidSessions } from "@/lib/utils";
 import { formatUnixTimestamp, formatISOTimestamp, truncateText } from "@/lib/date-utils";
 import type { Session, ClaudeMdFile } from "@/lib/api";
 import { api } from "@/lib/api";
-import { getSessionDisplayTitle, sessionMatchesDisplayTitle } from "@/lib/sessionDisplayTitle";
+import { getSessionDisplayTitle } from "@/lib/sessionDisplayTitle";
+import { filterSessionsForSearch } from "@/lib/sessionSearchFilter";
 import { useTranslation } from '@/hooks/useTranslation';
 import { listen } from '@tauri-apps/api/event';
 import { Search, X } from 'lucide-react';
@@ -324,13 +325,13 @@ export const SessionList: React.FC<SessionListProps> = ({
   // 🔍 搜索激活时（关键词非空），仅保留内容命中的会话；命中集合流式增长 → 列表实时 append。
   // 同时兜底匹配标题/首条消息，让常见的标题匹配立即可见（无需等后端内容扫描）。
   const isSearchActive = searchKeyword.trim().length > 0;
-  const searchLower = searchKeyword.trim().toLowerCase();
   const searchedSessions = isSearchActive
-    ? filteredSessions.filter(
-        (s) =>
-          searchHitIds.has(s.id) ||
-          sessionMatchesDisplayTitle(s, sessionTitles, searchLower)
-      )
+    ? filterSessionsForSearch({
+        sessions: filteredSessions,
+        searchKeyword,
+        searchHitIds,
+        titles: sessionTitles,
+      })
     : filteredSessions;
 
   // 🔧 按活跃度排序：优先使用最后一条消息时间，其次第一条消息时间，最后使用创建时间

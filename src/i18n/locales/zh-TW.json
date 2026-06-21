@@ -587,6 +587,8 @@
     "verboseOutputDescription": "顯示完整的 bash 和命令輸出",
     "promptSuggestion": "智能輸入建議",
     "promptSuggestionDescription": "基於對話上下文自動產生輸入建議，按 Tab 接受",
+    "autoTopicNaming": "自動話題命名",
+    "autoTopicNamingDescription": "新會話發布後用 Haiku 模型根據首條 prompt 自動產生會話備註名（預設開啟）",
     "disableRewindGitOps": "停用撤回中的 Git 操作",
     "disableRewindGitOpsDescription": "啟用後，撤回功能只能刪除對話歷史，無法回滾程式碼變更（適用於多人協作或生產環境）",
     "chatRetentionDays": "聊天記錄保留天數",

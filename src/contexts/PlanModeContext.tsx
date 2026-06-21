@@ -29,6 +29,10 @@ export interface PendingPlanApproval {
   requestId?: string;
   /** 关联会话 id（MCP 提交携带），用于必要时按会话取消。 */
   sessionId?: string;
+  /** 后端等待用户审批的超时时长（秒）。 */
+  timeoutSeconds?: number;
+  /** 后端等待用户审批的截止时间（毫秒时间戳）。 */
+  expiresAtMs?: number;
 }
 
 export type PlanStatus = 'pending' | 'approved' | 'rejected';
@@ -45,9 +49,15 @@ interface PlanModeContextValue {
   /**
    * 触发一次「阻塞式 MCP 计划审批」对话框：由后端 ask-user-plan 事件驱动，必然弹出并携带 requestId。
    */
-  triggerBridgePlan: (requestId: string, sessionId: string, plan: string) => void;
+  triggerBridgePlan: (
+    requestId: string,
+    sessionId: string,
+    plan: string,
+    metadata?: { timeoutSeconds?: number; expiresAtMs?: number }
+  ) => void;
   approvePlan: (feedback?: string) => void;
   rejectPlan: (feedback?: string) => void;
+  deferPlanDecision: () => void;
   closeApprovalDialog: () => void;
   getPlanStatus: (planId: string) => PlanStatus;
   isPlanApproved: (planId: string) => boolean;
@@ -228,13 +238,20 @@ export function PlanModeProvider({
   // 触发阻塞式 MCP 计划审批：由后端 ask-user-plan 事件驱动，必然弹出并携带 requestId。
   // 不走去重——每个 submit_plan 调用唯一，且 CLI 正阻塞等待，必须弹。
   const triggerBridgePlan = useCallback(
-    (requestId: string, sessionId: string, plan: string) => {
+    (
+      requestId: string,
+      sessionId: string,
+      plan: string,
+      metadata?: { timeoutSeconds?: number; expiresAtMs?: number },
+    ) => {
       activateOrQueueApproval({
         plan,
         planId: `bridge_${requestId}`,
         timestamp: Date.now(),
         requestId,
         sessionId,
+        timeoutSeconds: metadata?.timeoutSeconds,
+        expiresAtMs: metadata?.expiresAtMs,
       });
     },
     [activateOrQueueApproval],
@@ -309,6 +326,32 @@ export function PlanModeProvider({
     // 旧路径：拒绝不发任何消息（维持原行为）。
   }, [pendingApproval, showNextQueuedApproval]);
 
+  const deferPlanDecision = useCallback(() => {
+    const activeApproval = pendingApprovalRef.current;
+    if (!activeApproval) {
+      return;
+    }
+
+    const { requestId } = activeApproval;
+
+    if (requestId) {
+      const text = "用户暂时未决定是否批准该计划。请不要执行计划；先暂停，等待用户后续确认或修改意见。";
+      showNextQueuedApproval();
+      api.answerUserQuestion(requestId, text).catch((e) => {
+        console.error("[PlanMode] defer回灌失败:", e);
+      });
+      return;
+    }
+
+    if (approvalQueueRef.current.length > 0) {
+      showNextQueuedApproval();
+      return;
+    }
+
+    showApprovalDialogRef.current = false;
+    setShowApprovalDialog(false);
+  }, [showNextQueuedApproval]);
+
   const closeApprovalDialog = useCallback(() => {
     // 阻塞式 submit_plan 不能被隐藏，否则后端 handler 会一直等待。
     if (pendingApprovalRef.current?.requestId) {
@@ -336,6 +379,7 @@ export function PlanModeProvider({
     triggerBridgePlan,
     approvePlan,
     rejectPlan,
+    deferPlanDecision,
     closeApprovalDialog,
     getPlanStatus,
     isPlanApproved,

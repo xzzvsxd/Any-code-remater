@@ -588,6 +588,8 @@
     "verboseOutputDescription": "Show full bash and command output",
     "promptSuggestion": "Prompt Suggestions",
     "promptSuggestionDescription": "Auto-generate input suggestions based on conversation context, press Tab to accept",
+    "autoTopicNaming": "Auto Topic Naming",
+    "autoTopicNamingDescription": "Use the Haiku model to name new sessions from the first prompt after publishing (enabled by default)",
     "disablePromptAutoCommit": "Disable Auto Commit After Prompt",
     "disablePromptAutoCommitDescription": "Stop creating a Git commit after each conversation turn; conversation history stays, but per-turn code rewind may be unavailable or limited",
     "disableRewindGitOps": "Disable Git Operations in Rewind",

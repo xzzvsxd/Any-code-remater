@@ -63,6 +63,10 @@ export interface PendingQuestion {
   requestId?: string;
   /** 关联会话 id（MCP 提问携带），用于必要时按会话取消。 */
   sessionId?: string;
+  /** 后端等待用户响应的超时时长（秒）。 */
+  timeoutSeconds?: number;
+  /** 后端等待用户响应的截止时间（毫秒时间戳）。 */
+  expiresAtMs?: number;
 }
 
 /**
@@ -84,9 +88,16 @@ interface UserQuestionContextValue {
    * 与 triggerQuestionDialog 不同，它必然弹出（每个 MCP 调用唯一、且 CLI 正阻塞等待），
    * 并携带 requestId/sessionId 供提交时回灌唤醒。
    */
-  triggerBridgeQuestion: (requestId: string, sessionId: string, questions: Question[]) => void;
+  triggerBridgeQuestion: (
+    requestId: string,
+    sessionId: string,
+    questions: Question[],
+    metadata?: { timeoutSeconds?: number; expiresAtMs?: number }
+  ) => void;
   /** 提交答案 - 格式化并发送给 Claude */
   submitAnswers: (answers: UserAnswers) => boolean;
+  /** 暂时不回答；bridge 请求会回灌给 Claude，避免后端一直悬挂。 */
+  deferQuestionResponse: () => boolean;
   /** 关闭问答对话框 */
   closeQuestionDialog: () => void;
 
@@ -214,7 +225,12 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
   // 触发阻塞式 MCP 提问：由后端 ask-user-question 事件驱动，必然弹出并携带 requestId。
   // 不走 answeredQuestionIds / autoTriggered 去重——每个 MCP 调用唯一，且 CLI 正阻塞等待，必须弹。
   const triggerBridgeQuestion = useCallback(
-    (requestId: string, sessionId: string, questions: Question[]) => {
+    (
+      requestId: string,
+      sessionId: string,
+      questions: Question[],
+      metadata?: { timeoutSeconds?: number; expiresAtMs?: number },
+    ) => {
       const safeQuestions = normalizeQuestions(questions);
       activateOrQueueQuestion({
         questions: safeQuestions,
@@ -222,6 +238,8 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
         timestamp: Date.now(),
         requestId,
         sessionId,
+        timeoutSeconds: metadata?.timeoutSeconds,
+        expiresAtMs: metadata?.expiresAtMs,
       });
     },
     [activateOrQueueQuestion],
@@ -316,6 +334,40 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
     return true;
   }, [pendingQuestion, formatAnswersAsMessage, showNextQueuedQuestion]);
 
+  const deferQuestionResponse = useCallback(() => {
+    const activeQuestion = pendingQuestionRef.current;
+    if (!activeQuestion) {
+      return false;
+    }
+
+    const { questionId, requestId } = activeQuestion;
+
+    if (requestId) {
+      const text = "用户暂时没想好，暂时不回答。请不要替用户选择；如果可以继续处理不依赖该答案的部分就继续，否则暂停等待用户后续说明。";
+
+      setAnsweredQuestionIds(prev => {
+        const newSet = new Set(prev);
+        newSet.add(questionId);
+        return newSet;
+      });
+      showNextQueuedQuestion();
+
+      api.answerUserQuestion(requestId, text).catch((e) => {
+        console.error("[UserQuestion] defer answerUserQuestion failed:", e);
+      });
+      return true;
+    }
+
+    if (questionQueueRef.current.length > 0) {
+      showNextQueuedQuestion();
+      return true;
+    }
+
+    showQuestionDialogRef.current = false;
+    setShowQuestionDialog(false);
+    return true;
+  }, [showNextQueuedQuestion]);
+
   // 关闭问答对话框（不提交答案）
   const closeQuestionDialog = useCallback(() => {
     // 阻塞式 bridge 请求不能被隐藏，否则后端 handler 会一直等待。
@@ -341,6 +393,7 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
     triggerQuestionDialog,
     triggerBridgeQuestion,
     submitAnswers,
+    deferQuestionResponse,
     closeQuestionDialog,
     isQuestionAnswered,
     answeredQuestionIds,

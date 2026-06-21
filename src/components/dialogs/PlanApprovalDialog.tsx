@@ -9,7 +9,7 @@
  * - 添加计划分析统计
  */
 
-import { XCircle, FileText, Play, ListChecks, PenLine } from "lucide-react";
+import { XCircle, FileText, Play, ListChecks, PenLine, Clock } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import ReactMarkdown from 'react-markdown';
 import { useEffect, useMemo, useState } from 'react';
+import { formatInteractionCountdown, getInteractionRemainingMs } from "@/lib/interactionDeadline";
 
 export interface PlanApprovalDialogProps {
   /** 是否显示对话框 */
@@ -38,6 +39,12 @@ export interface PlanApprovalDialogProps {
   continuesAsNewTurn?: boolean;
   /** 是否允许关闭后稍后处理；阻塞式 bridge 计划审批不允许隐藏后悬挂 */
   canDefer?: boolean;
+  /** 当前交互所属会话标题（优先传入用户备注标题） */
+  sessionTitle?: string;
+  /** 阻塞式 bridge 请求的超时时刻（毫秒时间戳） */
+  expiresAtMs?: number;
+  /** 暂不决定：bridge 请求会回灌“不批准也不执行”，非 bridge 请求则退化为关闭 */
+  onDeferDecision?: () => void;
 }
 
 /**
@@ -51,14 +58,34 @@ export function PlanApprovalDialog({
   onReject,
   continuesAsNewTurn = false,
   canDefer = true,
+  sessionTitle,
+  expiresAtMs,
+  onDeferDecision,
 }: PlanApprovalDialogProps) {
   const [feedback, setFeedback] = useState('');
+  const [remainingMs, setRemainingMs] = useState(0);
+  const trimmedSessionTitle = sessionTitle?.trim() ?? "";
 
   useEffect(() => {
     if (open) {
       setFeedback('');
     }
   }, [open, plan]);
+
+  useEffect(() => {
+    if (!open || !expiresAtMs) {
+      setRemainingMs(0);
+      return;
+    }
+
+    const updateRemaining = () => {
+      setRemainingMs(getInteractionRemainingMs(expiresAtMs));
+    };
+
+    updateRemaining();
+    const timer = window.setInterval(updateRemaining, 1000);
+    return () => window.clearInterval(timer);
+  }, [open, expiresAtMs]);
 
   const handleApprove = () => {
     onApprove(feedback.trim() || undefined);
@@ -71,6 +98,16 @@ export function PlanApprovalDialog({
     onReject(feedback.trim() || undefined);
     // 父级 rejectPlan 负责关闭当前计划或切到队列里的下一条计划。
     setFeedback('');
+  };
+
+  const handleDeferDecision = () => {
+    if (onDeferDecision) {
+      onDeferDecision();
+      setFeedback('');
+      return;
+    }
+
+    onClose();
   };
 
   // 分析计划内容
@@ -88,6 +125,8 @@ export function PlanApprovalDialog({
     return { steps, chars, lines };
   }, [plan]);
 
+  const countdownText = expiresAtMs ? formatInteractionCountdown(remainingMs) : "";
+
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && canDefer && onClose()}>
       <DialogContent
@@ -99,13 +138,32 @@ export function PlanApprovalDialog({
             <div className="h-10 w-10 rounded-full bg-blue-500/10 flex items-center justify-center">
               <FileText className="h-5 w-5 text-blue-500" />
             </div>
-            <div>
+            <div className="min-w-0 flex-1">
               <DialogTitle className="text-lg">计划已完成</DialogTitle>
               <DialogDescription>
                 {continuesAsNewTurn
                   ? "Claude 已完成规划。本轮对话已结束，批准后将作为新一轮开始执行"
                   : "Claude 已完成规划，请审批以下计划"}
               </DialogDescription>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                {trimmedSessionTitle && (
+                  <span
+                    className="inline-flex max-w-[22rem] items-center gap-1 rounded-full border border-border/70 bg-muted/50 px-2 py-0.5"
+                    title={trimmedSessionTitle}
+                  >
+                    <span className="shrink-0">当前会话：</span>
+                    <span className="truncate font-medium text-foreground/80">
+                      {trimmedSessionTitle}
+                    </span>
+                  </span>
+                )}
+                {countdownText && (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/25 bg-amber-500/10 px-2 py-0.5 text-amber-700 dark:text-amber-300">
+                    <Clock className="h-3 w-3" />
+                    <span>剩余 {countdownText}</span>
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </DialogHeader>
@@ -167,6 +225,16 @@ export function PlanApprovalDialog({
         </div>
 
         <DialogFooter className="gap-2 sm:gap-2">
+          {(canDefer || onDeferDecision) && (
+            <Button
+              variant="ghost"
+              onClick={handleDeferDecision}
+              className="gap-2 text-muted-foreground"
+            >
+              <XCircle className="h-4 w-4" />
+              暂不决定，先别执行
+            </Button>
+          )}
           <Button
             variant="outline"
             onClick={handleReject}

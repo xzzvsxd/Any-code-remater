@@ -588,6 +588,8 @@
     "verboseOutputDescription": "显示完整的 bash 和命令输出",
     "promptSuggestion": "智能输入建议",
     "promptSuggestionDescription": "基于对话上下文自动生成输入建议，按 Tab 接受",
+    "autoTopicNaming": "自动话题命名",
+    "autoTopicNamingDescription": "新会话发布后用 Haiku 模型根据首条 prompt 自动生成会话备注名（默认开启）",
     "disablePromptAutoCommit": "关闭每轮自动提交",
     "disablePromptAutoCommitDescription": "每次对话结束后不再自动创建 Git 提交；会话记录仍会保留，但按轮回退代码将不可用或受限",
     "disableRewindGitOps": "禁用撤回中的 Git 操作",

@@ -366,6 +366,21 @@ export const GeneralSettings: React.FC<GeneralSettingsProps> = ({
             />
           </div>
 
+          {/* Auto Topic Naming */}
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5 flex-1">
+              <Label htmlFor="autoTopicNaming">{t('generalSettings.autoTopicNaming')}</Label>
+              <p className="text-xs text-muted-foreground">
+                {t('generalSettings.autoTopicNamingDescription')}
+              </p>
+            </div>
+            <Switch
+              id="autoTopicNaming"
+              checked={settings?.autoTopicNaming !== false}
+              onCheckedChange={(checked) => updateSetting("autoTopicNaming", checked)}
+            />
+          </div>
+
           {/* Disable Rewind Git Operations */}
           <div className="flex items-center justify-between">
             <div className="space-y-0.5 flex-1">
