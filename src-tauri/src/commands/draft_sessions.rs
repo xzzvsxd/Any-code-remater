@@ -12,8 +12,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 
 use super::claude::get_claude_dir;
+
+static DRAFT_STORE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn draft_store_lock() -> &'static Mutex<()> {
+    DRAFT_STORE_LOCK.get_or_init(|| Mutex::new(()))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DraftSession {
@@ -77,6 +84,8 @@ fn save_store(store: &DraftSessionStore) -> Result<(), String> {
 /// 列出草稿。传 project_id 时只返回该项目的草稿；不传(None/空)返回全部。
 #[tauri::command]
 pub async fn list_draft_sessions(project_id: Option<String>) -> Result<Vec<DraftSession>, String> {
+    let _guard = draft_store_lock().lock()
+        .map_err(|_| "draft store lock poisoned".to_string())?;
     let store = load_store();
     let mut drafts: Vec<DraftSession> = match project_id {
         Some(pid) if !pid.is_empty() => store
@@ -98,6 +107,9 @@ pub async fn save_draft_session(draft: DraftSession) -> Result<String, String> {
     if draft.id.trim().is_empty() {
         return Err("draft id is empty".to_string());
     }
+
+    let _guard = draft_store_lock().lock()
+        .map_err(|_| "draft store lock poisoned".to_string())?;
     let mut store = load_store();
     let id = draft.id.clone();
     // 内容为空白：等价于删除该草稿，避免侧栏堆积空草稿条目。
@@ -119,6 +131,8 @@ pub async fn save_draft_session(draft: DraftSession) -> Result<String, String> {
 /// 删除草稿（会话转正/用户丢弃时调用）。
 #[tauri::command]
 pub async fn delete_draft_session(draft_id: String) -> Result<(), String> {
+    let _guard = draft_store_lock().lock()
+        .map_err(|_| "draft store lock poisoned".to_string())?;
     let mut store = load_store();
     store.drafts.remove(&draft_id);
     save_store(&store)

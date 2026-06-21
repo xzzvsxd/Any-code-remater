@@ -68,6 +68,7 @@ import type { View } from '@/types/navigation';
 import type { Project, Session } from '@/lib/api';
 import { truncateText, getFirstLine } from '@/lib/date-utils';
 import {
+  filterPromotedDraftSessionsForSidebar,
   orderProjectSessionsForSidebar,
   sessionBelongsToWorkbenchProject,
   shouldRefreshProjectSessionsOnFocus,
@@ -179,6 +180,26 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     window.addEventListener('drafts-changed', onDraftsChanged);
     return () => window.removeEventListener('drafts-changed', onDraftsChanged);
   }, [reloadDrafts]);
+
+  // 草稿 id == 承载它的新建 tab id。tab 拿到真实 session.id 后，后端旧草稿即使因
+  // save/delete 竞态短暂残留，也不能再进入侧栏；否则点击“草稿”会命中这个已转正 tab，
+  // 看起来像红色草稿项跳到了正在运行的会话。用稳定签名避免 streaming 高频字段牵动子树。
+  const promotedDraftCarrierIdsSig = React.useMemo(
+    () => tabs
+      .filter((tb) => !!tb.session?.id)
+      .map((tb) => tb.id)
+      .sort()
+      .join('|'),
+    [tabs],
+  );
+  const promotedDraftCarrierIds = React.useMemo(
+    () => new Set(promotedDraftCarrierIdsSig ? promotedDraftCarrierIdsSig.split('|') : []),
+    [promotedDraftCarrierIdsSig],
+  );
+  const draftSessionsForSidebar = React.useMemo(
+    () => filterPromotedDraftSessionsForSidebar(draftSessions, promotedDraftCarrierIds),
+    [draftSessions, promotedDraftCarrierIds],
+  );
 
   const reloadMeta = useCallback(async () => {
     try {
@@ -764,7 +785,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
         runningSessionIds={runningSessionIds}
         runningStartOrder={runningStartOrder}
         openTabSessions={openTabSessions}
-        draftSessions={draftSessions}
+        draftSessions={draftSessionsForSidebar}
         onToggleProject={toggleProject}
         onOpenSession={openSession}
         onNewSession={onNewSession}

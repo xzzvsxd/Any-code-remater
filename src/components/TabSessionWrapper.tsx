@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useCallback, useMemo } from 'react';
 import { ClaudeCodeSession } from './ClaudeCodeSession';
 import { useTabSession } from '@/hooks/useTabs';
+import { api } from '@/lib/api';
 import type { Session } from '@/lib/api';
 import { buildQueueStorageKey } from '@/lib/queuedPromptsStore';
 
@@ -60,6 +61,29 @@ const TabSessionWrapperComponent: React.FC<TabSessionWrapperProps> = ({
     [session?.id, tabId],
   );
 
+  const promotedDraftCleanupRef = useRef<Set<string>>(new Set());
+  const notifyDraftsChanged = useCallback(() => {
+    try {
+      window.dispatchEvent(new CustomEvent('drafts-changed'));
+    } catch {
+      // ignore: SSR/tests or restricted window
+    }
+  }, []);
+
+  // 新建 tab 的 draft id 就是 tabId。首条消息拿到真实 sessionId 后，即使输入框清理
+  // 因 unmount/多窗口竞态漏掉一次，也在 tab 转正边界再删一次，避免侧栏残留幽灵草稿。
+  const deletePromotedDraftCarrier = useCallback(() => {
+    if (initialSessionRef.current !== undefined) return;
+    if (!tabId || promotedDraftCleanupRef.current.has(tabId)) return;
+
+    promotedDraftCleanupRef.current.add(tabId);
+    api.deleteDraftSession(tabId)
+      .catch((error) => {
+        console.warn('[TabSessionWrapper] Failed to delete promoted draft:', { tabId, error });
+      })
+      .finally(notifyDraftsChanged);
+  }, [notifyDraftsChanged, tabId]);
+
   // 🔧 NEW: Register cleanup callback for proper resource management
   useEffect(() => {
     const cleanup = async () => {
@@ -89,7 +113,8 @@ const TabSessionWrapperComponent: React.FC<TabSessionWrapperProps> = ({
   const handleSessionInfoChange = useCallback((info: { sessionId: string; projectId: string; projectPath: string; engine?: 'claude' | 'codex' | 'gemini' }) => {
     console.debug('[TabSessionWrapper] Session info received, updating tab:', { tabId, info });
     updateSession(info);
-  }, [tabId, updateSession]);
+    deletePromotedDraftCarrier();
+  }, [deletePromotedDraftCarrier, tabId, updateSession]);
 
   // 包装 onStreamingChange 以更新标签页状态
   // 🔧 性能修复：使用 useCallback 避免无限渲染循环（从 1236 renders/s 降至 1 render/s）

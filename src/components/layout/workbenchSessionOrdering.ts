@@ -9,6 +9,23 @@ export const sessionBelongsToWorkbenchProject = (session: Session, project: Proj
   session.project_id === project.id ||
   (!!session.project_path && normalizeWorkbenchPath(session.project_path) === normalizeWorkbenchPath(project.path));
 
+/**
+ * 草稿的 id 是创建它的新建 tab id。首条消息发送后，该 tab 会被“升级”为真实 session，
+ * 但后端 draft-sessions.json 可能因为跨组件/跨窗口 save-delete 竞态暂时仍保留旧草稿。
+ * 只要 carrier tab 已经有真实 session.id，这个 draft 就不再是可恢复草稿，侧栏必须过滤掉，
+ * 否则点击红色“草稿”会命中同一个 tab.id 并跳回正在运行的真实会话，造成幽灵草稿项。
+ */
+export function filterPromotedDraftSessionsForSidebar<T extends { id: string }>(
+  drafts: readonly T[],
+  promotedDraftCarrierIds: ReadonlySet<string>,
+): T[] {
+  if (promotedDraftCarrierIds.size === 0 || drafts.length === 0) {
+    return [...drafts];
+  }
+
+  return drafts.filter((draft) => !promotedDraftCarrierIds.has(draft.id));
+}
+
 interface OrderProjectSessionsForSidebarOptions {
   projectSessions: Session[];
   pinnedSessionIds: ReadonlySet<string>;
