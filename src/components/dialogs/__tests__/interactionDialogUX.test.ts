@@ -27,6 +27,13 @@ describe('interaction dialogs UX wiring', () => {
     expect(planDialog).toContain('暂不决定，先别执行');
   });
 
+  test('PlanApproval dialog reserves a non-overlapping bottom guidance area', () => {
+    expect(planDialog).toContain('max-h-[88vh] flex flex-col gap-0 p-0 overflow-hidden');
+    expect(planDialog).toContain('flex-1 min-h-0 px-5 py-4 flex flex-col');
+    expect(planDialog).toContain('shrink-0 border-t border-border/60');
+    expect(planDialog).not.toContain('h-[300px] rounded-lg border bg-muted/30 p-4');
+  });
+
   test('bridge contexts can resolve blocking requests without approving or answering content', () => {
     expect(userQuestionContext).toContain('expiresAtMs?: number');
     expect(userQuestionContext).toContain('deferQuestionResponse');

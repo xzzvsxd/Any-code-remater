@@ -130,17 +130,17 @@ export function PlanApprovalDialog({
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && canDefer && onClose()}>
       <DialogContent
-        className="sm:max-w-2xl max-h-[80vh] flex flex-col"
+        className="sm:max-w-2xl max-h-[88vh] flex flex-col gap-0 p-0 overflow-hidden"
         hideCloseButton={!canDefer}
       >
-        <DialogHeader>
-          <div className="flex items-center gap-2">
-            <div className="h-10 w-10 rounded-full bg-blue-500/10 flex items-center justify-center">
+        <DialogHeader className="shrink-0 px-5 pt-5 pb-4 border-b border-border/60">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0">
               <FileText className="h-5 w-5 text-blue-500" />
             </div>
             <div className="min-w-0 flex-1">
               <DialogTitle className="text-lg">计划已完成</DialogTitle>
-              <DialogDescription>
+              <DialogDescription className="mt-1">
                 {continuesAsNewTurn
                   ? "Claude 已完成规划。本轮对话已结束，批准后将作为新一轮开始执行"
                   : "Claude 已完成规划，请审批以下计划"}
@@ -170,28 +170,30 @@ export function PlanApprovalDialog({
 
         {/* 计划统计 */}
         {planStats && planStats.steps > 0 && (
-          <div className="flex items-center gap-4 p-3 rounded-lg bg-blue-500/5 border border-blue-500/20">
-            <ListChecks className="h-5 w-5 text-blue-500 flex-shrink-0" />
-            <div className="flex-1 flex items-center gap-4 text-xs">
-              <div>
-                <span className="text-muted-foreground">步骤数：</span>
-                <span className="font-medium ml-1">{planStats.steps}</span>
-              </div>
-              <div className="h-4 w-px bg-border" />
-              <div>
-                <span className="text-muted-foreground">内容：</span>
-                <span className="font-medium ml-1">{planStats.lines} 行</span>
+          <div className="shrink-0 px-5 py-3 border-b border-border/60 bg-blue-500/[0.03]">
+            <div className="flex items-center gap-4 p-3 rounded-xl bg-blue-500/5 border border-blue-500/20">
+              <ListChecks className="h-5 w-5 text-blue-500 flex-shrink-0" />
+              <div className="flex-1 flex items-center gap-4 text-xs">
+                <div>
+                  <span className="text-muted-foreground">步骤数：</span>
+                  <span className="font-medium ml-1">{planStats.steps}</span>
+                </div>
+                <div className="h-4 w-px bg-border" />
+                <div>
+                  <span className="text-muted-foreground">内容：</span>
+                  <span className="font-medium ml-1">{planStats.lines} 行</span>
+                </div>
               </div>
             </div>
           </div>
         )}
 
         {/* 计划内容 */}
-        <div className="flex-1 min-h-0 my-4">
-          <div className="text-sm font-medium text-muted-foreground mb-2">
+        <div className="flex-1 min-h-0 px-5 py-4 flex flex-col gap-2">
+          <div className="text-sm font-medium text-muted-foreground">
             计划内容：
           </div>
-          <ScrollArea className="h-[300px] rounded-lg border bg-muted/30 p-4">
+          <ScrollArea className="flex-1 min-h-0 rounded-xl border border-border/70 bg-background/80 p-4 overscroll-contain">
             <div className="prose prose-sm dark:prose-invert max-w-none">
               <ReactMarkdown>
                 {plan || "（无计划内容）"}
@@ -200,31 +202,34 @@ export function PlanApprovalDialog({
           </ScrollArea>
         </div>
 
-        {/* 提示信息 */}
-        <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-3 mb-4">
-          <p className="font-medium mb-1">提示：</p>
-          <ul className="list-disc list-inside space-y-1">
-            <li><strong>批准执行</strong>：关闭 Plan 模式，Claude 将开始执行计划中的操作</li>
-            <li><strong>继续规划</strong>：保持 Plan 模式，你可以要求 Claude 修改或完善计划</li>
-          </ul>
-        </div>
-
-        {/* 用户反馈输入 */}
-        <div className="px-1 mb-3">
-          <div className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1.5">
-            <PenLine className="h-3.5 w-3.5" />
-            修改意见 / 附加说明（可选）
+        {/* 底部说明与输入：独立 shrink 区域，永远不覆盖计划滚动区 */}
+        <div className="shrink-0 border-t border-border/60 bg-background/95 px-5 py-3 space-y-3">
+          {/* 提示信息 */}
+          <div className="text-xs text-muted-foreground bg-muted/45 border border-border/60 rounded-xl p-3">
+            <p className="font-medium text-foreground/80 mb-1">提示：</p>
+            <ul className="list-disc list-inside space-y-1 leading-relaxed">
+              <li><strong>批准执行</strong>：关闭 Plan 模式，Claude 将开始执行计划中的操作</li>
+              <li><strong>继续规划</strong>：保持 Plan 模式，你可以要求 Claude 修改或完善计划</li>
+            </ul>
           </div>
-          <textarea
-            className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background resize-none focus:outline-none focus:ring-1 focus:ring-blue-500/50"
-            rows={2}
-            placeholder="写下修改意见、补充说明，或留空直接操作…"
-            value={feedback}
-            onChange={(e) => setFeedback(e.target.value)}
-          />
+
+          {/* 用户反馈输入 */}
+          <div>
+            <div className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1.5">
+              <PenLine className="h-3.5 w-3.5" />
+              修改意见 / 附加说明（可选）
+            </div>
+            <textarea
+              className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background resize-none focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+              rows={2}
+              placeholder="写下修改意见、补充说明，或留空直接操作…"
+              value={feedback}
+              onChange={(e) => setFeedback(e.target.value)}
+            />
+          </div>
         </div>
 
-        <DialogFooter className="gap-2 sm:gap-2">
+        <DialogFooter className="shrink-0 px-5 py-3.5 border-t border-border/60 bg-muted/20 flex-row flex-wrap items-center sm:justify-end gap-2 sm:gap-2">
           {(canDefer || onDeferDecision) && (
             <Button
               variant="ghost"
