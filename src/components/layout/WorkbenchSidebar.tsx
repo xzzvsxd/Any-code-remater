@@ -69,9 +69,16 @@ import type { Project, Session } from '@/lib/api';
 import { truncateText, getFirstLine } from '@/lib/date-utils';
 import {
   filterPromotedDraftSessionsForSidebar,
+  getWorkbenchOpenTabId,
+  isWorkbenchSessionRunning,
+  normalizeWorkbenchPath,
   orderProjectSessionsForSidebar,
   sessionBelongsToWorkbenchProject,
   shouldRefreshProjectSessionsOnFocus,
+  withWorkbenchOpenTabMetadata,
+  workbenchSessionKey,
+  workbenchTabKey,
+  workbenchTemporaryOpenTabSessionId,
 } from './workbenchSessionOrdering';
 
 interface WorkbenchSidebarProps {
@@ -181,12 +188,12 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     return () => window.removeEventListener('drafts-changed', onDraftsChanged);
   }, [reloadDrafts]);
 
-  // 草稿 id == 承载它的新建 tab id。tab 拿到真实 session.id 后，后端旧草稿即使因
-  // save/delete 竞态短暂残留，也不能再进入侧栏；否则点击“草稿”会命中这个已转正 tab，
-  // 看起来像红色草稿项跳到了正在运行的会话。用稳定签名避免 streaming 高频字段牵动子树。
+  // 草稿 id == 承载它的新建 tab id。草稿一旦开始发送（streaming）或已经拿到真实 session.id，
+  // 后端旧草稿即使因 save/delete 竞态短暂残留，也不能再进入侧栏；否则同一个 tab 会同时渲染为
+  // “草稿”和“运行中新会话”，看起来像老会话跑到新会话下面。
   const promotedDraftCarrierIdsSig = React.useMemo(
     () => tabs
-      .filter((tb) => !!tb.session?.id)
+      .filter((tb) => !!tb.session?.id || tb.state === 'streaming')
       .map((tb) => tb.id)
       .sort()
       .join('|'),
@@ -271,53 +278,77 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
 
   // 运行中的会话集合：取自已打开标签页的 streaming 状态，供工作台树实时高亮。
   //
-  // 关键（修复 streaming 期间会话列表鬼畜/上下乱跳）：tabs 在 streaming 期间会因 lastActiveAt
-  // 等无关字段被高频更新（updateTabState 每次都刷新时间戳），若直接以 [tabs] 为依赖，
-  // 该集合与下游 openTabSessions 会反复产生新引用，导致会话树重渲染、dnd-kit 反复重测量动画。
-  // 因此改为以「稳定签名」（仅运行中会话 id 的有序列表）为依赖：内容不变则不重算、引用稳定。
-  const runningIdsSig = React.useMemo(
+  // 关键：真实 session.id 与“尚未拿到 sessionId 的临时 tab.id”必须分命名空间。
+  // 旧实现把二者都塞进同一个 Set<string>，导致新会话刚启动时的 tab.id 可能命中旧草稿/旧会话 id，
+  // 表现为“一个老会话莫名跑到新会话下面并显示运行中”。现在统一使用：
+  // - session:<id>：真实会话行；
+  // - tab:<id>：未落盘临时 tab 行。
+  // 同时 start order 以稳定 tab.id 记账，tab 从临时态升级为真实 session.id 时不重新排队、不丢其他运行项。
+  const runningTabRefsSig = React.useMemo(
     () =>
       tabs
         .filter((tb) => tb.state === 'streaming')
-        // 兜底：运行中的新会话在拿到 sessionId 前用 tab.id 顶临时 id，
-        // 保证「正在运行」从发起那一刻就能被 runningSessionIds 命中（不必等 sessionId 落地）。
-        .map((tb) => tb.session?.id || tb.id)
+        .map((tb) => JSON.stringify([
+          tb.id,
+          tb.session?.id ?? '',
+          tb.session?.project_id ?? '',
+          tb.session?.project_path ?? tb.projectPath ?? '',
+        ]))
+        .join('\n'),
+    [tabs],
+  );
+  const runningTabRefs = React.useMemo(
+    () =>
+      tabs
+        .filter((tb) => tb.state === 'streaming')
+        .map((tb) => ({
+          tabId: tb.id,
+          sessionId: tb.session?.id,
+          projectId: tb.session?.project_id,
+          projectPath: tb.session?.project_path ?? tb.projectPath,
+        })),
+    // 依赖稳定签名而不是 tabs 本身：忽略 lastActiveAt 等不影响 running 身份的高频抖动。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [runningTabRefsSig],
+  );
+  const runningKeysSig = React.useMemo(
+    () =>
+      runningTabRefs
+        .map((ref) => (ref.sessionId ? workbenchSessionKey(ref.sessionId) : workbenchTabKey(ref.tabId)))
         .sort()
         .join('|'),
-    [tabs],
+    [runningTabRefs],
   );
-  const runningSessionIds = React.useMemo(
-    () => new Set(runningIdsSig ? runningIdsSig.split('|') : []),
-    [runningIdsSig],
-  );
-  const runningTabOrderSig = React.useMemo(
-    () =>
-      tabs
-        .filter((tb) => tb.state === 'streaming')
-        .map((tb) => tb.session?.id || tb.id)
-        .join('|'),
-    [tabs],
+  const runningSessionKeys = React.useMemo(
+    () => new Set(runningKeysSig ? runningKeysSig.split('|') : []),
+    [runningKeysSig],
   );
   const nextRunningOrderRef = useRef(1);
   const runningStartOrderRef = useRef<Map<string, number>>(new Map());
   const runningStartOrder = React.useMemo(() => {
-    const ids = runningTabOrderSig ? runningTabOrderSig.split('|').filter(Boolean) : [];
-    const activeIds = new Set(ids);
+    const activeTabIds = new Set(runningTabRefs.map((ref) => ref.tabId));
 
     Array.from(runningStartOrderRef.current.keys()).forEach((id) => {
-      if (!activeIds.has(id)) {
+      if (!activeTabIds.has(id)) {
         runningStartOrderRef.current.delete(id);
       }
     });
 
-    ids.forEach((id) => {
-      if (!runningStartOrderRef.current.has(id)) {
-        runningStartOrderRef.current.set(id, nextRunningOrderRef.current++);
+    runningTabRefs.forEach((ref) => {
+      if (!runningStartOrderRef.current.has(ref.tabId)) {
+        runningStartOrderRef.current.set(ref.tabId, nextRunningOrderRef.current++);
       }
     });
 
-    return new Map(runningStartOrderRef.current);
-  }, [runningTabOrderSig]);
+    const keyOrder = new Map<string, number>();
+    runningTabRefs.forEach((ref) => {
+      const order = runningStartOrderRef.current.get(ref.tabId);
+      if (!order) return;
+      keyOrder.set(ref.sessionId ? workbenchSessionKey(ref.sessionId) : workbenchTabKey(ref.tabId), order);
+    });
+
+    return keyOrder;
+  }, [runningTabRefs]);
   // 已在标签页打开的会话（含尚未落盘的新建会话、以及运行中但还没拿到 sessionId 的新会话）：
   // 实时合并进项目树，无需等待 AI 完成事件与磁盘刷新。
   // 落盘前 session 无 first_message，用标签页标题兜底，避免显示成裸 id。
@@ -325,7 +356,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
   // 纳入条件：① 已有 session.id；或 ② 正在运行(streaming)且有 projectPath 可归类。
   // 后者是关键兜底——修复「会话已运行但侧栏不显示，仅项目 badge 亮」：新会话首轮 state 已是
   // streaming 但 session.id 要等 system:init 才写入，这段窗口期(Linux 上因 focus 刷新不可靠
-  // 可能长达数秒)若不纳入，列表里就看不到它。用 tab.id 作临时会话 id 顶上。
+  // 可能长达数秒)若不纳入，列表里就看不到它。用带命名空间的 tab id 合成临时会话顶上。
   const includeTab = useCallback(
     (tb: typeof tabs[number]) => !!tb.session?.id || (tb.state === 'streaming' && !!tb.projectPath),
     [],
@@ -335,6 +366,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
       tabs
         .filter(includeTab)
         .map((tb) => JSON.stringify([
+          tb.id,
           tb.session?.id || tb.id,
           tb.session?.first_message ?? '',
           tb.title,
@@ -353,25 +385,34 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
       .filter(includeTab)
       .map((tb) => {
         if (tb.session?.id) {
-          return tb.session.first_message ? tb.session : { ...tb.session, first_message: tb.title };
+          return withWorkbenchOpenTabMetadata(
+            tb.session.first_message ? tb.session : { ...tb.session, first_message: tb.title },
+            tb.id,
+            false,
+          );
         }
-        // 运行中但还没 session 的新会话：构造临时 Session（id=tab.id），让它即时进树。
-        return {
-          id: tb.id,
-          project_id: '',
-          project_path: tb.projectPath || '',
-          created_at: Math.floor((tb.createdAt || Date.now()) / 1000),
-          first_message: tb.title,
-          engine: (tb.engine || 'claude') as 'claude' | 'codex' | 'gemini',
-        } as Session;
+        // 运行中但还没 session 的新会话：构造临时 Session，让它即时进树。
+        // id 也做命名空间隔离，避免与旧草稿/旧会话 id 碰撞后被 diskIds 去重吞掉。
+        return withWorkbenchOpenTabMetadata(
+          {
+            id: workbenchTemporaryOpenTabSessionId(tb.id),
+            project_id: '',
+            project_path: tb.projectPath || '',
+            created_at: Math.floor((tb.createdAt || Date.now()) / 1000),
+            first_message: tb.title,
+            engine: (tb.engine || 'claude') as 'claude' | 'codex' | 'gemini',
+          } as Session,
+          tb.id,
+          true,
+        );
       }),
     // 依赖稳定签名而非 tabs 本身：仅当影响渲染的字段变化时才重算，消除 streaming 期间的引用抖动。
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [openTabsSig],
   );
   const runningOpenTabSessions = React.useMemo(
-    () => openTabSessions.filter((session) => runningSessionIds.has(session.id)),
-    [openTabSessions, runningSessionIds],
+    () => openTabSessions.filter((session) => isWorkbenchSessionRunning(session, runningSessionKeys)),
+    [openTabSessions, runningSessionKeys],
   );
 
   // 活跃置顶时间戳：项目「首次进入 streaming」时打一次当前时间戳，供「活跃项目自动置顶」。
@@ -381,12 +422,21 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
   // 若每次都用 Date.now() 重刷时间戳，会反复 setState → orderedProjects 反复重排 → 列表抖动。
   // 因此改为「边沿触发」：仅当项目从『无运行』变『有运行』时打一次戳，运行结束后清除记录以便下次再置顶。
   const activityStampedRef = useRef<Set<string>>(new Set());
+  const projectIdByPath = React.useMemo(
+    () => new Map(projects.map((project) => [normalizeWorkbenchPath(project.path), project.id])),
+    [projects],
+  );
   useEffect(() => {
-    const runningNow = new Set(
-      tabs
-        .filter((tb) => tb.state === 'streaming' && tb.session?.project_id)
-        .map((tb) => tb.session!.project_id as string),
-    );
+    const runningNow = new Set<string>();
+    runningTabRefs.forEach((ref) => {
+      if (ref.projectId) {
+        runningNow.add(ref.projectId);
+        return;
+      }
+
+      const projectId = projectIdByPath.get(normalizeWorkbenchPath(ref.projectPath));
+      if (projectId) runningNow.add(projectId);
+    });
     // 清除已停止运行的项目记录，允许其下次重新运行时再次触发置顶。
     activityStampedRef.current.forEach((pid) => {
       if (!runningNow.has(pid)) activityStampedRef.current.delete(pid);
@@ -401,7 +451,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
       newlyRunning.forEach((pid) => { next[pid] = now; });
       return next;
     });
-  }, [tabs]);
+  }, [projectIdByPath, runningTabRefs]);
 
   useEffect(() => {
     try { localStorage.setItem(COLLAPSED_KEY, String(collapsed)); } catch { /* ignore */ }
@@ -488,15 +538,15 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
   // 这样多个项目同时输出 assistant token 时，不会每隔几秒扫描磁盘并按 assistant 回复时间重排侧栏。
 
   // 运行结束收尾刷新：检测「运行中数量由非空→空」的边沿（会话刚跑完）。
-  // 此刻 runningSessionIds 清空、强制置顶取消，但 diskSessions 仍是运行前旧快照
+  // 此刻 runningSessionKeys 清空、强制置顶取消，但 diskSessions 仍是运行前旧快照
   // （last_message_timestamp 未更新），会话会回落到旧时间位置；而 Linux 上 focus 刷新不可靠，
   // 可能迟迟不触发，表现为「运行完就排到后面、列表里找不到」。这里在跑完后主动补刷新，
   // 用两段延迟覆盖磁盘落盘延迟（1.5s 抢先 + 5s 兜底），拉到最新时间戳后会话即回到时间倒序最前。
   const prevRunningSizeRef = useRef(0);
   useEffect(() => {
     const prev = prevRunningSizeRef.current;
-    prevRunningSizeRef.current = runningSessionIds.size;
-    if (!(prev > 0 && runningSessionIds.size === 0)) return;
+    prevRunningSizeRef.current = runningSessionKeys.size;
+    if (!(prev > 0 && runningSessionKeys.size === 0)) return;
     const refreshExpanded = () => {
       if (document.hidden) return;
       const { expanded, projects: projs, load } = focusRefreshRef.current;
@@ -507,7 +557,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     const t1 = window.setTimeout(refreshExpanded, 1500);
     const t2 = window.setTimeout(refreshExpanded, 5000);
     return () => { window.clearTimeout(t1); window.clearTimeout(t2); };
-  }, [runningSessionIds]);
+  }, [runningSessionKeys]);
 
   const onDragStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -559,6 +609,19 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
   }, [tabs, closeTab]);
 
   const openSession = useCallback((session: Session) => {
+    // 侧栏合成的“已打开/临时运行”项应直接切回承载它的 tab。
+    // 否则未拿到真实 session.id 的临时行会被当作一个普通落盘会话再次打开，制造重复 tab/幽灵运行项。
+    const openTabId = getWorkbenchOpenTabId(session);
+    if (openTabId) {
+      const existing = tabs.find((tb) => tb.id === openTabId);
+      if (existing) {
+        switchToTab(existing.id);
+        closePrevIfIdle(existing.id);
+        navigateTo('claude-tab-manager');
+        return;
+      }
+    }
+
     // 草稿条目：session.id 即承载它的 tab id。若该 tab 仍存在则切回去（输入框文本由
     // useDraftPersistence 按 draftId 从 localStorage 恢复）；若 tab 已关闭，则新建一个
     // 该项目下的新会话 tab 并把草稿正文回填到输入框。
@@ -782,7 +845,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
         sessionsLoading={sessionsLoading}
         expandedProjects={expandedProjects}
         activeSessionId={activeSessionId}
-        runningSessionIds={runningSessionIds}
+        runningSessionKeys={runningSessionKeys}
         runningStartOrder={runningStartOrder}
         openTabSessions={openTabSessions}
         draftSessions={draftSessionsForSidebar}
@@ -1020,8 +1083,8 @@ interface ProjectTreeProps {
   sessionsLoading: boolean;
   expandedProjects: Set<string>;
   activeSessionId: string | null;
-  /** 运行中的会话 id 集合（来自标签页 streaming 状态），用于实时高亮 */
-  runningSessionIds: Set<string>;
+  /** 运行中的会话 key 集合（session:<id> / tab:<id>），用于实时高亮且隔离临时 tab id */
+  runningSessionKeys: Set<string>;
   /** 运行中会话进入 streaming 的稳定顺序：避免 assistant 输出更新时间导致运行项互相换位 */
   runningStartOrder: ReadonlyMap<string, number>;
   /** 已在标签页打开的会话（含未落盘的新建会话），实时合并进树 */
@@ -1050,7 +1113,7 @@ interface ProjectTreeProps {
 // 配合上方所有 props 已稳定引用化（useCallback/useMemo + 稳定签名），memo 才能真正生效，
 // 从而消除会话列表的鬼畜/上下乱跳/乱闪（根治抖动的最后一环）。
 const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
-  projects, selectedProjectId, sessions, sessionsByProject, sessionsLoading, expandedProjects, activeSessionId, runningSessionIds, runningStartOrder, openTabSessions, draftSessions,
+  projects, selectedProjectId, sessions, sessionsByProject, sessionsLoading, expandedProjects, activeSessionId, runningSessionKeys, runningStartOrder, openTabSessions, draftSessions,
   onToggleProject, onOpenSession,
   onNewSession, onNewSessionInProject, onRefreshProject, onOpenInExplorer, onCopyText, onDuplicateSession, onExportSession,
   sessionTitles, onRenameSession, sessionOrder, onReorderSessions, onReorderProjects,
@@ -1157,7 +1220,7 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
         const visibleSorted = orderProjectSessionsForSidebar({
           projectSessions,
           pinnedSessionIds: new Set(pinnedSessions.map((s) => s.id)),
-          runningSessionIds,
+          runningSessionKeys,
           runningStartOrder,
         });
         const expandedSessionLimit = expandedSessionLimitByProject[project.id] ?? RECENT_SESSION_COUNT;
@@ -1175,7 +1238,7 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
         // 该项目下运行中的会话数：取所有已打开标签会话中归属本项目、且处于 streaming 的。
         // 用 openTabSessions（不依赖项目是否展开/缓存是否命中），保证未展开项目也能显示运行标识。
         const runningCount = openTabSessions.filter(
-          (s) => tabSessionBelongsTo(s, project) && runningSessionIds.has(s.id),
+          (s) => tabSessionBelongsTo(s, project) && isWorkbenchSessionRunning(s, runningSessionKeys),
         ).length;
         const hasRunning = runningCount > 0;
 
@@ -1295,7 +1358,7 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
                       renderItem={(session) => {
                       const isDraft = (session as any).is_draft === true;
                       const isActive = activeSessionId === session.id;
-                      const isRunning = runningSessionIds.has(session.id);
+                      const isRunning = isWorkbenchSessionRunning(session, runningSessionKeys);
                       const customTitle = sessionTitles[session.id];
                       const preview = customTitle
                         ? truncateText(customTitle, 40)

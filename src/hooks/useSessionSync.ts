@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { api } from '@/lib/api';
 import {
   collectRunningSessionUpdates,
+  selectTabForClaudeSessionStateEvent,
   shouldQueryRunningSessions,
   type SessionSyncReason,
 } from '@/lib/sessionSync';
@@ -96,32 +97,11 @@ export const useSessionSync = () => {
         }>('claude-session-state', (event) => {
           const { session_id, status, project_path } = event.payload;
 
-          // Use multiple matching strategies to find the tab
-          // 1. Match by session_id first (existing sessions)
-          // 2. Fall back to project_path matching (new sessions where tab.session?.id is not yet set)
-          const normalizePath = (p: string) => p?.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '') || '';
-
-          let tab = tabsRef.current.find(t => t.session?.id === session_id);
-
-          if (!tab && project_path) {
-            const normalizedEventPath = normalizePath(project_path);
-            // project_path 兜底匹配分两种意图：
-            // - started：只允许匹配「已有 session 的 tab」，绝不匹配 type:'new' 的全新 tab，
-            //   否则会把一个刚开的空白新 tab 误标成同项目下旧会话的 streaming（原 FIX 的初衷）。
-            // - stopped（漏洞 B 修复）：必须允许匹配「无 session 但正处于 streaming 的新 tab」，
-            //   这正是新会话拿到 sessionId 前异常终结的场景——若沿用 started 的排除规则，
-            //   stopped 永远匹配不到它 → state 卡在 streaming → 侧栏临时条目永久"运行中"。
-            tab = tabsRef.current.find(t => {
-              const tabProjectPath = t.projectPath || t.session?.project_path;
-              if (!tabProjectPath || normalizePath(tabProjectPath) !== normalizedEventPath) return false;
-              if (status === 'stopped') {
-                // 仅归零那些确实在 streaming 的 tab（无论是否已有 session），幂等且不误伤 idle tab。
-                return t.state === 'streaming';
-              }
-              // started：维持原防护——跳过无 session 的新 tab。
-              return !!t.session;
-            });
-          }
+          const tab = selectTabForClaudeSessionStateEvent(tabsRef.current, {
+            session_id,
+            status,
+            project_path,
+          });
 
           if (tab) {
             if (status === 'started') {

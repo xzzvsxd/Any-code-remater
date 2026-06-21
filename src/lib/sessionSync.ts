@@ -21,6 +21,12 @@ export type RunningSessionTabUpdate = {
   sessionId: string | null;
 };
 
+export type ClaudeSessionStateEvent = {
+  session_id: string;
+  status: 'started' | 'stopped';
+  project_path?: string;
+};
+
 const normalizePath = (p?: string) =>
   p?.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '') || '';
 
@@ -86,4 +92,32 @@ export const collectRunningSessionUpdates = (
   }
 
   return updates;
+};
+
+/**
+ * 为单条 `claude-session-state` 事件选择可更新的 tab。
+ *
+ * 约束很严格：有 session_id 时只信精确匹配；没有精确匹配时，最多只允许匹配
+ * “同项目、无真实 session.id、且已经处于 streaming 的唯一临时新会话 tab”。
+ *
+ * 不能用 project_path 去匹配任意已有 session tab。一个项目里有大量历史会话，
+ * 新会话 started 事件若按路径随便命中第一条旧 session，就会把老会话误标运行中。
+ */
+export const selectTabForClaudeSessionStateEvent = (
+  tabs: readonly MinimalTab[],
+  event: ClaudeSessionStateEvent,
+): MinimalTab | null => {
+  const exact = tabs.find((tab) => tab.session?.id === event.session_id);
+  if (exact) return exact;
+
+  const eventPath = normalizePath(event.project_path);
+  if (!eventPath) return null;
+
+  const temporaryStreamingCandidates = tabs.filter((tab) => {
+    if (tab.session?.id || tab.state !== 'streaming') return false;
+    const tabPath = normalizePath(tab.projectPath || tab.session?.project_path);
+    return !!tabPath && tabPath === eventPath;
+  });
+
+  return temporaryStreamingCandidates.length === 1 ? temporaryStreamingCandidates[0] : null;
 };

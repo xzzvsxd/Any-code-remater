@@ -3,8 +3,15 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Project, Session } from '@/lib/api';
 import {
+  filterPromotedDraftSessionsForSidebar,
+  getWorkbenchSessionRunningKey,
+  isWorkbenchSessionRunning,
   orderProjectSessionsForSidebar,
   shouldRefreshProjectSessionsOnFocus,
+  withWorkbenchOpenTabMetadata,
+  workbenchSessionKey,
+  workbenchTabKey,
+  workbenchTemporaryOpenTabSessionId,
 } from '../workbenchSessionOrdering';
 
 const sidebarSource = readFileSync(
@@ -41,10 +48,10 @@ describe('workbench sidebar session ordering', () => {
     const ordered = orderProjectSessionsForSidebar({
       projectSessions: inputAfterAssistantRefresh,
       pinnedSessionIds: new Set(),
-      runningSessionIds: new Set(['a', 'b']),
+      runningSessionKeys: new Set([workbenchSessionKey('a'), workbenchSessionKey('b')]),
       runningStartOrder: new Map([
-        ['a', 1],
-        ['b', 2],
+        [workbenchSessionKey('a'), 1],
+        [workbenchSessionKey('b'), 2],
       ]),
     });
 
@@ -59,8 +66,8 @@ describe('workbench sidebar session ordering', () => {
     const ordered = orderProjectSessionsForSidebar({
       projectSessions: [idle, running, draft],
       pinnedSessionIds: new Set(['draft']),
-      runningSessionIds: new Set(['running']),
-      runningStartOrder: new Map([['running', 1]]),
+      runningSessionKeys: new Set([workbenchSessionKey('running')]),
+      runningStartOrder: new Map([[workbenchSessionKey('running'), 1]]),
     });
 
     expect(ordered.map((s) => s.id)).toEqual(['draft', 'running', 'idle']);
@@ -79,9 +86,54 @@ describe('workbench sidebar session ordering', () => {
     )).toBe(true);
   });
 
+  test('filters draft carriers as soon as their tab is consumed by a send', () => {
+    expect(filterPromotedDraftSessionsForSidebar(
+      [{ id: 'tab-consumed' }, { id: 'draft-still-idle' }],
+      new Set(['tab-consumed']),
+    ).map((d) => d.id)).toEqual(['draft-still-idle']);
+  });
+
+  test('isolates temporary running tab ids from persisted session ids', () => {
+    const oldPersistedSession = session('tab-ghost-carrier', '2026-06-15T02:00:00.000Z');
+    const temporaryRunningTab = withWorkbenchOpenTabMetadata(
+      session(workbenchTemporaryOpenTabSessionId('tab-ghost-carrier'), '2026-06-15T02:30:00.000Z', {
+        project_id: '',
+        project_path: '/repo/app',
+      }),
+      'tab-ghost-carrier',
+      true,
+    );
+    const runningKeys = new Set([workbenchTabKey('tab-ghost-carrier')]);
+
+    expect(getWorkbenchSessionRunningKey(temporaryRunningTab)).toBe(workbenchTabKey('tab-ghost-carrier'));
+    expect(getWorkbenchSessionRunningKey(oldPersistedSession)).toBe(workbenchSessionKey('tab-ghost-carrier'));
+    expect(isWorkbenchSessionRunning(temporaryRunningTab, runningKeys)).toBe(true);
+    expect(isWorkbenchSessionRunning(oldPersistedSession, runningKeys)).toBe(false);
+  });
+
+  test('keeps a promoted new session in its original running start slot', () => {
+    const olderRunning = session('older-real', '2026-06-15T02:00:00.000Z');
+    const promotedNewSession = session('new-real', '2026-06-15T02:30:00.000Z');
+    const idle = session('idle', '2026-06-15T02:20:00.000Z');
+
+    const ordered = orderProjectSessionsForSidebar({
+      projectSessions: [idle, promotedNewSession, olderRunning],
+      pinnedSessionIds: new Set(),
+      runningSessionKeys: new Set([workbenchSessionKey('older-real'), workbenchSessionKey('new-real')]),
+      runningStartOrder: new Map([
+        [workbenchSessionKey('new-real'), 1],
+        [workbenchSessionKey('older-real'), 2],
+      ]),
+    });
+
+    expect(ordered.map((s) => s.id)).toEqual(['new-real', 'older-real', 'idle']);
+  });
+
   test('WorkbenchSidebar does not poll expanded projects while sessions are streaming', () => {
     expect(sidebarSource).toContain('shouldRefreshProjectSessionsOnFocus');
     expect(sidebarSource).toContain('orderProjectSessionsForSidebar');
+    expect(sidebarSource).toContain('isWorkbenchSessionRunning');
+    expect(sidebarSource).not.toContain('runningSessionIds.has(session.id)');
     expect(sidebarSource).not.toContain('window.setInterval');
     expect(sidebarSource).not.toContain('???????');
   });

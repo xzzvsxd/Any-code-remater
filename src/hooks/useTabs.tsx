@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useContext, createContext, ReactNode, useEffect } from 'react';
 import type { Session } from '@/lib/api';
 import { createSessionWindow, emitWindowSyncEvent, onWindowSyncEvent, isSessionWindow } from '@/lib/windowManager';
+import { normalizePersistedWorkbenchTab } from '@/lib/tabPersistence';
 
 /**
  * ✨ REFACTORED: Simplified Tab interface (Phase 1 optimization)
@@ -113,12 +114,7 @@ export const TabProvider: React.FC<TabProviderProps> = ({ children }) => {
           return false;
         }
         return true;
-      }).map((tab: any) => ({
-        ...tab,
-        type: tab.type || (tab.session ? 'session' : 'new'),
-        state: tab.state || 'idle',
-        hasUnsavedChanges: tab.hasUnsavedChanges ?? tab.hasChanges ?? false,
-      }));
+      }).map((tab: any) => normalizePersistedWorkbenchTab(tab));
       
       // Validate activeTabId
       const validActiveTabId = validTabs.find(t => t.id === savedActiveTabId)
@@ -262,13 +258,16 @@ export const TabProvider: React.FC<TabProviderProps> = ({ children }) => {
 
   // ✨ NEW: Unified state update method
   const updateTabState = useCallback((tabId: string, state: Tab['state'], errorMessage?: string) => {
-    setTabs(prev =>
-      prev.map(tab =>
-        tab.id === tabId
-          ? { ...tab, state, errorMessage, lastActiveAt: Date.now() }
-          : tab
-      )
-    );
+    setTabs(prev => {
+      let changed = false;
+      const next = prev.map(tab => {
+        if (tab.id !== tabId) return tab;
+        if (tab.state === state && tab.errorMessage === errorMessage) return tab;
+        changed = true;
+        return { ...tab, state, errorMessage, lastActiveAt: Date.now() };
+      });
+      return changed ? next : prev;
+    });
   }, []);
 
   // Update tab changes
