@@ -54,6 +54,7 @@ const DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
 const DEFAULT_DEBOUNCE_MS = 600;
 const DEFAULT_CACHE_EXPIRY_MS = 120000; // 2 minutes
 const DEFAULT_MAX_CACHE_SIZE = 50;
+const EMPTY_SUGGESTION_MESSAGES: ClaudeStreamMessage[] = [];
 
 // System prompt for suggestion generation
 const SUGGESTION_SYSTEM_PROMPT = `你是一个智能编程助手，根据对话历史预测用户下一步可能的编程操作。
@@ -269,9 +270,10 @@ export function usePromptSuggestion({
   const lastRequestIdRef = useRef<number>(0);
 
   // Memoized values
+  const messagesForSuggestion = enabled ? messages : EMPTY_SUGGESTION_MESSAGES;
   const cacheKey = useMemo(
-    () => generateCacheKey(messages, currentPrompt),
-    [messages, currentPrompt]
+    () => generateCacheKey(messagesForSuggestion, currentPrompt),
+    [messagesForSuggestion, currentPrompt]
   );
 
   /**
@@ -310,7 +312,7 @@ export function usePromptSuggestion({
   const generateAISuggestion = useCallback(async (requestId: number): Promise<PromptSuggestion | null> => {
     try {
       // 🆕 使用增强的上下文提取（对齐 CLI 功能）
-      const contextStr = extractFullSessionContext(messages);
+      const contextStr = extractFullSessionContext(messagesForSuggestion);
 
       if (!contextStr.trim()) {
         return null;
@@ -361,7 +363,7 @@ export function usePromptSuggestion({
       console.error('[usePromptSuggestion] AI generation failed:', err);
       throw err;
     }
-  }, [messages, currentPrompt, model]);
+  }, [messagesForSuggestion, currentPrompt, model]);
 
   /**
    * 主要的建议生成逻辑
@@ -374,7 +376,7 @@ export function usePromptSuggestion({
     }
 
     // 检查是否有足够的上下文
-    if (messages.length === 0) {
+    if (messagesForSuggestion.length === 0) {
       setSuggestion(null);
       return;
     }
@@ -409,7 +411,7 @@ export function usePromptSuggestion({
 
     try {
       // 首先尝试模板建议（快速）
-      const scenario = detectScenario(messages);
+      const scenario = detectScenario(messagesForSuggestion);
       if (scenario && !currentPrompt.trim()) {
         const templateSuggestion = getTemplateSuggestion(scenario);
         if (templateSuggestion) {
@@ -446,7 +448,7 @@ export function usePromptSuggestion({
         setIsLoading(false);
       }
     }
-  }, [enabled, messages, currentPrompt, cacheKey, cleanupCache, cacheExpiryMs, generateAISuggestion]);
+  }, [enabled, messagesForSuggestion, currentPrompt, cacheKey, cleanupCache, cacheExpiryMs, generateAISuggestion]);
 
   /**
    * 防抖触发建议生成

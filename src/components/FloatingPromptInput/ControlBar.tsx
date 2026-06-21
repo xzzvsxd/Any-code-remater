@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -6,7 +6,6 @@ import { Popover } from "@/components/ui/popover";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
 import { Wand2, ChevronDown, DollarSign, Info, Settings, Code2, Zap } from "lucide-react";
-import { motion } from "framer-motion";
 import { formatDuration } from "@/lib/pricing";
 import { ExecutionEngineSelector, type ExecutionEngineConfig } from "@/components/ExecutionEngineSelector";
 import { ModelSelector } from "./ModelSelector";
@@ -105,6 +104,18 @@ export const ControlBar: React.FC<ControlBarProps> = ({
     canCancelExecution,
     isCancellingExecution,
   });
+  const passiveMessagesRef = useRef(messages);
+
+  useEffect(() => {
+    if (!isLoading || !passiveMessagesRef.current) {
+      passiveMessagesRef.current = messages;
+    }
+  }, [isLoading, messages]);
+
+  // Context usage / export / fallback rate-limit widgets are passive controls.
+  // During streaming the full messages array churns every frame; freeze these widgets to
+  // their last idle snapshot so input controls stay responsive on Linux/WebKitGTK.
+  const messagesForPassiveWidgets = isLoading ? passiveMessagesRef.current : messages;
 
   // 解析 Claude 引擎下用于上下文窗口计算的真实模型名。
   // custom 模型的 'custom' 字面量会丢失真实模型 ID（如 claude-opus-4-8[1m]），
@@ -126,13 +137,13 @@ export const ControlBar: React.FC<ControlBarProps> = ({
       return providedCodexRateLimits;
     }
 
-    if (!messages || messages.length === 0) {
+    if (!messagesForPassiveWidgets || messagesForPassiveWidgets.length === 0) {
       return null;
     }
 
     // Find the latest message with rate limits in codexMetadata
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i];
+    for (let i = messagesForPassiveWidgets.length - 1; i >= 0; i--) {
+      const msg = messagesForPassiveWidgets[i];
       const rateLimits = (msg as any)?.codexMetadata?.rateLimits;
       if (rateLimits && (rateLimits.primary || rateLimits.secondary)) {
         return rateLimits;
@@ -140,7 +151,7 @@ export const ControlBar: React.FC<ControlBarProps> = ({
     }
 
     return null;
-  }, [executionEngineConfig.engine, messages, providedCodexRateLimits]);
+  }, [executionEngineConfig.engine, messagesForPassiveWidgets, providedCodexRateLimits]);
   
   return (
     <div className="flex items-center gap-2 flex-wrap">
@@ -217,10 +228,7 @@ export const ControlBar: React.FC<ControlBarProps> = ({
 
       {/* Session Cost with Details */}
       {hasMessages && sessionCost && sessionStats && (
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.2 }}
+        <div
           onMouseEnter={() => setShowCostPopover(true)}
           onMouseLeave={() => setShowCostPopover(false)}
         >
@@ -263,13 +271,13 @@ export const ControlBar: React.FC<ControlBarProps> = ({
             align="center"
             className="w-80"
           />
-        </motion.div>
+        </div>
       )}
 
       {/* Context Window Indicator - Claude / Codex / Gemini 引擎显示 */}
-      {(executionEngineConfig.engine === 'claude' || executionEngineConfig.engine === 'codex' || executionEngineConfig.engine === 'gemini') && hasMessages && messages && (
+      {(executionEngineConfig.engine === 'claude' || executionEngineConfig.engine === 'codex' || executionEngineConfig.engine === 'gemini') && hasMessages && messagesForPassiveWidgets && (
         <ContextWindowIndicator
-          messages={messages}
+          messages={messagesForPassiveWidgets}
           model={contextWindowModel}
           engine={executionEngineConfig.engine}
           show={true}
@@ -281,9 +289,9 @@ export const ControlBar: React.FC<ControlBarProps> = ({
       <div className="flex-1" />
 
       {/* Session Export Toolbar */}
-      {messages && messages.length > 0 && (
+      {messagesForPassiveWidgets && messagesForPassiveWidgets.length > 0 && (
         <SessionToolbar
-          messages={messages}
+          messages={messagesForPassiveWidgets}
           session={session}
           isStreaming={isLoading}
         />

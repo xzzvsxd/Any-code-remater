@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
   createBatchedAppendUpdater,
+  createBatchedTailUpdater,
   createBatchedUpdater,
 } from '../stream/batchedStateUpdater';
 import { readFileSync } from 'node:fs';
@@ -94,6 +95,32 @@ describe('batched state updaters', () => {
     expect(rafCallbacks.size).toBe(0);
   });
 
+  test('coalesces same-length tail replacements into one array copy per frame', () => {
+    let state = [{ text: 'start' }, { text: 'a' }];
+    let setStateCalls = 0;
+    const updater = createBatchedTailUpdater<typeof state[number]>(
+      (apply) => {
+        setStateCalls += 1;
+        state = apply(state);
+      },
+      { maxUpdatesPerFrame: 8 },
+    );
+
+    updater.enqueue((last) => ({
+      type: 'replace',
+      item: { text: `${last?.text ?? ''}b` },
+    }));
+    updater.enqueue((last) => ({
+      type: 'replace',
+      item: { text: `${last?.text ?? ''}c` },
+    }));
+
+    expect(runNextFrame()).toBe(true);
+    expect(state).toEqual([{ text: 'start' }, { text: 'abc' }]);
+    expect(setStateCalls).toBe(1);
+    expect(rafCallbacks.size).toBe(0);
+  });
+
   test('flushes generic updates when requestAnimationFrame is suspended', async () => {
     let state: number[] = [];
     const updater = createBatchedUpdater<number[]>((apply) => {
@@ -124,5 +151,24 @@ describe('batched state updaters', () => {
     await vi.advanceTimersByTimeAsync(1_000);
 
     expect(state).toEqual([1, 2, 3]);
+  });
+
+  test('flushes tail replacement updates when requestAnimationFrame is suspended', async () => {
+    let state = [{ text: 'a' }];
+    const updater = createBatchedTailUpdater<typeof state[number]>((apply) => {
+      state = apply(state);
+    });
+
+    updater.enqueue((last) => ({
+      type: 'replace',
+      item: { text: `${last?.text ?? ''}b` },
+    }));
+
+    expect(state).toEqual([{ text: 'a' }]);
+    expect(rafCallbacks.size).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(state).toEqual([{ text: 'ab' }]);
   });
 });

@@ -17,6 +17,11 @@ const commandOutputWidgetSource = readFileSync(
   'utf8',
 );
 
+const useToolTranslationSource = readFileSync(
+  resolve(process.cwd(), 'src/components/widgets/common/useToolTranslation.ts'),
+  'utf8',
+);
+
 describe('heavy tool output render safety', () => {
   test('MCPWidget keeps collapsed cards cheap and lazily builds large details only after expansion', () => {
     expect(mcpWidgetSource).toContain('getMcpContentSummary');
@@ -35,5 +40,13 @@ describe('heavy tool output render safety', () => {
     expect(commandOutputWidgetSource).toContain('MAX_CLICKABLE_OUTPUT_CHARS');
     expect(commandOutputWidgetSource).toContain('getSafeOutputPreview');
     expect(commandOutputWidgetSource).toContain('shouldUsePlainTextOutput');
+  });
+
+  test('tool translation cache does not recreate translateContent after every cached result', () => {
+    expect(useToolTranslationSource).toContain('translatedContentRef');
+    expect(useToolTranslationSource).toContain('setCacheVersion');
+    expect(useToolTranslationSource).toContain('React.useCallback(async (content: string, cacheKey: string) =>');
+    expect(useToolTranslationSource).toContain('}, [])');
+    expect(useToolTranslationSource).not.toContain('}, [translatedContent]');
   });
 });

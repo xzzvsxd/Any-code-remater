@@ -41,8 +41,7 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
   isCancelling = false,
 }) => {
   const { t } = useTranslation();
-  const [dotCount, setDotCount] = useState(0);
-  const [verbIndex, setVerbIndex] = useState(0);
+  const [clockTick, setClockTick] = useState(0);
 
   // 随机选择初始动词
   const initialVerbIndex = useMemo(() =>
@@ -50,32 +49,18 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
     []
   );
 
+  // 单一低频时钟：只刷新 elapsed/idle 文案；处理词和省略号保持静态，避免滚动容器内持续文本动画。
   useEffect(() => {
-    if (isProcessing) {
-      setVerbIndex(initialVerbIndex);
+    if (!isProcessing) {
+      setClockTick(0);
+      return;
     }
-  }, [isProcessing, initialVerbIndex]);
 
-  // 低频省略号更新：Linux WebKitGTK 下滚动容器内高频文本变化会放大 repaint/reflow 压力。
-  useEffect(() => {
-    if (!isProcessing) return;
+    const interval = setInterval(() => {
+      setClockTick((prev) => (prev + 1) % Number.MAX_SAFE_INTEGER);
+    }, 2000);
 
-    const dotInterval = setInterval(() => {
-      setDotCount((prev) => (prev + 1) % 4);
-    }, 1000);
-
-    return () => clearInterval(dotInterval);
-  }, [isProcessing]);
-
-  // 定期切换动词
-  useEffect(() => {
-    if (!isProcessing) return;
-
-    const verbInterval = setInterval(() => {
-      setVerbIndex((prev) => (prev + 1) % PROCESSING_VERBS.length);
-    }, 3000);
-
-    return () => clearInterval(verbInterval);
+    return () => clearInterval(interval);
   }, [isProcessing]);
 
   // 监听 Escape 键取消
@@ -93,10 +78,9 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isProcessing, onCancel, canCancel, isCancelling]);
 
-  const currentVerb = PROCESSING_VERBS[verbIndex];
-  const dots = ".".repeat(dotCount);
-  const paddedDots = dots.padEnd(3, " ");
-  const now = Date.now();
+  const currentVerb = PROCESSING_VERBS[initialVerbIndex];
+  const paddedDots = "...";
+  const now = Date.now() + clockTick * 0;
   const liveElapsedSeconds = isProcessing && startedAt
     ? Math.max(0, Math.floor((now - startedAt) / 1000))
     : elapsedSeconds;
@@ -124,7 +108,7 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
           ✦
         </span>
 
-        {/* 动态处理文本：只按 interval 更新文本，不再做入场/位移动画 */}
+        {/* 处理文本保持静态，不再做入场/位移/省略号动画 */}
         <span className="text-foreground/90">
           <span className="text-amber-600 dark:text-amber-400 font-medium">
             {currentVerb}

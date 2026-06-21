@@ -25,6 +25,8 @@ interface PromptItem {
   timestamp?: string;
 }
 
+const EMPTY_PROMPT_ITEMS: PromptItem[] = [];
+
 /**
  * 提取用户消息的纯文本内容
  */
@@ -123,6 +125,8 @@ export const PromptNavigator: React.FC<PromptNavigatorProps> = ({
   // 过滤逻辑与 getPromptIndexForMessage (ClaudeCodeSession.tsx) 保持一致
   // 排除 sidechain/子代理/warmup/skill/纯tool_result 等非真实用户输入
   const prompts = useMemo<PromptItem[]>(() => {
+    if (!isOpen) return EMPTY_PROMPT_ITEMS;
+
     let promptIndex = 0;
     const items: PromptItem[] = [];
 
@@ -142,7 +146,7 @@ export const PromptNavigator: React.FC<PromptNavigatorProps> = ({
     }
 
     return items;
-  }, [messages]);
+  }, [isOpen, messages]);
 
   // 过滤后的提示词
   const filteredPrompts = useMemo(() => {

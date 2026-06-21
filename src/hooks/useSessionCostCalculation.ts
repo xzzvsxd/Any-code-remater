@@ -48,6 +48,7 @@ const EMPTY_STATS: SessionCostStats = {
   durationSeconds: 0,
   apiDurationSeconds: 0,
 };
+const SAME_LENGTH_USAGE_TAIL_SCAN_COUNT = 4;
 
 /**
  * 计算会话的 Token 成本和统计
@@ -104,9 +105,20 @@ export function useSessionCostCalculation(messages: ClaudeStreamMessage[], engin
     // Claude/Gemini/Codex 流式过程中都会产生大量“无 usage 的内容增量”。
     // 费用只会在新增 usage 快照/增量时变化；若本轮 append 的后缀没有 usage，直接复用缓存，
     // 避免每帧 aggregateSessionCost(messages) 全量扫长历史。
-    const latestUsageMessage = cache.initialized && messages.length > cache.lastMessageCount
+    let latestUsageMessage = cache.initialized && messages.length > cache.lastMessageCount
       ? findLatestUsageMessageInRange(messages, cache.lastMessageCount)
       : findLatestUsageMessageInRange(messages, 0);
+
+    if (cache.initialized && messages.length === cache.lastMessageCount) {
+      latestUsageMessage = findLatestUsageMessageInRange(
+        messages,
+        messages.length - SAME_LENGTH_USAGE_TAIL_SCAN_COUNT,
+      );
+      if (!latestUsageMessage) {
+        cache.lastMessages = messages;
+        return cache.stats;
+      }
+    }
 
     if (cache.initialized && !latestUsageMessage && messages.length > cache.lastMessageCount) {
       cache.lastMessageCount = messages.length;

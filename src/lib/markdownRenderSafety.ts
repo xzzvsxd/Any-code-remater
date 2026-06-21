@@ -74,6 +74,12 @@ export function shouldRenderMarkdownAsPlainText(
   content: string,
   options: MarkdownRenderOptions = {},
 ): boolean {
+  // 流式中的 fenced code 若每个 delta 都走 ReactMarkdown + Prism，会在 Linux/WebKitGTK
+  // 形成持续长任务。流式阶段先用纯文本，完成后再恢复 Markdown/高亮渲染。
+  if (options.isStreaming && (content.includes('```') || content.includes('~~~'))) {
+    return true;
+  }
+
   const maxChars = Math.max(
     1,
     Math.floor(

@@ -8,6 +8,23 @@ type PromptContentItem = {
 export type PromptIndexByMessage = WeakMap<object, number>;
 export type BranchPromptIndexByMessage = WeakMap<object, number>;
 
+export interface PromptIndexMaps {
+  promptIndexByMessage: PromptIndexByMessage;
+  branchPromptIndexByMessage: BranchPromptIndexByMessage;
+}
+
+export interface PromptIndexMapsCache extends PromptIndexMaps {
+  messages: Array<ClaudeStreamMessage | unknown>;
+  processedLength: number;
+  firstMessage?: ClaudeStreamMessage | unknown;
+  secondLastProcessedMessage?: ClaudeStreamMessage | unknown;
+  lastProcessedMessage?: ClaudeStreamMessage | unknown;
+  nextPromptIndex: number;
+  hasSeenTrackedPrompt: boolean;
+  nextPromptIndexBeforeLast: number;
+  hasSeenTrackedPromptBeforeLast: boolean;
+}
+
 /**
  * 提取后端 prompt_tracker 会计数的用户文本。
  *
@@ -88,48 +105,151 @@ export function getPromptIndexForMessageInList(
   return promptIndex;
 }
 
+function addMessageToPromptIndexMaps(
+  message: ClaudeStreamMessage | unknown,
+  maps: PromptIndexMaps,
+  state: {
+    nextPromptIndex: number;
+    hasSeenTrackedPrompt: boolean;
+  },
+): void {
+  if (typeof message !== 'object' || message === null) return;
+
+  if (isTrackedUserPrompt(message)) {
+    // 撤回：只有真实 user prompt 才有 promptIndex。
+    maps.promptIndexByMessage.set(message, state.nextPromptIndex);
+    // 分支点在 user prompt 上：回到该 prompt 之前，允许重写这一问。
+    maps.branchPromptIndexByMessage.set(message, state.nextPromptIndex);
+    state.nextPromptIndex += 1;
+    state.hasSeenTrackedPrompt = true;
+    return;
+  }
+
+  if (state.hasSeenTrackedPrompt) {
+    // 点在 assistant / 中断 / 其他非 prompt 节点上：保留到最近一轮之后。
+    maps.branchPromptIndexByMessage.set(message, state.nextPromptIndex);
+  }
+}
+
+export function buildPromptIndexMaps(
+  messages: Array<ClaudeStreamMessage | unknown>,
+): PromptIndexMapsCache {
+  const maps: PromptIndexMaps = {
+    promptIndexByMessage: new WeakMap(),
+    branchPromptIndexByMessage: new WeakMap(),
+  };
+  const state = {
+    nextPromptIndex: 0,
+    hasSeenTrackedPrompt: false,
+  };
+  let nextPromptIndexBeforeLast = state.nextPromptIndex;
+  let hasSeenTrackedPromptBeforeLast = state.hasSeenTrackedPrompt;
+
+  for (let index = 0; index < messages.length; index++) {
+    if (index === messages.length - 1) {
+      nextPromptIndexBeforeLast = state.nextPromptIndex;
+      hasSeenTrackedPromptBeforeLast = state.hasSeenTrackedPrompt;
+    }
+    const message = messages[index];
+    addMessageToPromptIndexMaps(message, maps, state);
+  }
+
+  return {
+    ...maps,
+    messages,
+    processedLength: messages.length,
+    firstMessage: messages[0],
+    secondLastProcessedMessage: messages.length >= 2 ? messages[messages.length - 2] : undefined,
+    lastProcessedMessage: messages[messages.length - 1],
+    nextPromptIndex: state.nextPromptIndex,
+    hasSeenTrackedPrompt: state.hasSeenTrackedPrompt,
+    nextPromptIndexBeforeLast,
+    hasSeenTrackedPromptBeforeLast,
+  };
+}
+
+export function updatePromptIndexMapsCache(
+  cache: PromptIndexMapsCache | null,
+  messages: Array<ClaudeStreamMessage | unknown>,
+): PromptIndexMapsCache {
+  const canUseTailReplacementFastPath =
+    cache !== null &&
+    messages.length === cache.processedLength &&
+    messages.length > 1 &&
+    messages[messages.length - 2] === cache.secondLastProcessedMessage &&
+    (cache.firstMessage === undefined || messages[0] === cache.firstMessage) &&
+    messages[messages.length - 1] !== cache.lastProcessedMessage;
+
+  if (canUseTailReplacementFastPath) {
+    const state = {
+      nextPromptIndex: cache.nextPromptIndexBeforeLast,
+      hasSeenTrackedPrompt: cache.hasSeenTrackedPromptBeforeLast,
+    };
+    const maps: PromptIndexMaps = {
+      promptIndexByMessage: cache.promptIndexByMessage,
+      branchPromptIndexByMessage: cache.branchPromptIndexByMessage,
+    };
+
+    addMessageToPromptIndexMaps(messages[messages.length - 1], maps, state);
+
+    cache.messages = messages;
+    cache.processedLength = messages.length;
+    cache.firstMessage = messages[0];
+    cache.secondLastProcessedMessage = messages.length >= 2 ? messages[messages.length - 2] : undefined;
+    cache.lastProcessedMessage = messages[messages.length - 1];
+    cache.nextPromptIndex = state.nextPromptIndex;
+    cache.hasSeenTrackedPrompt = state.hasSeenTrackedPrompt;
+    return cache;
+  }
+
+  const canExtendAppendOnly =
+    cache !== null &&
+    messages.length >= cache.processedLength &&
+    (cache.processedLength === 0 ||
+      messages[cache.processedLength - 1] === cache.lastProcessedMessage) &&
+    (cache.firstMessage === undefined || messages[0] === cache.firstMessage);
+
+  if (!canExtendAppendOnly) {
+    return buildPromptIndexMaps(messages);
+  }
+
+  const state = {
+    nextPromptIndex: cache.nextPromptIndex,
+    hasSeenTrackedPrompt: cache.hasSeenTrackedPrompt,
+  };
+  const maps: PromptIndexMaps = {
+    promptIndexByMessage: cache.promptIndexByMessage,
+    branchPromptIndexByMessage: cache.branchPromptIndexByMessage,
+  };
+
+  for (let index = cache.processedLength; index < messages.length; index++) {
+    if (index === messages.length - 1) {
+      cache.nextPromptIndexBeforeLast = state.nextPromptIndex;
+      cache.hasSeenTrackedPromptBeforeLast = state.hasSeenTrackedPrompt;
+    }
+    addMessageToPromptIndexMaps(messages[index], maps, state);
+  }
+
+  cache.messages = messages;
+  cache.processedLength = messages.length;
+  cache.firstMessage = messages[0];
+  cache.secondLastProcessedMessage = messages.length >= 2 ? messages[messages.length - 2] : undefined;
+  cache.lastProcessedMessage = messages[messages.length - 1];
+  cache.nextPromptIndex = state.nextPromptIndex;
+  cache.hasSeenTrackedPrompt = state.hasSeenTrackedPrompt;
+  return cache;
+}
+
 export function buildPromptIndexByMessage(
   messages: Array<ClaudeStreamMessage | unknown>,
 ): PromptIndexByMessage {
-  const promptIndexByMessage: PromptIndexByMessage = new WeakMap();
-  let promptIndex = 0;
-
-  for (const message of messages) {
-    if (typeof message !== 'object' || message === null) continue;
-    if (!isTrackedUserPrompt(message)) continue;
-
-    promptIndexByMessage.set(message, promptIndex);
-    promptIndex += 1;
-  }
-
-  return promptIndexByMessage;
+  return buildPromptIndexMaps(messages).promptIndexByMessage;
 }
 
 export function buildBranchPromptIndexByMessage(
   messages: Array<ClaudeStreamMessage | unknown>,
 ): BranchPromptIndexByMessage {
-  const branchIndexByMessage: BranchPromptIndexByMessage = new WeakMap();
-  let promptIndex = 0;
-  let hasSeenTrackedPrompt = false;
-
-  for (const message of messages) {
-    if (typeof message !== 'object' || message === null) continue;
-
-    if (isTrackedUserPrompt(message)) {
-      // 点在 user prompt 上：分支回到该 prompt 之前，允许重写这一问。
-      branchIndexByMessage.set(message, promptIndex);
-      promptIndex += 1;
-      hasSeenTrackedPrompt = true;
-      continue;
-    }
-
-    if (hasSeenTrackedPrompt) {
-      // 点在 assistant / 中断 / 其他非 prompt 节点上：保留到最近一轮之后。
-      branchIndexByMessage.set(message, promptIndex);
-    }
-  }
-
-  return branchIndexByMessage;
+  return buildPromptIndexMaps(messages).branchPromptIndexByMessage;
 }
 
 /**

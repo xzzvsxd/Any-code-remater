@@ -5,10 +5,10 @@
  * 主组件 (~100行) + ToolsList 子组件 (~180行)
  */
 
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { Settings, Fingerprint, Cpu, FolderOpen } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
-import { ToolsList } from "./components/ToolsList";
+import { areToolListsEqual, ToolsList } from "./components/ToolsList";
 
 export interface SystemInitializedWidgetProps {
   /** 会话 ID */
@@ -22,6 +22,8 @@ export interface SystemInitializedWidgetProps {
   /** 时间戳 */
   timestamp?: string;
 }
+
+const EMPTY_TOOLS: string[] = [];
 
 /**
  * 格式化时间戳
@@ -53,11 +55,14 @@ export const SystemInitializedWidget = React.memo<SystemInitializedWidgetProps>(
   sessionId,
   model,
   cwd,
-  tools = [],
+  tools = EMPTY_TOOLS,
   timestamp,
 }) => {
   const [mcpExpanded, setMcpExpanded] = useState(false);
   const formattedTimestamp = useMemo(() => formatTimestamp(timestamp), [timestamp]);
+  const handleMcpToggle = useCallback(() => {
+    setMcpExpanded((expanded) => !expanded);
+  }, []);
 
   return (
     <Card className="border-blue-500/20 bg-blue-500/5">
@@ -112,13 +117,19 @@ export const SystemInitializedWidget = React.memo<SystemInitializedWidgetProps>(
             <ToolsList
               tools={tools}
               mcpExpanded={mcpExpanded}
-              onMcpToggle={() => setMcpExpanded(!mcpExpanded)}
+              onMcpToggle={handleMcpToggle}
             />
           </div>
         </div>
       </CardContent>
     </Card>
   );
-});
+}, (prev, next) => (
+  prev.sessionId === next.sessionId &&
+  prev.model === next.model &&
+  prev.cwd === next.cwd &&
+  prev.timestamp === next.timestamp &&
+  areToolListsEqual(prev.tools ?? EMPTY_TOOLS, next.tools ?? EMPTY_TOOLS)
+));
 
 SystemInitializedWidget.displayName = 'SystemInitializedWidget';

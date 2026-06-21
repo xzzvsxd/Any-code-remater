@@ -45,6 +45,8 @@ interface ContextUsageCache {
   engine?: string;
 }
 
+const SAME_LENGTH_CONTEXT_TAIL_SCAN_COUNT = 4;
+
 /**
  * 从消息中提取 current_usage 数据
  * 查找最后一条带有 usage 信息的消息
@@ -233,6 +235,17 @@ export function useContextWindowUsage(
 
     // 普通流式文本增量不会改变 context usage、运行时 model 或 context window size。
     // 先只扫描新增后缀是否含这些信号；没有就复用上次结果，避免每帧分配 mainMessages 并多次倒扫长历史。
+    if (cache.initialized && messages.length === cache.lastMessageCount) {
+      const latestSameLengthContextSignal = findLatestContextUsageSignalInRange(
+        messages,
+        messages.length - SAME_LENGTH_CONTEXT_TAIL_SCAN_COUNT,
+        engine,
+      );
+      if (!latestSameLengthContextSignal) {
+        return cache.result;
+      }
+    }
+
     const latestContextSignal = cache.initialized && messages.length > cache.lastMessageCount
       ? findLatestContextUsageSignalInRange(messages, cache.lastMessageCount, engine)
       : findLatestContextUsageSignalInRange(messages, 0, engine);

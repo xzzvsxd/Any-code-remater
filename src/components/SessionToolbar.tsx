@@ -40,7 +40,7 @@ interface SessionToolbarProps {
  *   isStreaming={false} 
  * />
  */
-export const SessionToolbar: React.FC<SessionToolbarProps> = ({
+const SessionToolbarComponent: React.FC<SessionToolbarProps> = ({
   messages,
   session,
   isStreaming = false,
@@ -197,3 +197,24 @@ export const SessionToolbar: React.FC<SessionToolbarProps> = ({
     </div>
   );
 };
+
+export const SessionToolbar = React.memo(
+  SessionToolbarComponent,
+  (prevProps, nextProps) => {
+    if (prevProps.isStreaming && nextProps.isStreaming) {
+      return (
+        prevProps.session?.id === nextProps.session?.id &&
+        prevProps.className === nextProps.className
+      );
+    }
+
+    return (
+      prevProps.messages === nextProps.messages &&
+      prevProps.session === nextProps.session &&
+      prevProps.isStreaming === nextProps.isStreaming &&
+      prevProps.className === nextProps.className
+    );
+  }
+);
+
+SessionToolbar.displayName = 'SessionToolbar';

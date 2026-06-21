@@ -30,6 +30,24 @@ interface BatchedAppendUpdaterOptions {
   maxItemsPerFrame?: number;
 }
 
+interface BatchedTailUpdaterOptions {
+  /**
+   * 单帧最多折叠多少个“末项替换/追加”更新。
+   *
+   * Gemini delta 等同长度流式更新会反复替换最后一条 assistant 消息。
+   * 如果走通用 updater，每个 updater 都会复制一次长 messages 数组；这里把同帧
+   * 多次 tail mutation 合并到一次数组拷贝，避免长会话 O(n * deltaCount)。
+   */
+  maxUpdatesPerFrame?: number;
+}
+
+export type TailUpdateResult<T> =
+  | { type: 'replace'; item: T }
+  | { type: 'append'; item: T }
+  | { type: 'none' };
+
+export type TailUpdater<T> = (lastItem: T | undefined, length: number) => TailUpdateResult<T>;
+
 export interface BatchedUpdater<T> {
   /** 入队一个函数式更新器，在下一帧合并 flush。 */
   enqueue: (updater: FunctionalUpdater<T>) => void;
@@ -50,8 +68,18 @@ export interface BatchedAppendUpdater<T> {
   dispose: () => void;
 }
 
+export interface BatchedTailUpdater<T> {
+  /** 入队一个只会替换末项/追加末项/无操作的更新器，在下一帧合并 flush。 */
+  enqueue: (updater: TailUpdater<T>) => void;
+  /** 立即同步 flush 当前所有待应用 tail 更新。 */
+  flushNow: () => void;
+  /** 取消挂起任务并清空队列。 */
+  dispose: () => void;
+}
+
 const DEFAULT_MAX_UPDATES_PER_FRAME = 16;
 const DEFAULT_MAX_APPEND_ITEMS_PER_FRAME = 128;
+const DEFAULT_MAX_TAIL_UPDATES_PER_FRAME = 64;
 /**
  * WebKitGTK 在窗口被遮挡、最小化或合成线程异常时可能暂停 rAF，但 Tauri IPC 仍继续送达。
  * 若只等 rAF，pending 会无限增长；100ms watchdog 保证后台流也能持续排空，同时把渲染频率
@@ -235,4 +263,115 @@ export function createBatchedAppendUpdater<T>(
   };
 
   return { enqueue, enqueueAll, flushNow, dispose };
+}
+
+/**
+ * 末项替换/追加批量合并器。
+ *
+ * 典型场景：Gemini 流式 delta 会把最后一条 assistant 消息替换为“旧文本 + 新增片段”，
+ * messages.length 不变。通用 `prev => [...prev.slice(0, -1), updated]` 在同一帧有 N 个
+ * delta 时会复制 N 次完整长数组；本合并器在 flush 中按顺序折叠所有 tail 更新，最多
+ * 只复制一次数组，再写入最终末项。
+ */
+export function createBatchedTailUpdater<T>(
+  setState: (updater: (prev: T[]) => T[]) => void,
+  options: BatchedTailUpdaterOptions = {},
+): BatchedTailUpdater<T> {
+  let pending: TailUpdater<T>[] = [];
+  let rafId: number | null = null;
+  let watchdogId: ReturnType<typeof globalThis.setTimeout> | null = null;
+  const maxUpdatesPerFrame = Math.max(
+    1,
+    options.maxUpdatesPerFrame ?? DEFAULT_MAX_TAIL_UPDATES_PER_FRAME,
+  );
+
+  const schedule = () => {
+    if (rafId === null && watchdogId === null) {
+      rafId = requestFrame(flush);
+      watchdogId = globalThis.setTimeout(flush, rafId === null ? 16 : MAX_FRAME_WAIT_MS);
+    }
+  };
+
+  const applyBatch = (batch: TailUpdater<T>[]) => {
+    setState((prev) => {
+      let next = prev;
+      let changed = false;
+
+      const ensureMutable = () => {
+        if (next === prev) {
+          next = prev.slice();
+        }
+      };
+
+      for (let i = 0; i < batch.length; i++) {
+        const lastItem = next.length > 0 ? next[next.length - 1] : undefined;
+        const result = batch[i](lastItem, next.length);
+        if (!result || result.type === 'none') {
+          continue;
+        }
+
+        ensureMutable();
+        if (result.type === 'replace') {
+          if (next.length === 0) {
+            next.push(result.item);
+          } else {
+            next[next.length - 1] = result.item;
+          }
+          changed = true;
+          continue;
+        }
+
+        next.push(result.item);
+        changed = true;
+      }
+
+      return changed ? next : prev;
+    });
+  };
+
+  const flush = () => {
+    cancelFrame(rafId);
+    rafId = null;
+    if (watchdogId !== null) {
+      clearTimeout(watchdogId);
+      watchdogId = null;
+    }
+    if (pending.length === 0) return;
+    const batch = pending.splice(0, maxUpdatesPerFrame);
+    applyBatch(batch);
+
+    if (pending.length > 0) {
+      schedule();
+    }
+  };
+
+  const enqueue = (updater: TailUpdater<T>) => {
+    pending.push(updater);
+    schedule();
+  };
+
+  const flushNow = () => {
+    cancelFrame(rafId);
+    rafId = null;
+    if (watchdogId !== null) {
+      clearTimeout(watchdogId);
+      watchdogId = null;
+    }
+    if (pending.length === 0) return;
+    const batch = pending;
+    pending = [];
+    applyBatch(batch);
+  };
+
+  const dispose = () => {
+    cancelFrame(rafId);
+    rafId = null;
+    if (watchdogId !== null) {
+      clearTimeout(watchdogId);
+      watchdogId = null;
+    }
+    pending = [];
+  };
+
+  return { enqueue, flushNow, dispose };
 }

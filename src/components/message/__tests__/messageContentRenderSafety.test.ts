@@ -66,6 +66,14 @@ describe('message render safety wiring', () => {
     expect(codePreviewSource).not.toContain('animate-pulse');
   });
 
+  test('ThinkingBlock avoids per-character streaming renders and layout-height transitions', () => {
+    expect(thinkingBlockSource).toContain('const textToDisplay = content');
+    expect(thinkingBlockSource).not.toContain('useTypewriter(');
+    expect(thinkingBlockSource).not.toContain('transition-all');
+    expect(thinkingBlockSource).not.toContain('max-h-[500px]');
+    expect(thinkingBlockSource).not.toContain('setTimeout(() =>');
+  });
+
   test('message scroll container disables continuous Tailwind animations inside streamed history', () => {
     expect(sessionMessagesSource).toContain('session-message-scroll');
     expect(animationsCssSource).toContain('.session-message-scroll .animate-spin');

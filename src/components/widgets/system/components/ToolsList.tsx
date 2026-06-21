@@ -46,6 +46,50 @@ const formatMcpToolName = (toolName: string) => {
   };
 };
 
+export const areToolListsEqual = (prevTools: string[] = [], nextTools: string[] = []): boolean => {
+  if (prevTools === nextTools) return true;
+  if (prevTools.length !== nextTools.length) return false;
+  for (let index = 0; index < prevTools.length; index += 1) {
+    if (prevTools[index] !== nextTools[index]) {
+      return false;
+    }
+  }
+  return true;
+};
+
+interface McpToolDisplay {
+  tool: string;
+  method: string;
+}
+
+interface SplitToolsForDisplay {
+  regularTools: string[];
+  mcpToolsByProvider: Record<string, McpToolDisplay[]>;
+  mcpToolCount: number;
+}
+
+const splitToolsForDisplay = (tools: string[]): SplitToolsForDisplay => {
+  const regularTools: string[] = [];
+  const mcpToolsByProvider: Record<string, McpToolDisplay[]> = {};
+  let mcpToolCount = 0;
+
+  for (const tool of tools) {
+    if (!tool.startsWith('mcp__')) {
+      regularTools.push(tool);
+      continue;
+    }
+
+    const { provider, method } = formatMcpToolName(tool);
+    if (!mcpToolsByProvider[provider]) {
+      mcpToolsByProvider[provider] = [];
+    }
+    mcpToolsByProvider[provider].push({ tool, method });
+    mcpToolCount += 1;
+  }
+
+  return { regularTools, mcpToolsByProvider, mcpToolCount };
+};
+
 /**
  * 工具列表展示组件
  */
@@ -54,28 +98,19 @@ export const ToolsList = React.memo<ToolsListProps>(({
   mcpExpanded,
   onMcpToggle,
 }) => {
-  // 分离常规工具和 MCP 工具
+  const splitTools = useMemo(
+    () => splitToolsForDisplay(tools),
+    [tools]
+  );
   const regularTools = useMemo(
-    () => tools.filter(tool => !tool.startsWith('mcp__')),
-    [tools]
+    () => splitTools.regularTools,
+    [splitTools]
   );
-  const mcpTools = useMemo(
-    () => tools.filter(tool => tool.startsWith('mcp__')),
-    [tools]
-  );
-
-  // 按提供商分组 MCP 工具
   const mcpToolsByProvider = useMemo(
-    () => mcpTools.reduce((acc, tool) => {
-      const { provider } = formatMcpToolName(tool);
-      if (!acc[provider]) {
-        acc[provider] = [];
-      }
-      acc[provider].push(tool);
-      return acc;
-    }, {} as Record<string, string[]>),
-    [mcpTools]
+    () => splitTools.mcpToolsByProvider,
+    [splitTools]
   );
+  const mcpToolCount = splitTools.mcpToolCount;
 
   if (tools.length === 0) {
     return (
@@ -111,14 +146,14 @@ export const ToolsList = React.memo<ToolsListProps>(({
       )}
 
       {/* MCP 工具 */}
-      {mcpTools.length > 0 && (
+      {mcpToolCount > 0 && (
         <div className="space-y-2">
           <button
             onClick={onMcpToggle}
             className="flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
           >
             <Package className="h-3.5 w-3.5" />
-            <span>MCP Services ({mcpTools.length})</span>
+            <span>MCP Services ({mcpToolCount})</span>
             <ChevronDown className={cn(
               "h-3 w-3 transition-transform",
               mcpExpanded && "rotate-180"
@@ -135,18 +170,15 @@ export const ToolsList = React.memo<ToolsListProps>(({
                     <span className="text-muted-foreground/60">({providerTools.length})</span>
                   </div>
                   <div className="ml-4 flex flex-wrap gap-1">
-                    {providerTools.map((tool, idx) => {
-                      const { method } = formatMcpToolName(tool);
-                      return (
-                        <Badge
-                          key={idx}
-                          variant="outline"
-                          className="text-xs py-0 px-1.5 font-normal"
-                        >
-                          {method}
-                        </Badge>
-                      );
-                    })}
+                    {providerTools.map(({ tool, method }) => (
+                      <Badge
+                        key={tool}
+                        variant="outline"
+                        className="text-xs py-0 px-1.5 font-normal"
+                      >
+                        {method}
+                      </Badge>
+                    ))}
                   </div>
                 </div>
               ))}
@@ -156,6 +188,10 @@ export const ToolsList = React.memo<ToolsListProps>(({
       )}
     </div>
   );
-});
+}, (prev, next) => (
+  prev.mcpExpanded === next.mcpExpanded &&
+  prev.onMcpToggle === next.onMcpToggle &&
+  areToolListsEqual(prev.tools, next.tools)
+));
 
 ToolsList.displayName = 'ToolsList';

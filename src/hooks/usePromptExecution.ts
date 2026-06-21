@@ -87,6 +87,9 @@ interface UsePromptExecutionConfig {
   setMessages: React.Dispatch<React.SetStateAction<ClaudeStreamMessage[]>>;
   appendMessage: (message: ClaudeStreamMessage) => void;
   appendMessageImmediate: (message: ClaudeStreamMessage) => void;
+  replaceLastMessage: (
+    updater: (lastMessage: ClaudeStreamMessage | undefined) => { type: 'replace' | 'append'; item: ClaudeStreamMessage } | { type: 'none' }
+  ) => void;
   setClaudeSessionId: (id: string | null) => void;
   setLastTranslationResult: (result: TranslationResult | null) => void;
   setQueuedPrompts: React.Dispatch<React.SetStateAction<QueuedPrompt[]>>;
@@ -180,6 +183,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
     setMessages,
     appendMessage,
     appendMessageImmediate,
+    replaceLastMessage,
     setClaudeSessionId,
     setLastTranslationResult,
     setQueuedPrompts,
@@ -1085,10 +1089,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
               if (isDelta && msgType === 'assistant') {
                 // Delta message - merge with last assistant message
-                setMessages(prev => {
-                  const lastIdx = prev.length - 1;
-                  const lastMsg = prev[lastIdx];
-
+                replaceLastMessage((lastMsg) => {
                   // Check if last message is assistant and can be merged
                   if (lastMsg && lastMsg.type === 'assistant') {
                     const lastContent = lastMsg.message?.content;
@@ -1158,14 +1159,14 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
                           }
                         };
 
-                        return [...prev.slice(0, lastIdx), updatedMsg];
+                        return { type: 'replace', item: updatedMsg };
                       }
                     }
                   }
 
                   // Cannot merge, add as new message
                   const message = convertGeminiToClaudeMessage(data);
-                  return message ? [...prev, message] : prev;
+                  return message ? { type: 'append', item: message } : { type: 'none' };
                 });
                 appendRawJsonlOutput(payload);
                 return;
@@ -2139,10 +2140,11 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
     queuedPromptsRef,
     setIsLoading,
     setError,
-    setMessages,
-    appendMessage,
-    appendMessageImmediate,
-    setClaudeSessionId,
+     setMessages,
+     appendMessage,
+     appendMessageImmediate,
+     replaceLastMessage,
+     setClaudeSessionId,
     setLastTranslationResult,
     setQueuedPrompts,
     setRawJsonlOutput,

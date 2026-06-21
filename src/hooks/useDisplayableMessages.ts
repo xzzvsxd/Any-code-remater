@@ -121,6 +121,10 @@ function rememberSkippableToolUses(message: ClaudeStreamMessage, skippableToolUs
   }
 }
 
+function cloneSet<T>(source: Set<T>): Set<T> {
+  return new Set(source);
+}
+
 function buildWarmupHiddenIndices(messages: ClaudeStreamMessage[], hideWarmupMessages: boolean): Set<number> {
   const warmupIndices = new Set<number>();
   if (!hideWarmupMessages) return warmupIndices;
@@ -143,13 +147,16 @@ interface DisplayableFilterState {
   skippableToolUseIds: Set<string>;
 }
 
-interface DisplayableMessagesCache extends DisplayableFilterState {
+export interface DisplayableMessagesCache extends DisplayableFilterState {
   messages: ClaudeStreamMessage[];
   processedLength: number;
   firstMessage?: ClaudeStreamMessage;
+  secondLastProcessedMessage?: ClaudeStreamMessage;
   lastProcessedMessage?: ClaudeStreamMessage;
   hideWarmupMessages: boolean;
   hideStartupWarnings: boolean;
+  visibleByIndex: boolean[];
+  skippableToolUseIdsBeforeLast: Set<string>;
 }
 
 function hasVisibleUserContent(message: ClaudeStreamMessage, skippableToolUseIds: Set<string>): boolean {
@@ -227,16 +234,25 @@ function shouldDisplayMessageAtIndex(
 function filterDisplayableMessagesWithState(
   messages: ClaudeStreamMessage[],
   options: DisplayableMessagesOptions = {},
-): DisplayableFilterState {
+): DisplayableFilterState & {
+  visibleByIndex: boolean[];
+  skippableToolUseIdsBeforeLast: Set<string>;
+} {
   // 默认隐藏 Warmup（undefined 时为 true），只有明确设置为 false 时才显示
   const hideWarmupMessages = options.hideWarmupMessages !== false;
   // 默认隐藏启动警告（undefined 时为 true）
   const hideStartupWarnings = options.hideStartupWarnings !== false;
   const warmupIndices = buildWarmupHiddenIndices(messages, hideWarmupMessages);
   const skippableToolUseIds = new Set<string>();
+  let skippableToolUseIdsBeforeLast = new Set<string>();
   const displayableMessages: ClaudeStreamMessage[] = [];
+  const visibleByIndex: boolean[] = [];
 
   messages.forEach((message, index) => {
+    if (index === messages.length - 1) {
+      skippableToolUseIdsBeforeLast = cloneSet(skippableToolUseIds);
+    }
+
     const shouldDisplay = shouldDisplayMessageAtIndex(
       messages,
       index,
@@ -249,13 +265,19 @@ function filterDisplayableMessagesWithState(
     if (shouldDisplay) {
       displayableMessages.push(message);
     }
+    visibleByIndex[index] = shouldDisplay;
 
     // 必须在当前消息判定之后记录 tool_use：旧逻辑只回看 index - 1 之前的消息，
     // 不能让同条消息或未来消息影响当前 tool_result 的可见性。
     rememberSkippableToolUses(message, skippableToolUseIds);
   });
 
-  return { displayableMessages, skippableToolUseIds };
+  return {
+    displayableMessages,
+    skippableToolUseIds,
+    visibleByIndex,
+    skippableToolUseIdsBeforeLast,
+  };
 }
 
 export function filterDisplayableMessages(
@@ -263,6 +285,194 @@ export function filterDisplayableMessages(
   options: DisplayableMessagesOptions = {},
 ): ClaudeStreamMessage[] {
   return filterDisplayableMessagesWithState(messages, options).displayableMessages;
+}
+
+function canReuseDisplayableCacheOptions(
+  cache: DisplayableMessagesCache,
+  hideWarmupMessages: boolean,
+  hideStartupWarnings: boolean,
+): boolean {
+  return (
+    cache.hideWarmupMessages === hideWarmupMessages &&
+    cache.hideStartupWarnings === hideStartupWarnings
+  );
+}
+
+function shouldFallbackForWarmupBoundary(
+  messages: ClaudeStreamMessage[],
+  index: number,
+  hideWarmupMessages: boolean,
+): boolean {
+  if (!hideWarmupMessages) return false;
+  return (
+    isWarmupMessage(messages[index]) ||
+    (index > 0 && isWarmupMessage(messages[index - 1]) && messages[index].type === 'assistant')
+  );
+}
+
+function writeDisplayableCache(
+  cache: DisplayableMessagesCache,
+  messages: ClaudeStreamMessage[],
+  state: DisplayableFilterState & {
+    visibleByIndex: boolean[];
+    skippableToolUseIdsBeforeLast: Set<string>;
+  },
+  hideWarmupMessages: boolean,
+  hideStartupWarnings: boolean,
+): DisplayableMessagesCache {
+  cache.messages = messages;
+  cache.displayableMessages = state.displayableMessages;
+  cache.skippableToolUseIds = state.skippableToolUseIds;
+  cache.visibleByIndex = state.visibleByIndex;
+  cache.skippableToolUseIdsBeforeLast = state.skippableToolUseIdsBeforeLast;
+  cache.processedLength = messages.length;
+  cache.firstMessage = messages[0];
+  cache.secondLastProcessedMessage = messages.length >= 2 ? messages[messages.length - 2] : undefined;
+  cache.lastProcessedMessage = messages[messages.length - 1];
+  cache.hideWarmupMessages = hideWarmupMessages;
+  cache.hideStartupWarnings = hideStartupWarnings;
+  return cache;
+}
+
+function buildDisplayableMessagesCache(
+  messages: ClaudeStreamMessage[],
+  options: DisplayableMessagesOptions,
+): DisplayableMessagesCache {
+  const hideWarmupMessages = options.hideWarmupMessages !== false;
+  const hideStartupWarnings = options.hideStartupWarnings !== false;
+  const nextState = filterDisplayableMessagesWithState(messages, options);
+
+  return {
+    messages,
+    displayableMessages: nextState.displayableMessages,
+    skippableToolUseIds: nextState.skippableToolUseIds,
+    visibleByIndex: nextState.visibleByIndex,
+    skippableToolUseIdsBeforeLast: nextState.skippableToolUseIdsBeforeLast,
+    processedLength: messages.length,
+    firstMessage: messages[0],
+    secondLastProcessedMessage: messages.length >= 2 ? messages[messages.length - 2] : undefined,
+    lastProcessedMessage: messages[messages.length - 1],
+    hideWarmupMessages,
+    hideStartupWarnings,
+  };
+}
+
+export function updateDisplayableMessagesCache(
+  cache: DisplayableMessagesCache | null,
+  messages: ClaudeStreamMessage[],
+  options: DisplayableMessagesOptions = {},
+): DisplayableMessagesCache {
+  const hideWarmupMessages = options.hideWarmupMessages !== false;
+  const hideStartupWarnings = options.hideStartupWarnings !== false;
+
+  if (!cache || !canReuseDisplayableCacheOptions(cache, hideWarmupMessages, hideStartupWarnings)) {
+    return buildDisplayableMessagesCache(messages, options);
+  }
+
+  const canUseTailReplacementFastPath =
+    messages.length === cache.processedLength &&
+    messages.length > 0 &&
+    (messages.length === 1 || messages[messages.length - 2] === cache.secondLastProcessedMessage) &&
+    (messages.length === 1 || cache.firstMessage === undefined || messages[0] === cache.firstMessage) &&
+    messages[messages.length - 1] !== cache.lastProcessedMessage;
+
+  if (canUseTailReplacementFastPath) {
+    const lastIndex = messages.length - 1;
+    if (!shouldFallbackForWarmupBoundary(messages, lastIndex, hideWarmupMessages)) {
+      const skippableToolUseIds = cloneSet(cache.skippableToolUseIdsBeforeLast);
+      const shouldDisplay = shouldDisplayMessageAtIndex(
+        messages,
+        lastIndex,
+        hideWarmupMessages,
+        hideStartupWarnings,
+        null,
+        skippableToolUseIds,
+      );
+      rememberSkippableToolUses(messages[lastIndex], skippableToolUseIds);
+
+      const visibleByIndex = cache.visibleByIndex.slice(0, messages.length);
+      const displayableMessages = visibleByIndex[lastIndex]
+        ? cache.displayableMessages.slice(0, -1)
+        : cache.displayableMessages;
+      visibleByIndex[lastIndex] = shouldDisplay;
+
+      return writeDisplayableCache(
+        cache,
+        messages,
+        {
+          displayableMessages: shouldDisplay
+            ? displayableMessages.concat(messages[lastIndex])
+            : displayableMessages,
+          skippableToolUseIds,
+          visibleByIndex,
+          skippableToolUseIdsBeforeLast: cloneSet(cache.skippableToolUseIdsBeforeLast),
+        },
+        hideWarmupMessages,
+        hideStartupWarnings,
+      );
+    }
+  }
+
+  const canUseAppendFastPath =
+    messages.length >= cache.processedLength &&
+    (cache.processedLength === 0 ||
+      messages[cache.processedLength - 1] === cache.lastProcessedMessage) &&
+    (cache.firstMessage === undefined || messages[0] === cache.firstMessage);
+
+  if (canUseAppendFastPath) {
+    let displayableMessages = cache.displayableMessages;
+    const appendedDisplayableMessages: ClaudeStreamMessage[] = [];
+    const skippableToolUseIds = cloneSet(cache.skippableToolUseIds);
+    const visibleByIndex = cache.visibleByIndex.slice(0, cache.processedLength);
+    let skippableToolUseIdsBeforeLast = cloneSet(cache.skippableToolUseIdsBeforeLast);
+    let usedFastPath = true;
+
+    for (let index = cache.processedLength; index < messages.length; index++) {
+      // Warmup 会影响“下一条 assistant 回复”的显示状态；这类跨边界规则走全量路径更安全。
+      if (shouldFallbackForWarmupBoundary(messages, index, hideWarmupMessages)) {
+        usedFastPath = false;
+        break;
+      }
+
+      if (index === messages.length - 1) {
+        skippableToolUseIdsBeforeLast = cloneSet(skippableToolUseIds);
+      }
+
+      const shouldDisplay = shouldDisplayMessageAtIndex(
+        messages,
+        index,
+        hideWarmupMessages,
+        hideStartupWarnings,
+        null,
+        skippableToolUseIds,
+      );
+      visibleByIndex[index] = shouldDisplay;
+      if (shouldDisplay) {
+        appendedDisplayableMessages.push(messages[index]);
+      }
+      rememberSkippableToolUses(messages[index], skippableToolUseIds);
+    }
+
+    if (usedFastPath) {
+      if (appendedDisplayableMessages.length > 0) {
+        displayableMessages = displayableMessages.concat(appendedDisplayableMessages);
+      }
+      return writeDisplayableCache(
+        cache,
+        messages,
+        {
+          displayableMessages,
+          skippableToolUseIds,
+          visibleByIndex,
+          skippableToolUseIdsBeforeLast,
+        },
+        hideWarmupMessages,
+        hideStartupWarnings,
+      );
+    }
+  }
+
+  return buildDisplayableMessagesCache(messages, options);
 }
 
 /**
@@ -289,77 +499,8 @@ export function useDisplayableMessages(
   const cacheRef = useRef<DisplayableMessagesCache | null>(null);
 
   return useMemo(() => {
-    const hideWarmupMessages = options.hideWarmupMessages !== false;
-    const hideStartupWarnings = options.hideStartupWarnings !== false;
-    const cache = cacheRef.current;
-    const canUseAppendFastPath =
-      cache !== null &&
-      cache.hideWarmupMessages === hideWarmupMessages &&
-      cache.hideStartupWarnings === hideStartupWarnings &&
-      messages.length >= cache.processedLength &&
-      (cache.processedLength === 0 ||
-        messages[cache.processedLength - 1] === cache.lastProcessedMessage) &&
-      (cache.firstMessage === undefined || messages[0] === cache.firstMessage);
-
-    if (canUseAppendFastPath) {
-      let displayableMessages = cache.displayableMessages;
-      const appendedDisplayableMessages: ClaudeStreamMessage[] = [];
-      const skippableToolUseIds = new Set(cache.skippableToolUseIds);
-      let usedFastPath = true;
-
-      for (let index = cache.processedLength; index < messages.length; index++) {
-        // Warmup 会影响“下一条 assistant 回复”的显示状态；这类跨边界规则走全量路径更安全。
-        if (
-          hideWarmupMessages &&
-          (isWarmupMessage(messages[index]) ||
-            (index > 0 && isWarmupMessage(messages[index - 1]) && messages[index].type === 'assistant'))
-        ) {
-          usedFastPath = false;
-          break;
-        }
-
-        if (shouldDisplayMessageAtIndex(
-          messages,
-          index,
-          hideWarmupMessages,
-          hideStartupWarnings,
-          null,
-          skippableToolUseIds,
-        )) {
-          appendedDisplayableMessages.push(messages[index]);
-        }
-        rememberSkippableToolUses(messages[index], skippableToolUseIds);
-      }
-
-      if (usedFastPath) {
-        if (appendedDisplayableMessages.length > 0) {
-          displayableMessages = displayableMessages.concat(appendedDisplayableMessages);
-        }
-        cacheRef.current = {
-          messages,
-          displayableMessages,
-          skippableToolUseIds,
-          processedLength: messages.length,
-          firstMessage: messages[0],
-          lastProcessedMessage: messages[messages.length - 1],
-          hideWarmupMessages,
-          hideStartupWarnings,
-        };
-        return displayableMessages;
-      }
-    }
-
-    const nextState = filterDisplayableMessagesWithState(messages, options);
-    cacheRef.current = {
-      messages,
-      displayableMessages: nextState.displayableMessages,
-      skippableToolUseIds: nextState.skippableToolUseIds,
-      processedLength: messages.length,
-      firstMessage: messages[0],
-      lastProcessedMessage: messages[messages.length - 1],
-      hideWarmupMessages,
-      hideStartupWarnings,
-    };
-    return nextState.displayableMessages;
+    const nextCache = updateDisplayableMessagesCache(cacheRef.current, messages, options);
+    cacheRef.current = nextCache;
+    return nextCache.displayableMessages;
   }, [messages, options.hideWarmupMessages, options.hideStartupWarnings]);
 }

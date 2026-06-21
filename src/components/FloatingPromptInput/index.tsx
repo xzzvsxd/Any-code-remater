@@ -44,7 +44,7 @@ const ProcessingStatusCopy: React.FC<{ executionStatus?: ExecutionStatusInfo }> 
     if (!executionStatus?.isRunning) return;
     const timer = window.setInterval(() => {
       setClockTick((tick) => (tick + 1) % 1_000_000);
-    }, 1000);
+    }, 2000);
     return () => window.clearInterval(timer);
   }, [executionStatus?.isRunning]);
 

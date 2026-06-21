@@ -36,6 +36,7 @@ const RESUME_AUTO_SCROLL_THRESHOLD = 80;
 // 若沿用 80px 的宽松阈值，用户在底部附近小幅上滑（落在 80px 内）会被 scroll 事件
 // 立刻判定为“已回到底部”而重新粘底，与上滑解除直接对冲 —— 这正是“吸铁石”根因。
 const RESUME_AT_BOTTOM_THRESHOLD = 4;
+const PRECISE_BOTTOM_THRESHOLD = 2;
 // 贴底死区：离底在此像素内一律视为"已贴底"，不再触发任何滚动。
 // 根治"一直闪"的关键——流式期间消息区有持续改变高度的元素（光标/loading/思考动画、
 // 代码高亮异步重排），会让虚拟列表 totalSize 持续微幅摆动。若每帧都去对齐这个摆动的目标，
@@ -98,6 +99,10 @@ function getDistanceFromBottom(element: HTMLDivElement): number {
   return element.scrollHeight - element.scrollTop - element.clientHeight;
 }
 
+interface AutoScrollOptions {
+  precise?: boolean;
+}
+
 export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScrollReturn {
   const { displayableMessages, isLoading } = config;
 
@@ -122,6 +127,9 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
   // 滚动条拖拽/触摸/滚轮/键盘等直接输入后的短窗口。只有这个窗口内的 scrollTop 增大，
   // 才作为“用户想回到底部”的兜底信号；虚拟列表测高补偿不带直接输入，不能恢复粘底。
   const directScrollGestureUntilRef = useRef(0);
+  // ResizeObserver 在 WebKitGTK 下可能一帧内触发多次；用 rAF 合并，防止 RO 回调里直接
+  // 读写 scrollHeight/scrollTop 造成同步布局风暴。
+  const resizeFollowFrameRef = useRef(0);
 
   const lastMessageHash = useMemo(
     () => getLastMessageContentHash(displayableMessages),
@@ -157,7 +165,7 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
    *    高度收缩浏览器会一次性修正，我们不主动制造向上滚动。
    * 全程瞬时（无 smooth）：粘底就是"钉在底部"，瞬时跳转才不会被高频更新打断。
    */
-  const performAutoScroll = (): boolean => {
+  const performAutoScroll = (options: AutoScrollOptions = {}): boolean => {
     if (!autoScrollEnabledRef.current) return false;
 
     const scrollElement = parentRef.current;
@@ -165,8 +173,9 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
 
     const targetScrollTop = scrollElement.scrollHeight - scrollElement.clientHeight;
     const distance = targetScrollTop - scrollElement.scrollTop;
+    const threshold = options.precise ? PRECISE_BOTTOM_THRESHOLD : STICK_BOTTOM_DEADBAND;
     // 落后不足死区：视为已贴底，不滚动（吸收微抖）。也覆盖高度收缩后 scrollTop 被 clamp 的情形。
-    if (distance <= STICK_BOTTOM_DEADBAND) {
+    if (distance <= threshold) {
       return false;
     }
 
@@ -330,21 +339,54 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
     // performAutoScroll 自带死区 + 用户上滑解除保护，故与用户滚动、与 rAF 循环均不冲突
     //（scrollTop 调整不改内容尺寸，不会反过来触发本 observer，无循环）。
     let contentObserver: ResizeObserver | null = null;
+    let resizeSettledFrames = 0;
+    const cancelResizeFollow = () => {
+      if (resizeFollowFrameRef.current) {
+        cancelAnimationFrame(resizeFollowFrameRef.current);
+        resizeFollowFrameRef.current = 0;
+      }
+    };
+    const runResizeFollow = () => {
+      resizeFollowFrameRef.current = 0;
+      if (!shouldFollowResizeToBottom({
+        isLoading,
+        autoScrollEnabled: autoScrollEnabledRef.current,
+      })) {
+        return;
+      }
+
+      const didScroll = performAutoScroll();
+      resizeSettledFrames = didScroll ? 0 : resizeSettledFrames + 1;
+
+      if (resizeSettledFrames >= 3) {
+        performAutoScroll({ precise: true });
+        return;
+      }
+
+      resizeFollowFrameRef.current = requestAnimationFrame(runResizeFollow);
+    };
+    const scheduleResizeFollow = () => {
+      if (!shouldFollowResizeToBottom({
+        isLoading,
+        autoScrollEnabled: autoScrollEnabledRef.current,
+      })) {
+        return;
+      }
+      resizeSettledFrames = 0;
+      if (resizeFollowFrameRef.current) return;
+      resizeFollowFrameRef.current = requestAnimationFrame(runResizeFollow);
+    };
     const contentEl = scrollElement.firstElementChild;
     if (contentEl) {
       contentObserver = new ResizeObserver(() => {
-        if (shouldFollowResizeToBottom({
-          isLoading,
-          autoScrollEnabled: autoScrollEnabledRef.current,
-        })) {
-          performAutoScroll();
-        }
+        scheduleResizeFollow();
       });
       contentObserver.observe(contentEl);
     }
 
     return () => {
       cancelResumeConfirmation();
+      cancelResizeFollow();
       contentObserver?.disconnect();
       scrollElement.removeEventListener('wheel', handleWheel);
       scrollElement.removeEventListener('touchstart', handleTouchStart);
@@ -385,6 +427,7 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
         settledFrames += 1;
       }
       if (settledFrames >= SETTLE_FRAME_BUDGET) {
+        performAutoScroll({ precise: true });
         rafId = 0;
         return;
       }

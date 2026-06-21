@@ -10,7 +10,7 @@ import React from "react";
 import { CheckCircle2, Clock, Circle, Trash2, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { useMessagesContext } from "@/contexts/MessagesContext";
+import { useTaskSubjectLookup } from "@/contexts/MessagesContext";
 
 const statusIcons: Record<string, React.ReactNode> = {
   completed: <CheckCircle2 className="h-4 w-4 text-success" />,
@@ -25,47 +25,6 @@ const statusLabels: Record<string, string> = {
   pending: "待处理",
   deleted: "已删除",
 };
-
-/**
- * 从所有消息中构建 taskId → subject 查找表
- */
-function buildTaskSubjectLookup(messages: any[]): Map<string, string> {
-  const lookup = new Map<string, string>();
-  const toolUseInputs = new Map<string, string>();
-
-  for (const msg of messages) {
-    const content = msg?.message?.content;
-    if (!Array.isArray(content)) continue;
-
-    for (const block of content) {
-      // 从 TaskCreate tool_use 中收集 subject
-      if (block.type === 'tool_use' && /^TaskCreate$/i.test(block.name)) {
-        const subject = block.input?.subject;
-        if (subject) toolUseInputs.set(block.id, subject);
-      }
-
-      // 从 tool_result 中提取 taskId 并关联 subject
-      if (block.type === 'tool_result' && block.tool_use_id) {
-        const subject = toolUseInputs.get(block.tool_use_id);
-        if (subject) {
-          // 从 content 提取 taskId
-          const contentStr = typeof block.content === 'string' ? block.content : '';
-          const match = contentStr.match(/#(\d+)/);
-          let taskId = match ? match[1] : null;
-
-          // 从 toolUseResult 提取
-          if (!taskId && msg.toolUseResult?.task?.id) {
-            taskId = String(msg.toolUseResult.task.id);
-          }
-
-          if (taskId) lookup.set(taskId, subject);
-        }
-      }
-    }
-  }
-
-  return lookup;
-}
 
 // ============================================================================
 // 导出类型
@@ -89,8 +48,7 @@ export interface TaskListAggregateWidgetProps {
 export const TaskListAggregateWidget: React.FC<TaskListAggregateWidgetProps> = ({
   toolCalls,
 }) => {
-  const { messages } = useMessagesContext();
-  const lookup = React.useMemo(() => buildTaskSubjectLookup(messages), [messages]);
+  const lookup = useTaskSubjectLookup();
 
   return (
     <div className="space-y-1">

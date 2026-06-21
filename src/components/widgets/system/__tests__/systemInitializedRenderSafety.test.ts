@@ -24,4 +24,12 @@ describe('system initialized render safety', () => {
     expect(toolsListSource).toContain('const regularTools = useMemo(');
     expect(toolsListSource).toContain('const mcpToolsByProvider = useMemo(');
   });
+
+  test('tool list render is stable when equivalent tools arrays are recreated', () => {
+    expect(toolsListSource).toContain('areToolListsEqual');
+    expect(toolsListSource).toContain('splitToolsForDisplay');
+    expect(toolsListSource).toContain('React.memo<ToolsListProps>(');
+    expect(toolsListSource).toContain('areToolListsEqual(prev.tools, next.tools)');
+    expect(toolsListSource).not.toContain('tools.filter(tool =>');
+  });
 });

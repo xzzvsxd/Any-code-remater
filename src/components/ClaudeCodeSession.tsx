@@ -45,11 +45,10 @@ import { convertGeminiSessionDetailToClaudeMessages } from '@/lib/geminiConverte
 import { formatClaudeModelLabel, resolveClaudeContinuationModel } from '@/lib/claudeModelSelection';
 import { buildQueueStorageKey, loadQueuedPrompts, saveQueuedPrompts } from '@/lib/queuedPromptsStore';
 import {
-  buildBranchPromptIndexByMessage,
-  buildPromptIndexByMessage,
   getBranchPromptIndexForDisplayableMessage,
   getPromptIndexForDisplayableMessage,
 } from '@/lib/promptIndex';
+import { usePromptIndexMaps } from '@/hooks/usePromptIndexMaps';
 import { loadUiOnlySessionMessages, mergeUiOnlySessionMessages, pruneUiOnlySessionMessagesAfter } from '@/lib/uiOnlySessionEvents';
 import { prepareRecentProjects } from '@/lib/recentProjects';
 import { safeRandomUUID } from '@/lib/browserCompat';
@@ -127,6 +126,41 @@ const getProjectLabel = (path: string) => {
   return normalized.split('/').pop() || normalized;
 };
 
+const getContentActivityLengthHint = (value: unknown): number => {
+  if (value == null) return 0;
+  if (typeof value === 'string') return value.length;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value).length;
+
+  if (Array.isArray(value)) {
+    let total = 0;
+    for (const item of value) {
+      total += getContentActivityLengthHint(item);
+    }
+    return total;
+  }
+
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    let total = 0;
+    if (typeof record.text === 'string') total += record.text.length;
+    if (typeof record.content === 'string') total += record.content.length;
+    if (typeof record.result === 'string') total += record.result.length;
+    if (typeof record.type === 'string') total += record.type.length;
+    if (typeof record.id === 'string') total += record.id.length;
+    return total + Object.keys(record).length;
+  }
+
+  return 0;
+};
+
+const getMessageActivityKey = (messages: ClaudeStreamMessage[]): string => {
+  if (messages.length === 0) return '0';
+  const lastMessage = messages[messages.length - 1];
+  const contentLength = getContentActivityLengthHint(lastMessage.message?.content);
+  const timestamp = (lastMessage as any).receivedAt ?? (lastMessage as any).timestamp ?? '';
+  return `${messages.length}:${lastMessage.type}:${contentLength}:${timestamp}`;
+};
+
 /**
  * ClaudeCodeSession component for interactive Claude Code sessions
  * 
@@ -154,6 +188,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     setMessages,
     appendMessage,
     appendMessageImmediate,
+    replaceLastMessage,
     isStreaming,
     setIsStreaming,
     filterConfig,
@@ -168,6 +203,10 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   // 避免 useCallback 依赖 messages 后在后台 tab 中反复重注册 Plan/UserQuestion 回调。
   const messagesRef = useRef<ClaudeStreamMessage[]>(messages);
   messagesRef.current = messages;
+  const lastMessageActivityKey = useMemo(
+    () => getMessageActivityKey(messages),
+    [messages],
+  );
   const [error, setError] = useState<string | null>(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   // 原始 JSONL 已由后端会话文件持久化，导出功能也从规范化后的 messages 生成。
@@ -352,7 +391,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     if (isLoading) {
       setLastOutputAt(Date.now());
     }
-  }, [messages.length, isLoading]);
+  }, [lastMessageActivityKey, isLoading]);
 
   const executionStatus = useMemo<ExecutionStatusInfo>(() => {
     const now = Date.now();
@@ -594,6 +633,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     setMessages,
     appendMessage,
     appendMessageImmediate,
+    replaceLastMessage,
     setClaudeSessionId,
     setLastTranslationResult,
     setQueuedPrompts,
@@ -1094,7 +1134,10 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
 
   // 🆕 辅助函数：计算用户消息对应的 promptIndex
   // 只计算真实用户输入，排除系统消息和工具结果
-  const promptIndexByMessage = useMemo(() => buildPromptIndexByMessage(visibleMessages), [visibleMessages]);
+  const {
+    promptIndexByMessage,
+    branchPromptIndexByMessage,
+  } = usePromptIndexMaps(visibleMessages);
   const getPromptIndexForMessage = useCallback((displayableIndex: number): number => {
     return getPromptIndexForDisplayableMessage(
       visibleMessages,
@@ -1244,10 +1287,6 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   }, [effectiveSession, projectPath, claudeSettings?.hideWarmupMessages, executionEngineConfig.engine]);
 
   // 🌿 计算某条消息（任意类型）可用的分支 promptIndex；-1 表示不可分支
-  const branchPromptIndexByMessage = useMemo(
-    () => buildBranchPromptIndexByMessage(visibleMessages),
-    [visibleMessages]
-  );
   const getBranchPromptIndexForMessage = useCallback((displayableIndex: number): number => {
     return getBranchPromptIndexForDisplayableMessage(
       visibleMessages,

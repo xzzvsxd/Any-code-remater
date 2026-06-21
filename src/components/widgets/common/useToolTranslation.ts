@@ -21,7 +21,8 @@ import { translationMiddleware } from '@/lib/translationMiddleware';
  * - 优雅的错误处理
  */
 export const useToolTranslation = () => {
-  const [translatedContent, setTranslatedContent] = React.useState<Map<string, string>>(new Map());
+  const translatedContentRef = React.useRef<Map<string, string>>(new Map());
+  const [cacheVersion, setCacheVersion] = React.useState(0);
 
   /**
    * 翻译内容
@@ -30,6 +31,8 @@ export const useToolTranslation = () => {
    * @returns 翻译后的内容，如果翻译失败或未启用则返回原内容
    */
   const translateContent = React.useCallback(async (content: string, cacheKey: string) => {
+    const translatedContent = translatedContentRef.current;
+
     // 检查缓存
     if (translatedContent.has(cacheKey)) {
       return translatedContent.get(cacheKey)!;
@@ -48,7 +51,8 @@ export const useToolTranslation = () => {
         const result = await translationMiddleware.translateClaudeResponse(content, true);
         if (result.wasTranslated) {
           // 更新缓存
-          setTranslatedContent(prev => new Map(prev).set(cacheKey, result.translatedText));
+          translatedContentRef.current.set(cacheKey, result.translatedText);
+          setCacheVersion(version => version + 1);
           return result.translatedText;
         }
       }
@@ -58,18 +62,23 @@ export const useToolTranslation = () => {
       console.error('[useToolTranslation] Translation failed:', error);
       return content;
     }
-  }, [translatedContent]);
+  }, []);
 
   /**
    * 清空翻译缓存
    */
   const clearCache = React.useCallback(() => {
-    setTranslatedContent(new Map());
+    translatedContentRef.current.clear();
+    setCacheVersion(version => version + 1);
   }, []);
+
+  // cacheVersion 仅用于在外部读取 cacheSize 时刷新返回值；不要让它进入
+  // translateContent 的依赖，否则缓存写入会重建回调并触发所有翻译 effect 重跑。
+  void cacheVersion;
 
   return {
     translateContent,
     clearCache,
-    cacheSize: translatedContent.size,
+    cacheSize: translatedContentRef.current.size,
   };
 };

@@ -9,7 +9,7 @@ describe('ClaudeCodeSession background render safety', () => {
     expect(source).toContain('const visibleMessages = isActive ? messages : EMPTY_VISIBLE_MESSAGES');
     expect(source).toContain('useSessionCostCalculation(visibleMessages');
     expect(source).toContain('useDisplayableMessages(visibleMessages');
-    expect(source).toContain('buildPromptIndexByMessage(visibleMessages');
+    expect(source).toContain('usePromptIndexMaps(visibleMessages');
     expect(source).toContain('messages={visibleMessages}');
   });
 

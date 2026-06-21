@@ -1,5 +1,5 @@
 import React from "react";
-import { useMessagesContext, type ToolResultEntry } from "@/contexts/MessagesContext";
+import { useMessagesToolResults, type ToolResultEntry } from "@/contexts/MessagesContext";
 import type { ClaudeStreamMessage } from "@/types/claude";
 
 type ToolStatus = "pending" | "success" | "error";
@@ -12,7 +12,7 @@ export interface UseToolResultsReturn {
 }
 
 export const useToolResults = (): UseToolResultsReturn => {
-  const { toolResults } = useMessagesContext();
+  const toolResults = useMessagesToolResults();
 
   const getResultById = React.useCallback(
     (toolUseId?: string | null) => {

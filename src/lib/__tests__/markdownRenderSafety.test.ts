@@ -41,6 +41,13 @@ describe('markdown render safety', () => {
     expect(shouldRenderMarkdownAsPlainText(mediumMarkdown, { isStreaming: true })).toBe(true);
   });
 
+  test('uses plain text while streaming fenced code to avoid reparsing Prism on every delta', () => {
+    const fencedCode = '```ts\nconst value = 1;\n```';
+
+    expect(shouldRenderMarkdownAsPlainText(fencedCode)).toBe(false);
+    expect(shouldRenderMarkdownAsPlainText(fencedCode, { isStreaming: true })).toBe(true);
+  });
+
   test('counts lines with an upper bound for collapsed huge content summaries', () => {
     expect(countLinesUpTo('a\nb\nc', 10)).toEqual({ lineCount: 3, exceeded: false });
     expect(countLinesUpTo(Array.from({ length: 20 }, () => 'x').join('\n'), 5)).toEqual({

@@ -1,17 +1,15 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { BrainCircuit, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useTypewriter } from "@/hooks/useTypewriter";
-import { useTranslation } from "@/hooks/useTranslation";
 
 interface ThinkingBlockProps {
   /** 思考内容 */
   content: string;
   /** 是否正在流式输出 */
   isStreaming?: boolean;
-  /** 自动收起延迟（毫秒），默认 2500ms */
+  /** 保留兼容旧调用；Linux/WebKitGTK 下不再做流式结束后的定时自动收起 */
   autoCollapseDelay?: number;
-  /** 打字机速度（毫秒/字符） */
+  /** 保留兼容旧调用；思考内容不再逐字符打字，避免每帧重渲染 */
   typewriterSpeed?: number;
 }
 
@@ -19,60 +17,28 @@ interface ThinkingBlockProps {
  * 思考块组件
  *
  * 功能：
- * - 打字机效果逐字显示思考内容
+ * - 流式思考内容直接显示当前文本，避免逐字符 setState 造成 Linux/WebKitGTK 卡顿
  * - 默认展开状态
- * - 思考输出结束后自动收起（可配置延迟）
+ * - 历史消息默认收起；刚结束的流式思考保持原高度，避免虚拟列表高度骤缩导致底部弹跳
  * - 支持手动展开/收起
  */
 export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
   content,
   isStreaming = false,
-  autoCollapseDelay = 2500,
-  typewriterSpeed = 5 // 思考内容通常较长，稍快一些
 }) => {
-  const { t } = useTranslation();
   // 展开/收起状态 - 默认展开
   const [isOpen, setIsOpen] = useState(true);
 
-  // 是否已经完成过自动收起（避免重复触发）
-  const hasAutoCollapsedRef = useRef(false);
+  // 历史消息只在首次挂载时默认收起；正在 streaming 的消息结束后不再定时收起，
+  // 避免 max-height/高度骤缩触发虚拟列表 ResizeObserver 风暴和底部上弹。
+  const hasInitializedHistoricalCollapseRef = useRef(false);
+  const hasEverStreamedRef = useRef(isStreaming);
 
   // 是否用户手动操作过（手动操作后不再自动收起）
   const userInteractedRef = useRef(false);
 
-  // 打字机效果完成回调
-  const handleTypewriterComplete = useCallback(() => {
-    // 如果用户已手动操作，不自动收起
-    if (userInteractedRef.current) return;
-
-    // 如果已经自动收起过，不重复
-    if (hasAutoCollapsedRef.current) return;
-
-    // 延迟后自动收起
-    const timer = setTimeout(() => {
-      if (!userInteractedRef.current) {
-        setIsOpen(false);
-        hasAutoCollapsedRef.current = true;
-      }
-    }, autoCollapseDelay);
-
-    return () => clearTimeout(timer);
-  }, [autoCollapseDelay]);
-
-  // 使用打字机效果
-  const {
-    displayedText,
-    isTyping,
-    skipToEnd
-  } = useTypewriter(content, {
-    enabled: isStreaming,
-    speed: typewriterSpeed,
-    isStreaming,
-    onComplete: handleTypewriterComplete
-  });
-
-  // 显示的文本内容
-  const textToDisplay = isStreaming ? displayedText : content;
+  const textToDisplay = content;
+  const showStreamingCursor = isStreaming;
   
   // 处理分割符：将 ---divider--- 替换为可视化的分割线组件
   // 如果内容中包含分割符，说明是聚合后的多段思考
@@ -85,8 +51,7 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
       return (
         <>
           {textToDisplay}
-          {/* 打字中光标 */}
-          {isTyping && (
+          {showStreamingCursor && (
             <span className="inline-block w-1 h-3 ml-0.5 bg-amber-500 rounded-sm" />
           )}
         </>
@@ -103,20 +68,27 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
           </div>
         )}
         <span>{part.trim()}</span>
-        {/* 只在最后一部分且正在打字时显示光标 */}
-        {index === parts.length - 1 && isTyping && (
+        {index === parts.length - 1 && showStreamingCursor && (
           <span className="inline-block w-1 h-3 ml-0.5 bg-amber-500 rounded-sm" />
         )}
       </React.Fragment>
     ));
   };
 
-  // 如果不是流式输出且内容已经存在（历史消息），直接标记为已完成
+  // 历史消息默认收起；流式消息结束后保持展开，防止底部被高度收缩“弹上去”。
   useEffect(() => {
-    if (!isStreaming && content && !hasAutoCollapsedRef.current) {
-      // 历史消息，默认收起
+    if (isStreaming) {
+      hasEverStreamedRef.current = true;
+      return;
+    }
+
+    if (
+      content &&
+      !hasEverStreamedRef.current &&
+      !hasInitializedHistoricalCollapseRef.current
+    ) {
       setIsOpen(false);
-      hasAutoCollapsedRef.current = true;
+      hasInitializedHistoricalCollapseRef.current = true;
     }
   }, [isStreaming, content]);
 
@@ -125,13 +97,6 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
     userInteractedRef.current = true;
     setIsOpen(prev => !prev);
   };
-
-  // 双击跳过打字效果
-  const handleDoubleClick = useCallback(() => {
-    if (isTyping) {
-      skipToEnd();
-    }
-  }, [isTyping, skipToEnd]);
 
   if (!content) return null;
 
@@ -145,8 +110,7 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
         <BrainCircuit className="w-3.5 h-3.5 opacity-70" />
         <span>Thinking Process</span>
 
-        {/* 打字中指示器 */}
-        {isTyping && (
+        {showStreamingCursor && (
           <span className="inline-block w-1.5 h-3 bg-amber-500 rounded-full" />
         )}
 
@@ -163,23 +127,17 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
         </span>
       </button>
 
-      {/* Content - 可展开/收起 */}
-      <div
-        className={cn(
-          "overflow-hidden transition-all duration-300 ease-in-out",
-          isOpen ? "max-h-[500px] opacity-100" : "max-h-0 opacity-0"
-        )}
-      >
+      {isOpen && (
+      <div className="overflow-hidden">
         <div
           className="px-3 pb-3 pt-1"
-          onDoubleClick={handleDoubleClick}
-          title={isTyping ? t('thinking.doubleClickSkip') : undefined}
         >
           <div className="text-xs text-muted-foreground/80 whitespace-pre-wrap font-mono leading-relaxed max-h-[400px] overflow-y-auto">
             {renderContent()}
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 };

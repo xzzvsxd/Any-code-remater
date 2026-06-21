@@ -428,112 +428,114 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
         overflowAnchor: 'none',
       }}
     >
-      <div
-        className="relative w-full max-w-5xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-[85%] mx-auto px-4 pt-8 pb-4"
-        style={{
-          height: `${Math.max(rowVirtualizer.getTotalSize(), 100)}px`,
-          minHeight: '100px',
-        }}
-      >
-        {rowVirtualizer.getVirtualItems().map((virtualItem) => {
-          const messageGroup = messageGroups[virtualItem.index];
-
-          // 防御性检查：确保 messageGroup 存在
-          if (!messageGroup) {
-            console.warn('[SessionMessages] messageGroup is undefined for index:', virtualItem.index);
-            return null;
-          }
-
-            const message = messageGroup.type === 'normal' ? messageGroup.message : null;
-            const originalIndex = messageGroup.type === 'normal' ? messageGroup.index : undefined;
-            const promptIndex = message && message.type === 'user' && originalIndex !== undefined && getPromptIndexForMessage
-              ? getPromptIndexForMessage(originalIndex)
-              : undefined;
-
-            // 分支锚点：仅对「用户消息 / 助手最终回复 / 中断消息」允许分支。
-            // 聚合的工具/思考过程、子代理入口卡片不是对话节点，不显示分支按钮。
-            const branchableMessage = messageGroup.type === 'normal' ? messageGroup.message : null;
-            const isInterruption =
-              branchableMessage?.type === 'system' &&
-              (branchableMessage?.subtype === 'execution-cancelled' ||
-                branchableMessage?.subtype === 'execution-error');
-            const isFinalAssistantReply =
-              branchableMessage?.type === 'assistant';
-            const canBranchThisGroup =
-              branchableMessage?.type === 'user' || isFinalAssistantReply || isInterruption;
-
-            const branchAnchorIndex =
-              messageGroup.type === 'normal' ? messageGroup.index : undefined;
-            const branchPromptIndex =
-              canBranchThisGroup && branchAnchorIndex !== undefined && getBranchPromptIndexForMessage
-                ? getBranchPromptIndexForMessage(branchAnchorIndex)
-                : -1;
-
-            const isStreaming = virtualItem.index === messageGroups.length - 1 && isLoading;
-
-            return (
-              <MeasurableItem
-                key={virtualItem.key}
-                virtualItem={virtualItem}
-                itemKey={virtualItem.key}
-                measureElement={rowVirtualizer.measureElement}
-                className="absolute inset-x-4 top-0"
-                style={{
-                  transform: `translateY(${virtualItem.start}px)`,
-                }}
-              >
-                {/* group 容器：hover 时在右上角显示分支按钮，不打断现有消息渲染 */}
-                <div className="relative group/msg">
-                  {/* ✅ 架构优化: StreamMessageV2 现在从 SessionContext 获取数据 */}
-                  <StreamMessageV2
-                    messageGroup={messageGroup}
-                    onLinkDetected={onLinkDetected}
-                    claudeSettings={settings}
-                    isStreaming={isStreaming}
-                    promptIndex={promptIndex}
-                    sessionId={sessionId ?? undefined}
-                    projectId={projectId ?? undefined}
-                    projectPath={projectPath}
-                    onRevert={onRevert}
-                  />
-                  {/* 分支按钮：仅可分支节点显示，且像复制按钮一样 hover 才浮现 */}
-                  {!isStreaming && branchPromptIndex >= 0 && (
-                    <div className="absolute top-1 right-1 z-20 opacity-0 group-hover/msg:opacity-100 transition-opacity">
-                      <MessageBranchButton
-                        branchPromptIndex={branchPromptIndex}
-                        onBranch={onBranch}
-                      />
-                    </div>
-                  )}
-                </div>
-              </MeasurableItem>
-            );
-          })}
-      </div>
-
-      {/* CLI风格的处理状态指示器 - 显示在消息列表底部 */}
-      <CliProcessingIndicator
-        isProcessing={isLoading && messageGroups.length > 0}
-        onCancel={onCancel}
-        engineName={executionStatus?.engineName}
-        startedAt={executionStatus?.startedAt}
-        lastOutputAt={executionStatus?.lastOutputAt}
-        elapsedSeconds={executionStatus?.elapsedSeconds}
-        idleSeconds={executionStatus?.idleSeconds}
-        canCancel={executionStatus?.canCancel}
-        isCancelling={executionStatus?.isCancelling}
-      />
-
-      {/* Error indicator - 移除固定 marginBottom，因为输入框不再是 fixed 定位 */}
-      {error && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive w-full max-w-5xl mx-auto mb-4"
+      <div data-session-scroll-content className="min-h-full">
+        <div
+          className="relative w-full max-w-5xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-[85%] mx-auto px-4 pt-8 pb-4"
+          style={{
+            height: `${Math.max(rowVirtualizer.getTotalSize(), 100)}px`,
+            minHeight: '100px',
+          }}
         >
-          {error}
-        </motion.div>
-      )}
+          {rowVirtualizer.getVirtualItems().map((virtualItem) => {
+            const messageGroup = messageGroups[virtualItem.index];
+
+            // 防御性检查：确保 messageGroup 存在
+            if (!messageGroup) {
+              console.warn('[SessionMessages] messageGroup is undefined for index:', virtualItem.index);
+              return null;
+            }
+
+              const message = messageGroup.type === 'normal' ? messageGroup.message : null;
+              const originalIndex = messageGroup.type === 'normal' ? messageGroup.index : undefined;
+              const promptIndex = message && message.type === 'user' && originalIndex !== undefined && getPromptIndexForMessage
+                ? getPromptIndexForMessage(originalIndex)
+                : undefined;
+
+              // 分支锚点：仅对「用户消息 / 助手最终回复 / 中断消息」允许分支。
+              // 聚合的工具/思考过程、子代理入口卡片不是对话节点，不显示分支按钮。
+              const branchableMessage = messageGroup.type === 'normal' ? messageGroup.message : null;
+              const isInterruption =
+                branchableMessage?.type === 'system' &&
+                (branchableMessage?.subtype === 'execution-cancelled' ||
+                  branchableMessage?.subtype === 'execution-error');
+              const isFinalAssistantReply =
+                branchableMessage?.type === 'assistant';
+              const canBranchThisGroup =
+                branchableMessage?.type === 'user' || isFinalAssistantReply || isInterruption;
+
+              const branchAnchorIndex =
+                messageGroup.type === 'normal' ? messageGroup.index : undefined;
+              const branchPromptIndex =
+                canBranchThisGroup && branchAnchorIndex !== undefined && getBranchPromptIndexForMessage
+                  ? getBranchPromptIndexForMessage(branchAnchorIndex)
+                  : -1;
+
+              const isStreaming = virtualItem.index === messageGroups.length - 1 && isLoading;
+
+              return (
+                <MeasurableItem
+                  key={virtualItem.key}
+                  virtualItem={virtualItem}
+                  itemKey={virtualItem.key}
+                  measureElement={rowVirtualizer.measureElement}
+                  className="absolute inset-x-4 top-0"
+                  style={{
+                    transform: `translateY(${virtualItem.start}px)`,
+                  }}
+                >
+                  {/* group 容器：hover 时在右上角显示分支按钮，不打断现有消息渲染 */}
+                  <div className="relative group/msg">
+                    {/* ✅ 架构优化: StreamMessageV2 现在从 SessionContext 获取数据 */}
+                    <StreamMessageV2
+                      messageGroup={messageGroup}
+                      onLinkDetected={onLinkDetected}
+                      claudeSettings={settings}
+                      isStreaming={isStreaming}
+                      promptIndex={promptIndex}
+                      sessionId={sessionId ?? undefined}
+                      projectId={projectId ?? undefined}
+                      projectPath={projectPath}
+                      onRevert={onRevert}
+                    />
+                    {/* 分支按钮：仅可分支节点显示，且像复制按钮一样 hover 才浮现 */}
+                    {!isStreaming && branchPromptIndex >= 0 && (
+                      <div className="absolute top-1 right-1 z-20 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+                        <MessageBranchButton
+                          branchPromptIndex={branchPromptIndex}
+                          onBranch={onBranch}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </MeasurableItem>
+              );
+            })}
+        </div>
+
+        {/* CLI风格的处理状态指示器 - 显示在消息列表底部 */}
+        <CliProcessingIndicator
+          isProcessing={isLoading && messageGroups.length > 0}
+          onCancel={onCancel}
+          engineName={executionStatus?.engineName}
+          startedAt={executionStatus?.startedAt}
+          lastOutputAt={executionStatus?.lastOutputAt}
+          elapsedSeconds={executionStatus?.elapsedSeconds}
+          idleSeconds={executionStatus?.idleSeconds}
+          canCancel={executionStatus?.canCancel}
+          isCancelling={executionStatus?.isCancelling}
+        />
+
+        {/* Error indicator - 移除固定 marginBottom，因为输入框不再是 fixed 定位 */}
+        {error && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive w-full max-w-5xl mx-auto mb-4"
+          >
+            {error}
+          </motion.div>
+        )}
+      </div>
     </div>
   );
 });

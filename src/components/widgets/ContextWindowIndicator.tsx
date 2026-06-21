@@ -7,7 +7,6 @@
 
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { motion } from 'framer-motion';
 import { Layers, Info, Archive } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Popover } from '@/components/ui/popover';
@@ -65,7 +64,7 @@ const formatK = (tokens: number): string => {
  * 显示一个带有进度条和百分比的 Badge，悬停时显示详细信息
  * 支持多引擎（Claude/Codex）
  */
-export const ContextWindowIndicator: React.FC<ContextWindowIndicatorProps> = ({
+const ContextWindowIndicatorComponent: React.FC<ContextWindowIndicatorProps> = ({
   messages,
   model,
   engine,
@@ -93,10 +92,7 @@ export const ContextWindowIndicator: React.FC<ContextWindowIndicatorProps> = ({
   const willTriggerCompact = isClaudeEngine && usage.currentTokens >= autoCompactThreshold;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.2 }}
+    <div
       onMouseEnter={() => setShowPopover(true)}
       onMouseLeave={() => setShowPopover(false)}
       className={className}
@@ -133,7 +129,7 @@ export const ContextWindowIndicator: React.FC<ContextWindowIndicatorProps> = ({
             </span>
             {/* 显示压缩图标提示即将压缩 */}
             {willTriggerCompact ? (
-              <Archive className="h-3 w-3 text-amber-500 animate-pulse ml-0.5" />
+              <Archive className="h-3 w-3 text-amber-500 ml-0.5" />
             ) : (
               <Info className="h-3 w-3 text-muted-foreground ml-0.5" />
             )}
@@ -291,8 +287,21 @@ export const ContextWindowIndicator: React.FC<ContextWindowIndicatorProps> = ({
         align="center"
         className="w-72"
       />
-    </motion.div>
+    </div>
   );
 };
+
+export const ContextWindowIndicator = React.memo(
+  ContextWindowIndicatorComponent,
+  (prevProps, nextProps) => (
+    prevProps.messages === nextProps.messages &&
+    prevProps.model === nextProps.model &&
+    prevProps.engine === nextProps.engine &&
+    prevProps.show === nextProps.show &&
+    prevProps.className === nextProps.className
+  )
+);
+
+ContextWindowIndicator.displayName = 'ContextWindowIndicator';
 
 export default ContextWindowIndicator;
