@@ -19,6 +19,13 @@ describe('control bar render safety', () => {
     expect(controlBarSource).toContain('messages={messagesForPassiveWidgets}');
   });
 
+  test('memo comparator ignores streaming message churn for passive controls', () => {
+    expect(controlBarSource).toContain('areControlBarPropsEqual');
+    expect(controlBarSource).toContain('prev.isLoading && next.isLoading');
+    expect(controlBarSource).toContain('messagesEqual');
+    expect(controlBarSource).toContain('React.memo(ControlBarComponent, areControlBarPropsEqual)');
+  });
+
   test('does not use motion or pulse animations in always-visible streaming controls', () => {
     expect(controlBarSource).not.toContain('framer-motion');
     expect(contextIndicatorSource).not.toContain('framer-motion');

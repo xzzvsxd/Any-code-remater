@@ -12,8 +12,8 @@ describe('SessionMessages imperative scrolling invariants', () => {
     expect(source).toMatch(/scrollToPrompt:\s*\(promptIndex:\s*number\)\s*=>\s*{\s*cancelBottomScrollLoop\(\);/);
   });
 
-  test('session switches cancel any bottom-settling loop from the previous session', () => {
-    expect(source).toMatch(/useEffect\(\(\)\s*=>\s*{\s*cancelBottomScrollLoop\(\);\s*cancelPromptScrollSearch\(\);\s*measuredHeightsRef\.current\.clear\(\);\s*},\s*\[sessionId\]\);/);
+  test('session switches cancel pending scroll loops from the previous session', () => {
+    expect(source).toMatch(/useEffect\(\(\)\s*=>\s*{\s*cancelBottomScrollLoop\(\);\s*cancelPromptScrollSearch\(\);\s*cancelTopScrollFollowUps\(\);\s*measuredHeightsRef\.current\.clear\(\);\s*},\s*\[sessionId\]\);/);
   });
 
   test('direct user scroll gestures cancel active bottom-settling loops', () => {

@@ -58,7 +58,7 @@ interface InputAreaProps {
   engine?: ExecutionEngine;
 }
 
-export const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
+const InputAreaComponent = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
   prompt,
   disabled,
   dragActive,
@@ -180,4 +180,7 @@ export const InputArea = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
   );
 });
 
+InputAreaComponent.displayName = "InputArea";
+
+export const InputArea = React.memo(InputAreaComponent);
 InputArea.displayName = "InputArea";

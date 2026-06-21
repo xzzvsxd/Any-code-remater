@@ -494,6 +494,8 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   const hasActiveSessionRef = useRef(false);
   const floatingPromptRef = useRef<FloatingPromptInputRef>(null);
   const sessionMessagesRef = useRef<SessionMessagesRef>(null);
+  const sendJumpTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingPromptNavRafRef = useRef<number | null>(null);
   const queuedPromptsRef = useRef<QueuedPrompt[]>([]);
   const isMountedRef = useRef(true);
   const isListeningRef = useRef(false);
@@ -714,7 +716,11 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       }
     }
 
-    setTimeout(() => {
+    if (sendJumpTimeoutRef.current) {
+      window.clearTimeout(sendJumpTimeoutRef.current);
+    }
+    sendJumpTimeoutRef.current = setTimeout(() => {
+      sendJumpTimeoutRef.current = null;
       handleJumpToLatest();
     }, 50);
 
@@ -1179,12 +1185,23 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
 
     const target = pendingPromptNavRef.current;
     pendingPromptNavRef.current = null;
+    if (pendingPromptNavRafRef.current !== null) {
+      cancelAnimationFrame(pendingPromptNavRafRef.current);
+      pendingPromptNavRafRef.current = null;
+    }
     // 等一帧让 messageGroups 渲染就位再定位
-    requestAnimationFrame(() => {
+    pendingPromptNavRafRef.current = requestAnimationFrame(() => {
+      pendingPromptNavRafRef.current = null;
       setUserScrolled(true);
       setShouldAutoScroll(false);
       sessionMessagesRef.current?.scrollToPrompt(target);
     });
+    return () => {
+      if (pendingPromptNavRafRef.current !== null) {
+        cancelAnimationFrame(pendingPromptNavRafRef.current);
+        pendingPromptNavRafRef.current = null;
+      }
+    };
   }, [isHistoryLoading, messages.length, setShouldAutoScroll, setUserScrolled]);
 
   const handleRevert = useCallback(async (promptIndex: number, mode: import('@/lib/api').RewindMode = 'both') => {
@@ -1350,6 +1367,14 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       // Clean up listeners
       unlistenRefs.current.forEach(unlisten => unlisten && typeof unlisten === 'function' && unlisten());
       unlistenRefs.current = [];
+      if (sendJumpTimeoutRef.current) {
+        window.clearTimeout(sendJumpTimeoutRef.current);
+        sendJumpTimeoutRef.current = null;
+      }
+      if (pendingPromptNavRafRef.current !== null) {
+        cancelAnimationFrame(pendingPromptNavRafRef.current);
+        pendingPromptNavRafRef.current = null;
+      }
 
       // Reset session state on unmount
       setClaudeSessionId(null);

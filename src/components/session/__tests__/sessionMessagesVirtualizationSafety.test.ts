@@ -66,4 +66,15 @@ describe('session message virtualization safety', () => {
     expect(toolsListSource).not.toContain('<Icon className=');
     expect(toolsListSource).not.toContain('getToolIcon(tool)');
   });
+
+  test('top and prompt scroll follow-up timers are cancellable on unmount or session change', () => {
+    expect(sessionMessagesSource).toContain('topScrollTimeoutsRef');
+    expect(sessionMessagesSource).toContain('cancelTopScrollFollowUps');
+    expect(sessionMessagesSource).toContain('clearTimeout(timeoutId)');
+  });
+
+  test('scroll container error state avoids framer-motion inside virtualized history', () => {
+    expect(sessionMessagesSource).not.toContain('from "framer-motion"');
+    expect(sessionMessagesSource).not.toContain('<motion.div');
+  });
 });

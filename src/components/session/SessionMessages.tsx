@@ -1,5 +1,4 @@
 import React, { useImperativeHandle, forwardRef, useEffect, useRef } from "react";
-import { motion } from "framer-motion";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { StreamMessageV2 } from "@/components/message";
 import { MessageBranchButton } from "@/components/message/MessageBranchButton";
@@ -94,6 +93,8 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
   const bottomScrollRafRef = useRef<number>(0);
   const promptScrollRafRef = useRef<number>(0);
   const promptScrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const topScrollTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const topScrollRafsRef = useRef<number[]>([]);
   const promptScrollSearchTokenRef = useRef(0);
   const cancelBottomScrollLoop = () => {
     if (bottomScrollRafRef.current) {
@@ -111,6 +112,16 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       clearTimeout(promptScrollTimeoutRef.current);
       promptScrollTimeoutRef.current = null;
     }
+  };
+  const cancelTopScrollFollowUps = () => {
+    topScrollTimeoutsRef.current.forEach((timeoutId) => {
+      clearTimeout(timeoutId);
+    });
+    topScrollTimeoutsRef.current = [];
+    topScrollRafsRef.current.forEach((rafId) => {
+      cancelAnimationFrame(rafId);
+    });
+    topScrollRafsRef.current = [];
   };
 
   /**
@@ -180,6 +191,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
   useEffect(() => {
     cancelBottomScrollLoop();
     cancelPromptScrollSearch();
+    cancelTopScrollFollowUps();
     measuredHeightsRef.current.clear();
   }, [sessionId]);
 
@@ -195,6 +207,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
     return () => {
       cancelBottomScrollLoop();
       cancelPromptScrollSearch();
+      cancelTopScrollFollowUps();
     };
   }, []);
 
@@ -207,6 +220,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       if (isLoading) return;
       cancelBottomScrollLoop();
       cancelPromptScrollSearch();
+      cancelTopScrollFollowUps();
 
       // Use virtualizer's scrollToIndex for reliable scrolling to the last item
       rowVirtualizer.scrollToIndex(messageGroups.length - 1, {
@@ -279,6 +293,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       if (messageGroups.length === 0) return;
       cancelBottomScrollLoop();
       cancelPromptScrollSearch();
+      cancelTopScrollFollowUps();
 
       // 用虚拟列表 scrollToIndex(0) 而非裸 scrollTo({top:0,smooth})：
       // 顶部 item 真实高度与估算不符会触发高度重测、改变 totalSize，smooth 动画期间会被"顶飞/中断"。
@@ -290,18 +305,23 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
 
       const followUpDelays = [60, 200];
       followUpDelays.forEach((delay) => {
-        setTimeout(() => {
-          requestAnimationFrame(() => {
+        const timeoutId = setTimeout(() => {
+          topScrollTimeoutsRef.current = topScrollTimeoutsRef.current.filter((id) => id !== timeoutId);
+          const rafId = requestAnimationFrame(() => {
+            topScrollRafsRef.current = topScrollRafsRef.current.filter((id) => id !== rafId);
             if (parentRef.current && parentRef.current.scrollTop > 1) {
               parentRef.current.scrollTo({ top: 0, behavior: 'auto' });
             }
           });
+          topScrollRafsRef.current.push(rafId);
         }, delay);
+        topScrollTimeoutsRef.current.push(timeoutId);
       });
     },
     scrollToPrompt: (promptIndex: number) => {
       cancelBottomScrollLoop();
       cancelPromptScrollSearch();
+      cancelTopScrollFollowUps();
       const searchToken = promptScrollSearchTokenRef.current;
 
       // Find the targetGroupIndex for the given promptIndex.
@@ -527,13 +547,11 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
 
         {/* Error indicator - 移除固定 marginBottom，因为输入框不再是 fixed 定位 */}
         {error && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
+          <div
             className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive w-full max-w-5xl mx-auto mb-4"
           >
             {error}
-          </motion.div>
+          </div>
         )}
       </div>
     </div>

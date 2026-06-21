@@ -58,7 +58,54 @@ interface ControlBarProps {
   onSend: () => void;
 }
 
-export const ControlBar: React.FC<ControlBarProps> = ({
+const areControlBarPropsEqual = (prev: ControlBarProps, next: ControlBarProps) => {
+  const streaming = prev.isLoading && next.isLoading;
+  const messagesEqual = streaming ? true : prev.messages === next.messages;
+  const sessionStatsEqual = streaming
+    ? true
+    : prev.sessionCost === next.sessionCost && prev.sessionStats === next.sessionStats;
+  const executionStatusEqual = streaming
+    ? prev.executionStatus?.canCancel === next.executionStatus?.canCancel
+      && prev.executionStatus?.isCancelling === next.executionStatus?.isCancelling
+    : prev.executionStatus === next.executionStatus;
+
+  return (
+    prev.disabled === next.disabled
+    && prev.isLoading === next.isLoading
+    && prev.prompt === next.prompt
+    && prev.hasAttachments === next.hasAttachments
+    && prev.executionEngineConfig === next.executionEngineConfig
+    && prev.setExecutionEngineConfig === next.setExecutionEngineConfig
+    && prev.selectedModel === next.selectedModel
+    && prev.setSelectedModel === next.setSelectedModel
+    && prev.availableModels === next.availableModels
+    && prev.selectedThinkingMode === next.selectedThinkingMode
+    && prev.selectedThinkingEffort === next.selectedThinkingEffort
+    && prev.handleToggleThinkingMode === next.handleToggleThinkingMode
+    && prev.isPlanMode === next.isPlanMode
+    && prev.onTogglePlanMode === next.onTogglePlanMode
+    && prev.hasMessages === next.hasMessages
+    && sessionStatsEqual
+    && prev.showCostPopover === next.showCostPopover
+    && prev.setShowCostPopover === next.setShowCostPopover
+    && messagesEqual
+    && prev.session === next.session
+    && prev.codexRateLimits === next.codexRateLimits
+    && prev.isEnhancing === next.isEnhancing
+    && executionStatusEqual
+    && prev.projectPath === next.projectPath
+    && prev.enableProjectContext === next.enableProjectContext
+    && prev.setEnableProjectContext === next.setEnableProjectContext
+    && prev.enableDualAPI === next.enableDualAPI
+    && prev.setEnableDualAPI === next.setEnableDualAPI
+    && prev.getEnabledProviders === next.getEnabledProviders
+    && prev.handleEnhancePromptWithAPI === next.handleEnhancePromptWithAPI
+    && prev.onCancel === next.onCancel
+    && prev.onSend === next.onSend
+  );
+};
+
+const ControlBarComponent: React.FC<ControlBarProps> = ({
   disabled,
   isLoading,
   prompt,
@@ -428,3 +475,6 @@ export const ControlBar: React.FC<ControlBarProps> = ({
     </div>
   );
 };
+
+export const ControlBar = React.memo(ControlBarComponent, areControlBarPropsEqual);
+ControlBar.displayName = "ControlBar";

@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useRef, useState, useCallback } from "react";
+import React, { memo, useEffect, useRef, useState, useCallback, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -67,18 +67,34 @@ const PlainTextCodeBlock: React.FC<PlainTextCodeBlockProps> = ({
 
 const LARGE_TEXT_PREVIEW_CHARS = 40_000;
 
-const LargePlainTextContent: React.FC<{ content: string }> = ({ content }) => {
+const LargePlainTextContent: React.FC<{ content: string; isStreaming?: boolean }> = ({
+  content,
+  isStreaming = false,
+}) => {
   const [expanded, setExpanded] = useState(false);
   const shouldTruncate = content.length > LARGE_TEXT_PREVIEW_CHARS;
   const visibleContent = shouldTruncate && !expanded
     ? content.slice(0, LARGE_TEXT_PREVIEW_CHARS)
     : content;
 
+  if (isStreaming && !shouldTruncate) {
+    return (
+      <pre
+        className="not-prose m-0 whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground/90"
+        style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
+      >
+        {visibleContent}
+      </pre>
+    );
+  }
+
   return (
     <div className="my-2 rounded-lg border border-border/50 bg-muted/20 overflow-hidden">
       <div className="flex items-center justify-between gap-3 px-3 py-2 bg-muted/30 text-xs text-muted-foreground">
         <span>
-          大内容已使用纯文本安全渲染，避免 Linux/WebKitGTK Markdown 长任务
+          {isStreaming
+            ? '流式输出使用纯文本安全渲染，完成后自动恢复 Markdown'
+            : '大内容已使用纯文本安全渲染，避免 Linux/WebKitGTK Markdown 长任务'}
         </span>
         {shouldTruncate && (
           <button
@@ -238,7 +254,7 @@ const MessageContentComponent: React.FC<MessageContentProps> = ({
   onTypewriterComplete
 }) => {
   const { theme } = useTheme();
-  const syntaxTheme = getClaudeSyntaxTheme(theme === 'dark');
+  const syntaxTheme = useMemo(() => getClaudeSyntaxTheme(theme === 'dark'), [theme]);
 
   // 打字机效果会触发逐帧 Markdown/Prism 重渲染；大内容/代码块在 Linux WebKit 下直接显示当前流式文本。
   const shouldEnableTypewriter = enableTypewriter && shouldUseIncrementalTypewriter(content, { isStreaming });
@@ -284,7 +300,7 @@ const MessageContentComponent: React.FC<MessageContentProps> = ({
       title={isTyping ? "双击跳过打字效果" : undefined}
     >
       {shouldRenderMarkdownAsPlainText(textToDisplay, { isStreaming }) ? (
-        <LargePlainTextContent content={textToDisplay} />
+        <LargePlainTextContent content={textToDisplay} isStreaming={isStreaming} />
       ) : (
         <ErrorBoundary
           onError={(error) => {

@@ -48,6 +48,11 @@ describe('markdown render safety', () => {
     expect(shouldRenderMarkdownAsPlainText(fencedCode, { isStreaming: true })).toBe(true);
   });
 
+  test('uses plain text for every streaming delta to keep renderer work bounded', () => {
+    expect(shouldRenderMarkdownAsPlainText('tiny **streaming** markdown', { isStreaming: true })).toBe(true);
+    expect(shouldRenderMarkdownAsPlainText('- item\n- item 2', { isStreaming: true })).toBe(true);
+  });
+
   test('counts lines with an upper bound for collapsed huge content summaries', () => {
     expect(countLinesUpTo('a\nb\nc', 10)).toEqual({ lineCount: 3, exceeded: false });
     expect(countLinesUpTo(Array.from({ length: 20 }, () => 'x').join('\n'), 5)).toEqual({

@@ -3,7 +3,7 @@ import { AnimatePresence } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import { ArrowDown, LoaderCircle, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { FloatingPromptInputProps, FloatingPromptInputRef, ThinkingMode, ThinkingEffort, ModelType, ModelConfig, type ExecutionStatusInfo } from "./types";
+import { FloatingPromptInputProps, FloatingPromptInputRef, ThinkingMode, ThinkingEffort, ModelType, ModelConfig, type ExecutionStatusInfo, type ExecutionEngineConfig } from "./types";
 import { getModels } from "./constants";
 import { MODEL_NAMES_UPDATED_EVENT } from "@/lib/modelNameParser";
 import { toClaudeImageMention } from "@/lib/imagePath";
@@ -90,6 +90,8 @@ const ProcessingStatusCopy: React.FC<{ executionStatus?: ExecutionStatusInfo }> 
     </>
   );
 };
+
+const NOOP_CANCEL_HANDLER = () => {};
 
 /**
  * FloatingPromptInput - Refactored modular component
@@ -304,6 +306,54 @@ const FloatingPromptInputInner = (
   // Refs
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const expandedTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const heightAdjustFrameRef = useRef<number | null>(null);
+
+  const effectiveOnCancel = onCancel ?? NOOP_CANCEL_HANDLER;
+
+  const setPrompt = useCallback((prompt: string) => {
+    dispatch({ type: "SET_PROMPT", payload: prompt });
+  }, []);
+
+  const appendPrompt = useCallback((text: string) => {
+    dispatch({ type: "APPEND_PROMPT", payload: text });
+  }, []);
+
+  const setCursorPosition = useCallback((position: number) => {
+    dispatch({ type: "SET_CURSOR_POSITION", payload: position });
+  }, []);
+
+  const setExecutionEngineConfig = useCallback((config: ExecutionEngineConfig) => {
+    dispatch({ type: "SET_EXECUTION_ENGINE_CONFIG", payload: config });
+  }, []);
+
+  const setSelectedModel = useCallback((model: ModelType) => {
+    dispatch({ type: "SET_MODEL", payload: model });
+  }, []);
+
+  const setShowCostPopover = useCallback((show: boolean) => {
+    dispatch({ type: "SET_SHOW_COST_POPOVER", payload: show });
+  }, []);
+
+  const setEnableProjectContext = useCallback((enable: boolean) => {
+    dispatch({ type: "SET_ENABLE_PROJECT_CONTEXT", payload: enable });
+  }, []);
+
+  const openExpandedInput = useCallback(() => {
+    dispatch({ type: "SET_EXPANDED", payload: true });
+  }, []);
+
+  const closeExpandedInput = useCallback(() => {
+    dispatch({ type: "SET_EXPANDED", payload: false });
+  }, []);
+
+  const handleCompositionStart = useCallback(() => {
+    setIsComposing(true);
+  }, []);
+
+  const handleCompositionEnd = useCallback(() => {
+    setIsComposing(false);
+    compositionEndTimeRef.current = Date.now();
+  }, []);
 
   // Custom hooks
   const {
@@ -322,7 +372,7 @@ const FloatingPromptInputInner = (
     prompt: state.prompt,
     projectPath,
     isExpanded: state.isExpanded,
-    onPromptChange: (p) => dispatch({ type: "SET_PROMPT", payload: p }),
+    onPromptChange: setPrompt,
     textareaRef,
     expandedTextareaRef,
   });
@@ -341,8 +391,8 @@ const FloatingPromptInputInner = (
     projectPath,
     cursorPosition: state.cursorPosition,
     isExpanded: state.isExpanded,
-    onPromptChange: (p) => dispatch({ type: "SET_PROMPT", payload: p }),
-    onCursorPositionChange: (p) => dispatch({ type: "SET_CURSOR_POSITION", payload: p }),
+    onPromptChange: setPrompt,
+    onCursorPositionChange: setCursorPosition,
     textareaRef,
     expandedTextareaRef,
   });
@@ -356,7 +406,7 @@ const FloatingPromptInputInner = (
   } = usePromptEnhancement({
     prompt: state.prompt,
     isExpanded: state.isExpanded,
-    onPromptChange: (p) => dispatch({ type: "SET_PROMPT", payload: p }),
+    onPromptChange: setPrompt,
     getConversationContext,
     messages,
     textareaRef,
@@ -425,6 +475,10 @@ const FloatingPromptInputInner = (
     return [...customCommands, ...pluginCommands];
   }, [customCommands, pluginCommands]);
 
+  const handleSlashCommandPromptSelect = useCallback((command: string) => {
+    setPrompt(command);
+  }, [setPrompt]);
+
   // 🆕 斜杠命令菜单 Hook
   const {
     isOpen: showSlashCommandMenu,
@@ -436,10 +490,8 @@ const FloatingPromptInputInner = (
     handleKeyDown: handleSlashCommandKeyDown,
   } = useSlashCommandMenu({
     prompt: state.prompt,
-    onCommandSelect: (command) => {
-      // 替换当前输入为选中的命令
-      dispatch({ type: "SET_PROMPT", payload: command });
-    },
+    // 替换当前输入为选中的命令
+    onCommandSelect: handleSlashCommandPromptSelect,
     customCommands: allCustomCommands,
     // Claude 和 Gemini 都支持斜杠命令菜单
     disabled: !isSlashCommandSupported || state.isExpanded || disabled,
@@ -509,9 +561,9 @@ const FloatingPromptInputInner = (
   // Imperative handle
   useImperativeHandle(ref, () => ({
     addImage,
-    setPrompt: (text: string) => dispatch({ type: "SET_PROMPT", payload: text }),
-    appendPrompt: (text: string) => dispatch({ type: "APPEND_PROMPT", payload: text }),
-  }));
+    setPrompt,
+    appendPrompt,
+  }), [addImage, appendPrompt, setPrompt]);
 
   // Toggle thinking mode - cycle through: off → high → xhigh → low → medium → off
   const EFFORT_CYCLE: (ThinkingEffort | 'off')[] = ['off', 'high', 'xhigh', 'low', 'medium'];
@@ -564,22 +616,41 @@ const FloatingPromptInputInner = (
     }
   }, [state.isExpanded]);
 
-  // Auto-resize textarea
-  const adjustTextareaHeight = (textarea: HTMLTextAreaElement | null) => {
-    if (!textarea) return;
-    textarea.style.height = 'auto';
-    const maxHeight = state.isExpanded ? 600 : 300;
-    const newHeight = Math.min(textarea.scrollHeight, maxHeight);
-    textarea.style.height = `${newHeight}px`;
-    if (textarea.scrollHeight > maxHeight) {
-      textarea.scrollTop = textarea.scrollHeight;
+  const cancelTextareaHeightAdjust = useCallback(() => {
+    if (heightAdjustFrameRef.current !== null) {
+      window.cancelAnimationFrame(heightAdjustFrameRef.current);
+      heightAdjustFrameRef.current = null;
     }
-  };
+  }, []);
+
+  // Auto-resize textarea.
+  // 读 scrollHeight 会强制布局；在输入/流式父级重渲染叠加时同步读写会放大卡顿。
+  // 合并到 rAF 后，一帧内多次 prompt 更新只测一次，跨平台都能降低 layout thrash。
+  const scheduleTextareaHeightAdjust = useCallback((textarea: HTMLTextAreaElement | null) => {
+    cancelTextareaHeightAdjust();
+    if (!textarea) return;
+
+    heightAdjustFrameRef.current = window.requestAnimationFrame(() => {
+      heightAdjustFrameRef.current = null;
+      if (!textarea.isConnected) return;
+
+      textarea.style.height = 'auto';
+      const maxHeight = state.isExpanded ? 600 : 300;
+      const scrollHeight = textarea.scrollHeight;
+      const newHeight = Math.min(scrollHeight, maxHeight);
+      textarea.style.height = `${newHeight}px`;
+      if (scrollHeight > maxHeight) {
+        textarea.scrollTop = scrollHeight;
+      }
+    });
+  }, [cancelTextareaHeightAdjust, state.isExpanded]);
 
   useEffect(() => {
     const textarea = state.isExpanded ? expandedTextareaRef.current : textareaRef.current;
-    adjustTextareaHeight(textarea);
-  }, [state.prompt, state.isExpanded]);
+    scheduleTextareaHeightAdjust(textarea);
+  }, [state.prompt, state.isExpanded, scheduleTextareaHeightAdjust]);
+
+  useEffect(() => cancelTextareaHeightAdjust, [cancelTextareaHeightAdjust]);
 
   // Tab key listener - 🆕 只在没有建议时切换 thinking mode
   useEffect(() => {
@@ -602,7 +673,7 @@ const FloatingPromptInputInner = (
   }, [disabled, handleToggleThinkingMode, suggestion]);
 
   // Event handlers
-  const handleSend = () => {
+  const handleSend = useCallback(() => {
     // Allow sending if there's text content OR image attachments
     if ((state.prompt.trim() || imageAttachments.length > 0) && !disabled) {
       let finalPrompt = state.prompt.trim();
@@ -633,25 +704,35 @@ const FloatingPromptInputInner = (
       setEmbeddedImages([]);
       // 发送成功后清除草稿
       clearDraft();
-      setTimeout(() => {
-        const textarea = state.isExpanded ? expandedTextareaRef.current : textareaRef.current;
-        if (textarea) textarea.style.height = 'auto';
-      }, 0);
     }
-  };
+  }, [
+    availableModels,
+    clearDraft,
+    disabled,
+    imageAttachments,
+    onSend,
+    setEmbeddedImages,
+    setImageAttachments,
+    state.executionEngineConfig.engine,
+    state.prompt,
+    state.selectedModel,
+  ]);
 
-  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value;
     const newCursorPosition = e.target.selectionStart || 0;
     detectAtSymbol(newValue, newCursorPosition);
     updateFilePickerQuery(newValue, newCursorPosition);
-    dispatch({ type: "SET_PROMPT", payload: newValue });
-    dispatch({ type: "SET_CURSOR_POSITION", payload: newCursorPosition });
+    setPrompt(newValue);
+    setCursorPosition(newCursorPosition);
     // 保存草稿
     saveDraft(newValue);
-  };
+  }, [detectAtSymbol, saveDraft, setCursorPosition, setPrompt, updateFilePickerQuery]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const canCancelExecution = !executionStatus || executionStatus.canCancel;
+  const isCancellingExecution = executionStatus?.isCancelling === true;
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     // 🆕 优先处理斜杠命令菜单的键盘事件
     if (handleSlashCommandKeyDown(e)) {
       return;
@@ -669,7 +750,7 @@ const FloatingPromptInputInner = (
       e.preventDefault();
       const accepted = acceptSuggestion();
       if (accepted) {
-        dispatch({ type: "SET_PROMPT", payload: accepted });
+        setPrompt(accepted);
       }
       return;
     }
@@ -688,8 +769,8 @@ const FloatingPromptInputInner = (
         prompt: state.prompt,
         hasAttachments: imageAttachments.length > 0,
         disabled,
-        canCancelExecution: !executionStatus || executionStatus.canCancel,
-        isCancellingExecution: executionStatus?.isCancelling === true,
+        canCancelExecution,
+        isCancellingExecution,
       });
 
       if (shouldSubmitPromptFromEnterKey({
@@ -729,7 +810,26 @@ const FloatingPromptInputInner = (
         e.preventDefault();
       }
     }
-  };
+  }, [
+    acceptSuggestion,
+    canCancelExecution,
+    disabled,
+    dismissSuggestion,
+    handleSend,
+    handleSlashCommandKeyDown,
+    imageAttachments.length,
+    isComposing,
+    isCancellingExecution,
+    isLoading,
+    setFilePickerQuery,
+    setPrompt,
+    setShowFilePicker,
+    showFilePicker,
+    showSlashCommandMenu,
+    state.isExpanded,
+    state.prompt,
+    suggestion,
+  ]);
 
   return (
     <>
@@ -743,9 +843,9 @@ const FloatingPromptInputInner = (
             imageAttachments={imageAttachments}
             embeddedImages={embeddedImages}
             executionEngineConfig={state.executionEngineConfig}
-            setExecutionEngineConfig={(config) => dispatch({ type: "SET_EXECUTION_ENGINE_CONFIG", payload: config })}
+            setExecutionEngineConfig={setExecutionEngineConfig}
             selectedModel={state.selectedModel}
-            setSelectedModel={(model) => dispatch({ type: "SET_MODEL", payload: model })}
+            setSelectedModel={setSelectedModel}
             availableModels={availableModels}
             selectedThinkingMode={state.selectedThinkingMode}
             selectedThinkingEffort={state.selectedThinkingEffort}
@@ -755,12 +855,12 @@ const FloatingPromptInputInner = (
             isEnhancing={isEnhancing}
             projectPath={projectPath}
             enableProjectContext={state.enableProjectContext}
-            setEnableProjectContext={(enable) => dispatch({ type: "SET_ENABLE_PROJECT_CONTEXT", payload: enable })}
+            setEnableProjectContext={setEnableProjectContext}
             enableDualAPI={enableDualAPI}
             setEnableDualAPI={setEnableDualAPI}
             getEnabledProviders={getEnabledProviders}
             handleEnhancePromptWithAPI={handleEnhancePromptWithAPI}
-            onClose={() => dispatch({ type: "SET_EXPANDED", payload: false })}
+            onClose={closeExpandedInput}
             onRemoveAttachment={handleRemoveImageAttachment}
             onRemoveEmbedded={handleRemoveEmbeddedImage}
             onTextChange={handleTextChange}
@@ -772,7 +872,7 @@ const FloatingPromptInputInner = (
             onSend={handleSend}
             isLoading={isLoading}
             executionStatus={executionStatus}
-            onCancel={onCancel || (() => {})}
+            onCancel={effectiveOnCancel}
           />
         )}
       </AnimatePresence>
@@ -837,15 +937,12 @@ const FloatingPromptInputInner = (
             onDragLeave={handleDrag}
             onDragOver={handleDrag}
             onDrop={handleDrop}
-            onExpand={() => dispatch({ type: "SET_EXPANDED", payload: true })}
+            onExpand={openExpandedInput}
             onFileSelect={handleFileSelect}
             onFilePickerClose={handleFilePickerClose}
             // 🔧 Mac 输入法兼容
-            onCompositionStart={() => setIsComposing(true)}
-            onCompositionEnd={() => {
-              setIsComposing(false);
-              compositionEndTimeRef.current = Date.now(); // 记录时间戳用于冷却期
-            }}
+            onCompositionStart={handleCompositionStart}
+            onCompositionEnd={handleCompositionEnd}
             // 🆕 Prompt Suggestions
             suggestion={suggestion}
             isSuggestionLoading={isSuggestionLoading}
@@ -867,9 +964,9 @@ const FloatingPromptInputInner = (
             prompt={state.prompt}
             hasAttachments={imageAttachments.length > 0}
             executionEngineConfig={state.executionEngineConfig}
-            setExecutionEngineConfig={(config) => dispatch({ type: "SET_EXECUTION_ENGINE_CONFIG", payload: config })}
+            setExecutionEngineConfig={setExecutionEngineConfig}
             selectedModel={state.selectedModel}
-            setSelectedModel={(model) => dispatch({ type: "SET_MODEL", payload: model })}
+            setSelectedModel={setSelectedModel}
             availableModels={availableModels}
             selectedThinkingMode={state.selectedThinkingMode}
             selectedThinkingEffort={state.selectedThinkingEffort}
@@ -880,7 +977,7 @@ const FloatingPromptInputInner = (
             sessionCost={sessionCost}
             sessionStats={sessionStats}
             showCostPopover={state.showCostPopover}
-            setShowCostPopover={(show) => dispatch({ type: "SET_SHOW_COST_POPOVER", payload: show })}
+            setShowCostPopover={setShowCostPopover}
             messages={messages}
             session={session}
             codexRateLimits={codexRateLimits}
@@ -888,12 +985,12 @@ const FloatingPromptInputInner = (
             executionStatus={executionStatus}
             projectPath={projectPath}
             enableProjectContext={state.enableProjectContext}
-            setEnableProjectContext={(enable) => dispatch({ type: "SET_ENABLE_PROJECT_CONTEXT", payload: enable })}
+            setEnableProjectContext={setEnableProjectContext}
             enableDualAPI={enableDualAPI}
             setEnableDualAPI={setEnableDualAPI}
             getEnabledProviders={getEnabledProviders}
             handleEnhancePromptWithAPI={handleEnhancePromptWithAPI}
-            onCancel={onCancel || (() => {})}
+            onCancel={effectiveOnCancel}
             onSend={handleSend}
           />
         </div>

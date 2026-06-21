@@ -74,9 +74,11 @@ export function shouldRenderMarkdownAsPlainText(
   content: string,
   options: MarkdownRenderOptions = {},
 ): boolean {
-  // 流式中的 fenced code 若每个 delta 都走 ReactMarkdown + Prism，会在 Linux/WebKitGTK
-  // 形成持续长任务。流式阶段先用纯文本，完成后再恢复 Markdown/高亮渲染。
-  if (options.isStreaming && (content.includes('```') || content.includes('~~~'))) {
+  // 流式阶段任何 Markdown 都不应走 ReactMarkdown/remark/Prism。
+  // 即使是普通列表/粗体，在高频 delta 下也会重复构建 Markdown AST 与 React 子树，
+  // 在 Linux WebKitGTK、Windows WebView2 和低配 macOS 上都会变成主线程长任务。
+  // 完成后再恢复 Markdown/高亮渲染，保留最终视觉质量。
+  if (options.isStreaming) {
     return true;
   }
 
