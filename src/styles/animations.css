@@ -151,6 +151,44 @@
 }
 
 /*
+ * CLI processing affordances:
+ * Keep the "still running" feedback visible without React timers or text churn.
+ * These animate only opacity/transform, so they stay cheap compared with
+ * Markdown parsing, Prism tokenization, virtual-list measurement, or DOM churn.
+ */
+@keyframes cli-processing-spark-pulse {
+  0%, 100% {
+    opacity: 0.68;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.14);
+  }
+}
+
+@keyframes cli-processing-progress-flash {
+  0%, 100% {
+    opacity: 0.32;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+.cli-processing-spark {
+  display: inline-block;
+  transform-origin: center;
+  will-change: opacity, transform;
+  animation: cli-processing-spark-pulse 1.35s ease-in-out infinite;
+}
+
+.cli-processing-progress {
+  will-change: opacity;
+  animation: cli-processing-progress-flash 1.25s ease-in-out infinite;
+}
+
+/*
  * Linux/WebKitGTK hardening:
  * The session history is a virtualized scroll container that can hold large
  * Markdown, syntax highlighted code, and tool widgets. Continuous Tailwind

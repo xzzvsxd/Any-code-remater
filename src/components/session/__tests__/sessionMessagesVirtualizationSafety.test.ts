@@ -54,8 +54,10 @@ describe('session message virtualization safety', () => {
     expect(cliProcessingIndicatorSource).not.toContain('<AnimatePresence');
   });
 
-  test('bottom processing indicator avoids continuous pulse animations on Linux WebKit', () => {
+  test('bottom processing indicator keeps explicit low-cost progress animation', () => {
     expect(cliProcessingIndicatorSource).not.toContain('animate-pulse');
+    expect(cliProcessingIndicatorSource).toContain('cli-processing-spark');
+    expect(cliProcessingIndicatorSource).toContain('cli-processing-progress');
   });
 
   test('bottom processing indicator avoids sub-second text timer churn', () => {

@@ -50,7 +50,7 @@ describe('processing clock render isolation', () => {
     expect(floatingPromptInputSource).toContain('setClockTick');
     expect(floatingPromptInputSource).toContain('}, 2000);');
     expect(floatingPromptInputSource).toContain('executionStatus.lastOutputAt');
-    expect(floatingPromptInputSource).not.toContain('h-4 w-4 flex-shrink-0 animate-spin text-amber-500');
+    expect(floatingPromptInputSource).toContain('animate-spin text-amber-500');
   });
 
   test('send-to-latest and deferred prompt navigation timers are cancelled on cleanup', () => {

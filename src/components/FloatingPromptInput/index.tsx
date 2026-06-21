@@ -906,7 +906,7 @@ const FloatingPromptInputInner = (
                 )}
               >
                 <div className="flex min-w-0 items-start gap-2 sm:items-center">
-                  <LoaderCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500 sm:mt-0" />
+                  <LoaderCircle className="mt-0.5 h-4 w-4 flex-shrink-0 animate-spin text-amber-500 sm:mt-0" />
                   <div className="min-w-0">
                     <ProcessingStatusCopy executionStatus={executionStatus} />
                   </div>

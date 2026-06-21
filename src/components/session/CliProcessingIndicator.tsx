@@ -49,7 +49,8 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
     []
   );
 
-  // 单一低频时钟：只刷新 elapsed/idle 文案；处理词和省略号保持静态，避免滚动容器内持续文本动画。
+  // 单一低频时钟：只刷新 elapsed/idle 文案；处理词和省略号保持静态。
+  // 视觉反馈交给 CSS opacity/transform 动画，避免 React 文本 churn。
   useEffect(() => {
     if (!isProcessing) {
       setClockTick(0);
@@ -103,8 +104,8 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
   return (
     <div className="w-full max-w-5xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-[85%] mx-auto px-4 py-3">
       <div className="flex items-center gap-2 font-mono text-sm">
-        {/* 星号指示器：保持静态，避免 Linux WebKitGTK 在滚动容器内持续重绘 */}
-        <span className="text-amber-500 dark:text-amber-400 font-bold">
+        {/* 星号指示器：保留低成本 opacity/transform 脉冲，避免界面像卡死 */}
+        <span className="cli-processing-spark text-amber-500 dark:text-amber-400 font-bold">
           ✦
         </span>
 
@@ -158,9 +159,9 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
         </div>
       )}
 
-      {/* 底部进度提示：静态色条，避免 Linux WebKitGTK 在长会话滚动容器内持续合成/重绘 */}
+      {/* 底部进度提示：低成本 CSS 闪烁，保留运行中反馈 */}
       <div className="mt-2 h-[2px] bg-muted-foreground/10 rounded-full overflow-hidden">
-        <div className="h-full w-full bg-amber-500/40" />
+        <div className="cli-processing-progress h-full w-full bg-amber-500/40" />
       </div>
     </div>
   );
