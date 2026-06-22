@@ -1713,6 +1713,18 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             // 否则 WebKit/Linux 下事件先入 AsyncQueue、稍后才消费；消费时 session listener 可能已经挂好，
             // 早期 fallback 行会被 shouldAcceptClaudeGlobalMessage 误判为应丢弃，造成中间输出空白。
             const hadAttachedSessionListenersAtReceive = hasAttachedSessionListeners;
+
+            // 🚀 性能（Linux 新会话卡顿）：session-specific 监听挂上后，后端仍会在 grace 窗口内
+            // 对同一批普通行同时投递 global + session。这些 global 普通行最终都会在
+            // shouldAcceptClaudeGlobalMessage 里被判 false 丢弃（只放行“带新 session_id 的 init”）。
+            // 在 enqueue + JSON.parse + dedup 之前先做一次廉价子串预筛：session 已挂载时，
+            // 不可能是 init 的行直接跳过，省掉每条消息一次入队/解析/去重开销（与最终判定语义等价）。
+            // Codex/Gemini 的 global 回调在拿到 sessionId 后直接 return，Claude 因 plan/continue/resume
+            // 可能从 global init 切换 session_id，不能整体 return，故按行预筛保留 init 放行能力。
+            if (hadAttachedSessionListenersAtReceive && !messagePayload.includes('init')) {
+              continue;
+            }
+
             claudeTaskQueue.enqueue(async () => {
               // Attempt to extract session_id on the fly (for the very first init)
               try {

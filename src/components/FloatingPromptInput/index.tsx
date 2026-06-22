@@ -634,12 +634,21 @@ const FloatingPromptInputInner = (
       heightAdjustFrameRef.current = null;
       if (!textarea.isConnected) return;
 
+      // 在改高度前先记录光标是否落在文本末尾。设 height='auto' 会触发回流，
+      // 必须在此之前读取，避免读到失真的 selection。
+      const caretAtEnd =
+        textarea.selectionStart === textarea.selectionEnd &&
+        textarea.selectionEnd >= textarea.value.length;
+
       textarea.style.height = 'auto';
       const maxHeight = state.isExpanded ? 600 : 300;
       const scrollHeight = textarea.scrollHeight;
       const newHeight = Math.min(scrollHeight, maxHeight);
       textarea.style.height = `${newHeight}px`;
-      if (scrollHeight > maxHeight) {
+      // 仅在「追加输入（光标在末尾）」时贴底，保证刚输入的内容可见。
+      // 在中间编辑长文本时强行贴底会把视图甩到结尾，逼用户反复回滚定位——
+      // 此时交给浏览器原生的「保持光标可见」即可，不要覆盖 scrollTop。
+      if (scrollHeight > maxHeight && caretAtEnd) {
         textarea.scrollTop = scrollHeight;
       }
     });
