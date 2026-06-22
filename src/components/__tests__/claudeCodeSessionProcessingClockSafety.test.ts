@@ -17,6 +17,11 @@ const floatingPromptInputSource = readFileSync(
   'utf8',
 );
 
+const zhLocaleSource = readFileSync(
+  resolve(process.cwd(), 'src/i18n/locales/zh.json'),
+  'utf8',
+);
+
 describe('processing clock render isolation', () => {
   test('ClaudeCodeSession does not tick every second and re-render the full message tree', () => {
     expect(claudeCodeSessionSource).not.toContain('executionClockTick');
@@ -30,16 +35,24 @@ describe('processing clock render isolation', () => {
     expect(claudeCodeSessionSource).not.toContain('[messages.length, isLoading]');
   });
 
-  test('CLI processing indicator receives timestamps but does not run a text refresh clock', () => {
+  test('CLI processing indicator receives timestamps for local runtime calculations', () => {
     expect(cliProcessingIndicatorSource).toContain('startedAt?: number | null');
     expect(cliProcessingIndicatorSource).toContain('lastOutputAt?: number | null');
     expect(cliProcessingIndicatorSource).toContain('elapsedSeconds?: number');
     expect(cliProcessingIndicatorSource).toContain('idleSeconds?: number');
   });
 
-  test('CLI processing indicator has no React interval-driven status text churn', () => {
-    expect(cliProcessingIndicatorSource).not.toContain('setClockTick');
-    expect(cliProcessingIndicatorSource).not.toContain('setInterval');
+  test('CLI processing indicator owns a local second clock for elapsed runtime only', () => {
+    expect(cliProcessingIndicatorSource).toContain('clockNow');
+    expect(cliProcessingIndicatorSource).toContain('setClockNow');
+    expect(cliProcessingIndicatorSource).toContain('window.setInterval');
+    expect(cliProcessingIndicatorSource).toContain('window.clearInterval');
+    expect(cliProcessingIndicatorSource).toContain('formatElapsed(stableElapsedSeconds)');
+    expect(cliProcessingIndicatorSource).toContain("t('cliIndicator.elapsed', '已运行')");
+    expect(zhLocaleSource).toContain('"elapsed": "已运行"');
+  });
+
+  test('CLI processing indicator keeps status text stable while runtime ticks', () => {
     expect(cliProcessingIndicatorSource).not.toContain('dotInterval');
     expect(cliProcessingIndicatorSource).not.toContain('verbInterval');
     expect(cliProcessingIndicatorSource).not.toContain('setVerbIndex');

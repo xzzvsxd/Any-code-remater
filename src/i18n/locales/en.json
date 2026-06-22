@@ -1491,6 +1491,7 @@
   },
   "cliIndicator": {
     "escToCancel": "esc to cancel",
-    "thinking": "thinking"
+    "thinking": "thinking",
+    "elapsed": "elapsed"
   }
 }

@@ -1485,6 +1485,7 @@
   },
   "cliIndicator": {
     "escToCancel": "esc 取消",
-    "thinking": "思考中"
+    "thinking": "思考中",
+    "elapsed": "已运行"
   }
 }
