@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
 import { BrainCircuit, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  SESSION_MESSAGE_LAYOUT_CHANGED_EVENT,
+  type SessionMessageLayoutChangedReason,
+} from "@/components/session/sessionMessageLayoutEvents";
 
 interface ThinkingBlockProps {
   /** 思考内容 */
@@ -26,8 +30,10 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
   content,
   isStreaming = false,
 }) => {
-  // 展开/收起状态 - 默认展开
-  const [isOpen, setIsOpen] = useState(true);
+  const rootRef = useRef<HTMLDivElement>(null);
+  // 历史消息首帧就保持收起，避免先按展开态测出大行高，再折叠后留下虚拟列表旧高度空白。
+  // 正在流式输出的 thinking 仍然默认展开。
+  const [isOpen, setIsOpen] = useState(isStreaming);
 
   // 历史消息只在首次挂载时默认收起；正在 streaming 的消息结束后不再定时收起，
   // 避免 max-height/高度骤缩触发虚拟列表 ResizeObserver 风暴和底部上弹。
@@ -39,6 +45,26 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
 
   const textToDisplay = content;
   const showStreamingCursor = isStreaming;
+
+  const notifyLayoutChanged = (reason: SessionMessageLayoutChangedReason) => {
+    if (typeof window === 'undefined') return;
+
+    const itemKey =
+      rootRef.current
+        ?.closest('[data-item-key]')
+        ?.getAttribute('data-item-key') ?? undefined;
+
+    window.requestAnimationFrame(() => {
+      window.dispatchEvent(
+        new CustomEvent(SESSION_MESSAGE_LAYOUT_CHANGED_EVENT, {
+          detail: {
+            reason,
+            itemKey,
+          },
+        }),
+      );
+    });
+  };
   
   // 处理分割符：将 ---divider--- 替换为可视化的分割线组件
   // 如果内容中包含分割符，说明是聚合后的多段思考
@@ -85,9 +111,15 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
     if (
       content &&
       !hasEverStreamedRef.current &&
+      !userInteractedRef.current &&
       !hasInitializedHistoricalCollapseRef.current
     ) {
-      setIsOpen(false);
+      setIsOpen((prev) => {
+        if (prev) {
+          notifyLayoutChanged('thinking-block-auto-collapse');
+        }
+        return false;
+      });
       hasInitializedHistoricalCollapseRef.current = true;
     }
   }, [isStreaming, content]);
@@ -96,12 +128,13 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
   const handleToggle = () => {
     userInteractedRef.current = true;
     setIsOpen(prev => !prev);
+    notifyLayoutChanged('thinking-block-toggle');
   };
 
   if (!content) return null;
 
   return (
-    <div className="border-l-2 border-amber-500/30 bg-amber-500/5 rounded-md overflow-hidden my-2">
+    <div ref={rootRef} className="border-l-2 border-amber-500/30 bg-amber-500/5 rounded-md overflow-hidden my-2">
       {/* Header - 可点击切换 */}
       <button
         onClick={handleToggle}

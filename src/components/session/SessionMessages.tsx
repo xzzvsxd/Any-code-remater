@@ -1,4 +1,4 @@
-import React, { useImperativeHandle, forwardRef, useEffect, useRef } from "react";
+import React, { useImperativeHandle, forwardRef, useEffect, useRef, useCallback } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { StreamMessageV2 } from "@/components/message";
 import { MessageBranchButton } from "@/components/message/MessageBranchButton";
@@ -12,6 +12,10 @@ import {
   SESSION_MESSAGES_OVERSCAN,
   estimateMessageGroupHeight,
 } from "./messageHeightEstimate";
+import {
+  SESSION_MESSAGE_LAYOUT_CHANGED_EVENT,
+  type SessionMessageLayoutChangedDetail,
+} from "./sessionMessageLayoutEvents";
 
 /**
  * 虚拟列表行。
@@ -96,6 +100,9 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
   const topScrollTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const topScrollRafsRef = useRef<number[]>([]);
   const promptScrollSearchTokenRef = useRef(0);
+  const virtualizerRemeasureRafRef = useRef<number>(0);
+  const pendingRemeasureItemKeysRef = useRef<Set<string>>(new Set());
+  const pendingFullRemeasureRef = useRef(false);
   const cancelBottomScrollLoop = () => {
     if (bottomScrollRafRef.current) {
       cancelAnimationFrame(bottomScrollRafRef.current);
@@ -122,6 +129,14 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       cancelAnimationFrame(rafId);
     });
     topScrollRafsRef.current = [];
+  };
+  const cancelVirtualizerRemeasure = () => {
+    if (virtualizerRemeasureRafRef.current) {
+      cancelAnimationFrame(virtualizerRemeasureRafRef.current);
+      virtualizerRemeasureRafRef.current = 0;
+    }
+    pendingRemeasureItemKeysRef.current.clear();
+    pendingFullRemeasureRef.current = false;
   };
 
   /**
@@ -199,12 +214,52 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
     });
   };
 
+  /**
+   * 子组件折叠/展开（尤其 ThinkingBlock）会让行高从几百 px 变成几十 px。
+   * TanStack Virtual 的 ResizeObserver 在 WebKitGTK/Tauri 下偶尔不会及时让
+   * estimateSize 里的 measuredHeightsRef 失效，于是旧高度继续撑开 totalSize，
+   * 表现就是 Thinking 折叠条后面、或会话结束后底部出现一大段空白。
+   *
+   * 这里把“明确会改变布局高度”的事件合并进一个 rAF：
+   * - 有 itemKey：只删这一行的真实高度缓存，避免大会话全量抖动；
+   * - 没有 itemKey：清空缓存做一次兜底重测；
+   * - 最后调用 rowVirtualizer.measure()，让虚拟列表重新计算 totalSize/start。
+   */
+  const scheduleVirtualizerRemeasure = useCallback((detail?: SessionMessageLayoutChangedDetail) => {
+    const itemKey = detail?.itemKey;
+
+    if (itemKey) {
+      pendingRemeasureItemKeysRef.current.add(itemKey);
+    } else {
+      pendingFullRemeasureRef.current = true;
+    }
+
+    if (virtualizerRemeasureRafRef.current) return;
+
+    virtualizerRemeasureRafRef.current = requestAnimationFrame(() => {
+      virtualizerRemeasureRafRef.current = 0;
+
+      if (pendingFullRemeasureRef.current) {
+        measuredHeightsRef.current.clear();
+      } else {
+        pendingRemeasureItemKeysRef.current.forEach((itemKey) => {
+          measuredHeightsRef.current.delete(itemKey);
+        });
+      }
+
+      pendingFullRemeasureRef.current = false;
+      pendingRemeasureItemKeysRef.current.clear();
+      rowVirtualizer.measure();
+    });
+  }, [rowVirtualizer]);
+
   // 切换会话时清空高度缓存：不同会话的消息 key 可能因 index 复用而碰撞，
   // 旧高度会污染新会话首屏布局。会话切换不频繁，清空成本可忽略。
   useEffect(() => {
     cancelBottomScrollLoop();
     cancelPromptScrollSearch();
     cancelTopScrollFollowUps();
+    cancelVirtualizerRemeasure();
     measuredHeightsRef.current.clear();
   }, [sessionId]);
 
@@ -216,11 +271,34 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
     cancelBottomScrollLoop();
   }, [isLoading]);
 
+  const prevIsLoadingRef = useRef(isLoading);
+  useEffect(() => {
+    const wasLoading = prevIsLoadingRef.current;
+    prevIsLoadingRef.current = isLoading;
+
+    if (wasLoading && !isLoading) {
+      scheduleVirtualizerRemeasure({ reason: 'streaming-ended' });
+    }
+  }, [isLoading, scheduleVirtualizerRemeasure]);
+
+  useEffect(() => {
+    const onMessageLayoutChanged = (event: Event) => {
+      const detail = (event as CustomEvent<SessionMessageLayoutChangedDetail>).detail;
+      scheduleVirtualizerRemeasure(detail);
+    };
+
+    window.addEventListener(SESSION_MESSAGE_LAYOUT_CHANGED_EVENT, onMessageLayoutChanged);
+    return () => {
+      window.removeEventListener(SESSION_MESSAGE_LAYOUT_CHANGED_EVENT, onMessageLayoutChanged);
+    };
+  }, [scheduleVirtualizerRemeasure]);
+
   useEffect(() => {
     return () => {
       cancelBottomScrollLoop();
       cancelPromptScrollSearch();
       cancelTopScrollFollowUps();
+      cancelVirtualizerRemeasure();
     };
   }, []);
 

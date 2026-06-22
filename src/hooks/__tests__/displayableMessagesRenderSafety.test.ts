@@ -19,6 +19,24 @@ const toolResult = (id: string) => ({
   message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] },
 });
 
+const toolResultOnly = (id: string) => ({
+  type: 'user',
+  _toolResultOnly: true,
+  message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] },
+});
+
+const topLevelToolUse = (id: string) => ({
+  type: 'tool_use',
+  id,
+  name: 'bash',
+  content: 'running',
+});
+
+const queueOperation = {
+  type: 'queue-operation',
+  content: 'queued',
+};
+
 const systemInit = {
   type: 'system',
   subtype: 'init',
@@ -36,6 +54,18 @@ describe('displayable message filtering render safety', () => {
     const messages = [toolResult('future-tool'), toolUse('future-tool', 'bash')];
 
     expect(filterDisplayableMessages(messages as any)).toEqual(messages);
+  });
+
+  test('filters messages that render null before they enter virtualized rows', () => {
+    const visible = assistantText('visible response');
+    const messages = [
+      topLevelToolUse('standalone-tool'),
+      queueOperation,
+      toolResultOnly('standalone-tool'),
+      visible,
+    ];
+
+    expect(filterDisplayableMessages(messages as any)).toEqual([visible]);
   });
 
   test('source does not do per-tool-result backward scans through message history', async () => {

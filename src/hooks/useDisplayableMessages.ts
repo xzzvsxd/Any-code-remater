@@ -203,6 +203,17 @@ function shouldDisplayMessageAtIndex(
   const message = messages[index];
   let shouldDisplay = true;
 
+  // 这些消息类型在 StreamMessageV2 中会直接 return null。
+  // 如果让它们进入虚拟列表，行本身仍会保留估算高度，表现为对话中“莫名空白”。
+  // 因此必须在 displayable 阶段过滤掉，而不是等渲染阶段再返回 null。
+  if (
+    message.type === 'tool_use' ||
+    message.type === 'queue-operation' ||
+    (message as any)._toolResultOnly === true
+  ) {
+    shouldDisplay = false;
+  }
+
   // 规则 0：隐藏 Warmup 消息及其回复
   if (hideWarmupMessages && warmupIndices?.has(index)) {
     shouldDisplay = false;

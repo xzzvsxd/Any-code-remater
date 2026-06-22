@@ -7,6 +7,11 @@ const sessionMessagesSource = readFileSync(
   'utf8',
 );
 
+const thinkingBlockSource = readFileSync(
+  resolve(process.cwd(), 'src/components/message/ThinkingBlock.tsx'),
+  'utf8',
+);
+
 const messageBubbleSource = readFileSync(
   resolve(process.cwd(), 'src/components/message/MessageBubble.tsx'),
   'utf8',
@@ -78,5 +83,23 @@ describe('session message virtualization safety', () => {
   test('scroll container error state avoids framer-motion inside virtualized history', () => {
     expect(sessionMessagesSource).not.toContain('from "framer-motion"');
     expect(sessionMessagesSource).not.toContain('<motion.div');
+  });
+
+  test('collapsed thinking rows invalidate stale virtual height cache and remeasure the list', () => {
+    expect(thinkingBlockSource).toContain('SESSION_MESSAGE_LAYOUT_CHANGED_EVENT');
+    expect(thinkingBlockSource).toContain("closest('[data-item-key]')");
+    expect(thinkingBlockSource).toContain("notifyLayoutChanged('thinking-block-toggle')");
+    expect(thinkingBlockSource).toContain("notifyLayoutChanged('thinking-block-auto-collapse')");
+
+    expect(sessionMessagesSource).toContain('SESSION_MESSAGE_LAYOUT_CHANGED_EVENT');
+    expect(sessionMessagesSource).toContain('scheduleVirtualizerRemeasure');
+    expect(sessionMessagesSource).toContain('measuredHeightsRef.current.delete(itemKey)');
+    expect(sessionMessagesSource).toContain('rowVirtualizer.measure()');
+  });
+
+  test('streaming completion remeasures rows so finished sessions do not keep bottom whitespace', () => {
+    expect(sessionMessagesSource).toContain('prevIsLoadingRef');
+    expect(sessionMessagesSource).toContain("reason: 'streaming-ended'");
+    expect(sessionMessagesSource).toContain('scheduleVirtualizerRemeasure');
   });
 });
