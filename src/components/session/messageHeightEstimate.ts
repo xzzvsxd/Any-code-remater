@@ -1,6 +1,10 @@
 import type { MessageGroup } from "@/lib/subagentGrouping";
 import type { ClaudeStreamMessage } from "@/types/claude";
 
+// 虚拟列表上下额外预渲染的行数。
+// 锁在 4：这是既有 Linux 顶部滚动性能约束——调大会让顶部滚动一次挂载过多重型行，
+// 拖慢 Linux/WebKitGTK。白屏不靠加大 overscan 解决，而是修 measureElement 的 0 高度兜底
+// （见 SessionMessages.tsx：测到非正高度时回退缓存/估算，绝不把 0 喂给虚拟列表造成位置塌缩）。
 export const SESSION_MESSAGES_OVERSCAN = 4;
 
 const DEFAULT_ESTIMATE = 220;

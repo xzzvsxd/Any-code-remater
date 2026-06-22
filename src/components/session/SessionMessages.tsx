@@ -156,18 +156,31 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
     measureElement: (element) => {
       // Ensure element is fully rendered before measurement
       const el = element as HTMLElement;
-      const height = el?.getBoundingClientRect().height ?? 200;
-      // 写入高度缓存（key 来自 MeasurableItem 设置的 data-item-key），
-      // 供 estimateSize 复用真实高度，消除重测时的整列跳动。
-      // 例外：正在 streaming 的最后一行高度时刻在变，不写缓存——否则会留下滞后旧值，
-      // 下次 estimateSize 用它低估 totalSize，把贴底视图往上弹。
+      const rawHeight = el?.getBoundingClientRect().height ?? 0;
       const key = el?.getAttribute?.('data-item-key');
       const idxAttr = el?.getAttribute?.('data-index');
-      const isStreamingRow = isLoading && idxAttr !== null && Number(idxAttr) === messageGroups.length - 1;
-      if (key && height > 0 && !isStreamingRow) {
-        measuredHeightsRef.current.set(key, height);
+      const measuredIndex = idxAttr !== null ? Number(idxAttr) : NaN;
+      const isStreamingRow = isLoading && idxAttr !== null && measuredIndex === messageGroups.length - 1;
+
+      // 🐛 白屏根因：快速上翻时 WebKitGTK/WebView 下元素可能处于「布局未就绪」瞬态，
+      // getBoundingClientRect().height 返回 0。若把 0 喂给虚拟列表，该行高度塌缩为 0 →
+      // 之后所有行的 translateY(start) 整体错位 → 可见项被推到视口外 → 整屏空白。
+      // 因此测到非正高度时绝不返回 0：优先用上次测得的真实高度，再退回估算值，
+      // 让虚拟列表在该项重新稳定布局前用合理占位高度，避免位置塌缩闪白。
+      if (rawHeight > 0) {
+        // 写入高度缓存（key 来自 MeasurableItem 设置的 data-item-key），
+        // 供 estimateSize 复用真实高度，消除重测时的整列跳动。
+        // 例外：正在 streaming 的最后一行高度时刻在变，不写缓存——否则会留下滞后旧值，
+        // 下次 estimateSize 用它低估 totalSize，把贴底视图往上弹。
+        if (key && !isStreamingRow) {
+          measuredHeightsRef.current.set(key, rawHeight);
+        }
+        return rawHeight;
       }
-      return height;
+
+      const cached = key ? measuredHeightsRef.current.get(key) : undefined;
+      if (cached && cached > 0) return cached;
+      return estimateMessageGroupHeight(messageGroups[measuredIndex]);
     },
   });
 
