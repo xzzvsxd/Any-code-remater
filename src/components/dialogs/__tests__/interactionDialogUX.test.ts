@@ -18,6 +18,12 @@ describe('interaction dialogs UX wiring', () => {
     expect(askDialog).toContain('暂时没想好，暂时不回答');
   });
 
+  test('AskUserQuestion dialog lets multi-select questions add extra free-text opinion', () => {
+    // 多选问题也应能补充自定义意见，提交时与勾选项一起合并发出
+    expect(askDialog).toContain('multiSelectExtras');
+    expect(askDialog).toContain('补充其它意见');
+  });
+
   test('PlanApproval dialog shows session title, deadline countdown and no-decision action', () => {
     expect(planDialog).toContain('sessionTitle?: string');
     expect(planDialog).toContain('expiresAtMs?: number');

@@ -69,6 +69,8 @@ export function AskUserQuestionDialog({
   const [customInputs, setCustomInputs] = useState<Record<string, string>>({});
   // 标记哪些问题选择了"自由输入"模式
   const [usingCustom, setUsingCustom] = useState<Record<string, boolean>>({});
+  // 多选问题的补充意见：与勾选项共存（非互斥），提交时合并进答案数组
+  const [multiSelectExtras, setMultiSelectExtras] = useState<Record<string, string>>({});
   const [remainingMs, setRemainingMs] = useState(0);
   const safeQuestions = useMemo(() => normalizeQuestions(questions), [questions]);
   const trimmedSessionTitle = sessionTitle?.trim() ?? "";
@@ -80,6 +82,7 @@ export function AskUserQuestionDialog({
       setSelectedAnswers({});
       setCustomInputs({});
       setUsingCustom({});
+      setMultiSelectExtras({});
     }
   }, [open, resetKey]);
 
@@ -167,25 +170,44 @@ export function AskUserQuestionDialog({
     return safeQuestions.every(q => {
       const key = getQuestionKey(q);
       const answer = selectedAnswers[key];
+      // 多选问题：勾选项或补充意见任一非空即视为已答
+      if (q.multiSelect && (multiSelectExtras[key]?.trim())) {
+        return true;
+      }
       if (Array.isArray(answer)) {
         return answer.length > 0;
       }
       return !!answer;
     });
-  }, [safeQuestions, selectedAnswers]);
+  }, [safeQuestions, selectedAnswers, multiSelectExtras]);
 
   // 已回答问题数（用于底部进度展示）
   const answeredCount = useMemo(() => {
     return safeQuestions.filter(q => {
-      const answer = selectedAnswers[getQuestionKey(q)];
+      const key = getQuestionKey(q);
+      if (q.multiSelect && multiSelectExtras[key]?.trim()) {
+        return true;
+      }
+      const answer = selectedAnswers[key];
       return Array.isArray(answer) ? answer.length > 0 : !!answer;
     }).length;
-  }, [safeQuestions, selectedAnswers]);
+  }, [safeQuestions, selectedAnswers, multiSelectExtras]);
 
   // 提交答案
   const handleSubmit = () => {
     if (!allAnswered) return;
-    const submitted = onSubmit(selectedAnswers);
+    // 多选问题：把补充意见作为额外成员合并进答案数组，formatAnswersAsMessage 会用「、」序列化。
+    const merged: UserAnswers = { ...selectedAnswers };
+    for (const q of safeQuestions) {
+      if (!q.multiSelect) continue;
+      const key = getQuestionKey(q);
+      const extra = multiSelectExtras[key]?.trim();
+      if (!extra) continue;
+      const current = merged[key];
+      const currentArray = Array.isArray(current) ? current : current ? [current] : [];
+      merged[key] = [...currentArray, extra];
+    }
+    const submitted = onSubmit(merged);
     if (submitted === false) {
       return;
     }
@@ -193,6 +215,7 @@ export function AskUserQuestionDialog({
     // 这里不能再调用 onClose，否则会把刚弹出的下一批问题立即隐藏。
     // 重置选择
     setSelectedAnswers({});
+    setMultiSelectExtras({});
   };
 
   // 关闭对话框
@@ -269,7 +292,8 @@ export function AskUserQuestionDialog({
           <div className="space-y-2.5 px-5 py-4">
             {safeQuestions.map((q, qIndex) => {
               const questionKey = getQuestionKey(q);
-              const hasAnswer = !!selectedAnswers[questionKey];
+              const hasAnswer = !!selectedAnswers[questionKey]
+                || (q.multiSelect && !!multiSelectExtras[questionKey]?.trim());
 
               return (
                 <div
@@ -383,6 +407,25 @@ export function AskUserQuestionDialog({
                         <div className="text-[11px] text-muted-foreground flex items-center gap-1 pl-1">
                           <span className="text-blue-500">ℹ️</span>
                           <span>可多选</span>
+                        </div>
+                      )}
+
+                      {/* 多选补充意见：与勾选项共存，可勾选后再补充额外说明，或只填补充意见 */}
+                      {q.multiSelect && (
+                        <div className="mt-1.5">
+                          <div className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 mb-1 pl-1">
+                            <PenLine className="h-3.5 w-3.5" />
+                            补充其它意见（可选，与上面勾选并存）
+                          </div>
+                          <textarea
+                            className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background resize-none focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+                            rows={2}
+                            placeholder="想补充的内容写在这里，会和勾选项一起提交..."
+                            value={multiSelectExtras[questionKey] || ''}
+                            onChange={(e) =>
+                              setMultiSelectExtras(prev => ({ ...prev, [questionKey]: e.target.value }))
+                            }
+                          />
                         </div>
                       )}
 
