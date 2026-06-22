@@ -118,12 +118,15 @@ const TabSessionWrapperComponent: React.FC<TabSessionWrapperProps> = ({
 
   // 🔧 FIX: Handle session info change - 持久化新建会话的信息
   // 解决路由切换后新建会话消息丢失的问题
-  const handleSessionInfoChange = useCallback((info: { sessionId: string; projectId: string; projectPath: string; engine?: 'claude' | 'codex' | 'gemini' }) => {
+  const handleSessionInfoChange = useCallback((info: { sessionId: string; projectId: string; projectPath: string; engine?: 'claude' | 'codex' | 'gemini'; firstUserPrompt?: string }) => {
     console.debug('[TabSessionWrapper] Session info received, updating tab:', { tabId, info });
     updateSession(info);
     deletePromotedDraftCarrier();
 
-    const firstPrompt = firstPromptForAutoTitleRef.current;
+    const firstPrompt = firstPromptForAutoTitleRef.current ?? info.firstUserPrompt?.trim() ?? null;
+    if (firstPrompt && !firstPromptForAutoTitleRef.current) {
+      firstPromptForAutoTitleRef.current = firstPrompt;
+    }
     if (!firstPrompt || autoTitleSessionIdsRef.current.has(info.sessionId)) {
       return;
     }

@@ -1,8 +1,9 @@
 import type { ClaudeSettings } from './api';
 
-export const AUTO_TOPIC_NAMING_MODEL = 'claude-haiku-4-5';
+export const AUTO_TOPIC_NAMING_MODEL = 'claude-haiku-4-5-20251001';
 
 const AUTO_TITLE_MAX_LENGTH = 48;
+const FALLBACK_TITLE_MAX_SOURCE_CHARS = 160;
 
 export function isAutoTopicNamingEnabled(settings: ClaudeSettings | null | undefined): boolean {
   return settings?.autoTopicNaming !== false;
@@ -30,6 +31,22 @@ export function sanitizeGeneratedSessionTitle(raw: string | undefined | null): s
   }
 
   return title;
+}
+
+export function generateFallbackSessionTitleFromPrompt(prompt: string): string {
+  const trimmedPrompt = prompt.trim();
+  if (!trimmedPrompt) {
+    return '';
+  }
+
+  const firstUsefulLine = trimmedPrompt
+    .slice(0, FALLBACK_TITLE_MAX_SOURCE_CHARS)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .map((line) => line.replace(/^```[\w.-]*\s*$/i, '').replace(/^~~~[\w.-]*\s*$/i, '').trim())
+    .find(Boolean) ?? '';
+
+  return sanitizeGeneratedSessionTitle(firstUsefulLine);
 }
 
 export async function generateSessionTitleFromPrompt(prompt: string): Promise<string> {
@@ -82,9 +99,20 @@ export async function autoNameSessionFromPrompt({
       return null;
     }
 
-    const title = sanitizeGeneratedSessionTitle(
-      await generateSessionTitleFromPrompt(trimmedPrompt)
-    );
+    let title = '';
+    try {
+      title = sanitizeGeneratedSessionTitle(
+        await generateSessionTitleFromPrompt(trimmedPrompt)
+      );
+    } catch (error) {
+      console.warn('[SessionAutoTitle] Haiku topic naming failed, using local fallback:', error);
+      title = generateFallbackSessionTitleFromPrompt(trimmedPrompt);
+    }
+
+    if (!title) {
+      title = generateFallbackSessionTitleFromPrompt(trimmedPrompt);
+    }
+
     if (!title) {
       return null;
     }
@@ -97,9 +125,11 @@ export async function autoNameSessionFromPrompt({
     }
 
     await api.setSessionTitle(sessionId, title);
-    window.dispatchEvent(new CustomEvent('session-title-changed', {
-      detail: { sessionId, title },
-    }));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('session-title-changed', {
+        detail: { sessionId, title },
+      }));
+    }
 
     return title;
   } catch (error) {

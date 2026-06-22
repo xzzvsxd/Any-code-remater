@@ -48,6 +48,22 @@ describe('markdown render safety', () => {
     expect(shouldRenderMarkdownAsPlainText(fencedCode, { isStreaming: true })).toBe(true);
   });
 
+  test('uses plain text for completed markdown with large fenced code blocks', () => {
+    const largeFence = `小结\n\n\`\`\`json\n${'{"event":"x"}\n'.repeat(1_001)}\`\`\``;
+
+    expect(largeFence.length).toBeLessThan(120_000);
+    expect(shouldRenderMarkdownAsPlainText(largeFence)).toBe(true);
+  });
+
+  test('uses plain text for completed markdown with many fenced code blocks', () => {
+    const manyFences = Array.from(
+      { length: 7 },
+      (_, index) => `段落 ${index}\n\n\`\`\`ts\nconst value${index} = ${index};\n\`\`\``,
+    ).join('\n\n');
+
+    expect(shouldRenderMarkdownAsPlainText(manyFences)).toBe(true);
+  });
+
   test('uses plain text for every streaming delta to keep renderer work bounded', () => {
     expect(shouldRenderMarkdownAsPlainText('tiny **streaming** markdown', { isStreaming: true })).toBe(true);
     expect(shouldRenderMarkdownAsPlainText('- item\n- item 2', { isStreaming: true })).toBe(true);

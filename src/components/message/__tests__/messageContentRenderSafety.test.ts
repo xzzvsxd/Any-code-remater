@@ -17,6 +17,11 @@ const readResultSource = readFileSync(
   'utf8',
 );
 
+const resultMessageSource = readFileSync(
+  resolve(process.cwd(), 'src/components/message/ResultMessage.tsx'),
+  'utf8',
+);
+
 const userMessageSource = readFileSync(
   resolve(process.cwd(), 'src/components/message/UserMessage.tsx'),
   'utf8',
@@ -55,6 +60,18 @@ describe('message render safety wiring', () => {
     expect(readResultSource).toContain('shouldRenderCodeBlockAsPlainText(codeContent)');
   });
 
+  test('ResultMessage gates large error output before Markdown and Prism rendering', () => {
+    expect(resultMessageSource).toContain('shouldRenderMarkdownAsPlainText');
+    expect(resultMessageSource).toContain('LargePlainTextContent');
+    expect(resultMessageSource).toContain('shouldRenderCodeBlockAsPlainText(codeStr)');
+  });
+
+  test('ResultMessage avoids unbounded JSON.stringify for object error payloads', () => {
+    expect(resultMessageSource).toContain('MAX_RESULT_CONTENT_CHARS');
+    expect(resultMessageSource).toContain('appendBoundedResultText');
+    expect(resultMessageSource).not.toContain('JSON.stringify(value, null, 2)');
+  });
+
   test('UserMessage detects long prompts with bounded line scanning', () => {
     expect(userMessageSource).toContain('countLinesUpTo');
     expect(userMessageSource).not.toContain(".split('\\n').length");
@@ -74,11 +91,12 @@ describe('message render safety wiring', () => {
     expect(thinkingBlockSource).not.toContain('setTimeout(() =>');
   });
 
-  test('message scroll container disables continuous Tailwind animations inside streamed history', () => {
+  test('message scroll container does not blanket-disable loader animations', () => {
     expect(sessionMessagesSource).toContain('session-message-scroll');
-    expect(animationsCssSource).toContain('.session-message-scroll .animate-spin');
-    expect(animationsCssSource).toContain('.session-message-scroll .animate-pulse');
-    expect(animationsCssSource).toContain('.session-message-scroll .animate-bounce');
-    expect(animationsCssSource).toContain('animation: none !important');
+    expect(animationsCssSource).toContain('cli-processing-spark');
+    expect(animationsCssSource).toContain('cli-processing-progress');
+    expect(animationsCssSource).not.toContain('.session-message-scroll .animate-spin');
+    expect(animationsCssSource).not.toContain('.session-message-scroll .animate-pulse');
+    expect(animationsCssSource).not.toContain('.session-message-scroll .animate-bounce');
   });
 });

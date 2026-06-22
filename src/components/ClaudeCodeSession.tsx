@@ -91,7 +91,7 @@ interface ClaudeCodeSessionProps {
    * 🔧 FIX: Callback when session info is extracted (for persisting new session to tab)
    * Called when a new session receives its sessionId and projectId from backend
    */
-  onSessionInfoChange?: (info: { sessionId: string; projectId: string; projectPath: string; engine?: 'claude' | 'codex' | 'gemini' }) => void;
+  onSessionInfoChange?: (info: { sessionId: string; projectId: string; projectPath: string; engine?: 'claude' | 'codex' | 'gemini'; firstUserPrompt?: string }) => void;
   /**
    * 当用户在「新会话」中发出首条消息时回调，用于把标签标题从「新对话」改为该消息内容。
    * 仅在本会话此前没有任何消息时触发一次。
@@ -332,6 +332,17 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   // 首条用户消息是否已用于标签自动命名（防止重复触发）。
   // 已有会话本就有名，挂载即视为已通知，避免覆盖。
   const firstPromptNotifiedRef = useRef(!!session);
+  const firstSubmittedPromptRef = useRef<string | null>(null);
+  const hasUserAuthoredMessage = useCallback(() => (
+    messagesRef.current.some((message) => message.type === 'user')
+  ), []);
+  const getFirstUserAuthoredPrompt = useCallback((): string | null => {
+    const firstUserMessage = messagesRef.current.find((message) => (
+      message.type === 'user' && !message.isMeta
+    ));
+    const text = SessionHelpers.extractTextFromContent(firstUserMessage?.message?.content).trim();
+    return text || null;
+  }, []);
 
   // State for revert prompt picker (defined early for useKeyboardShortcuts)
   const [showRevertPicker, setShowRevertPicker] = useState(false);
@@ -382,9 +393,10 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
         projectId: extractedSessionInfo.projectId,
         projectPath: projectPath,
         engine: extractedSessionInfo.engine,
+        firstUserPrompt: firstSubmittedPromptRef.current ?? getFirstUserAuthoredPrompt() ?? undefined,
       });
     }
-  }, [extractedSessionInfo, projectPath, onSessionInfoChange]);
+  }, [extractedSessionInfo, projectPath, onSessionInfoChange, getFirstUserAuthoredPrompt]);
 
   const displayableMessages = useDisplayableMessages(visibleMessages, {
     hideWarmupMessages: filterConfig.hideWarmupMessages
@@ -767,7 +779,19 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     }
 
     // 新会话首条消息：用该消息内容为标签命名（仅触发一次）。
-    if (!firstPromptNotifiedRef.current && messagesRef.current.length === 0) {
+    // 只看“是否已有用户消息”，不要被 system/init/warmup 消息挡住。
+    if (wasCreatedAsNewSessionRef.current && !firstSubmittedPromptRef.current) {
+      const trimmed = prompt.trim();
+      if (trimmed) {
+        firstSubmittedPromptRef.current = trimmed;
+      }
+    }
+
+    if (
+      wasCreatedAsNewSessionRef.current &&
+      !firstPromptNotifiedRef.current &&
+      !hasUserAuthoredMessage()
+    ) {
       const trimmed = prompt.trim();
       if (trimmed) {
         firstPromptNotifiedRef.current = true;
@@ -784,7 +808,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     }, 50);
 
     handleSendPrompt(prompt, model, maxThinkingTokens);
-  }, [executionEngineConfig.engine, handleJumpToLatest, handleSendPrompt, setUserScrolled, setShouldAutoScroll, onFirstUserPrompt]);
+  }, [executionEngineConfig.engine, handleJumpToLatest, handleSendPrompt, setUserScrolled, setShouldAutoScroll, onFirstUserPrompt, hasUserAuthoredMessage]);
 
   const resolveAutoContinuationModel = useCallback((): ModelType => {
     return resolveClaudeContinuationModel({

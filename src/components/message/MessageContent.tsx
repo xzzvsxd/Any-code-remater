@@ -67,7 +67,7 @@ const PlainTextCodeBlock: React.FC<PlainTextCodeBlockProps> = ({
 
 const LARGE_TEXT_PREVIEW_CHARS = 40_000;
 
-const LargePlainTextContent: React.FC<{ content: string; isStreaming?: boolean }> = ({
+export const LargePlainTextContent: React.FC<{ content: string; isStreaming?: boolean }> = ({
   content,
   isStreaming = false,
 }) => {

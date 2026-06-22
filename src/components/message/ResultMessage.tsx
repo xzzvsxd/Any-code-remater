@@ -9,6 +9,11 @@ import { getClaudeSyntaxTheme } from "@/lib/claudeSyntaxTheme";
 import { tokenExtractor } from "@/lib/tokenExtractor";
 import { checkSyntaxHighlightSupport } from "@/lib/syntaxHighlightCompat";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { LargePlainTextContent } from "./MessageContent";
+import {
+  shouldRenderCodeBlockAsPlainText,
+  shouldRenderMarkdownAsPlainText,
+} from "@/lib/markdownRenderSafety";
 import type { ClaudeStreamMessage } from "@/types/claude";
 
 interface ResultMessageProps {
@@ -38,20 +43,124 @@ const formatTimestamp = (timestamp: string | undefined): string => {
   }
 };
 
+const MAX_RESULT_CONTENT_CHARS = 80_000;
+
+const appendBoundedResultText = (
+  parts: string[],
+  text: string,
+  state: { remaining: number; truncated: boolean },
+) => {
+  if (state.remaining <= 0) {
+    state.truncated = true;
+    return;
+  }
+
+  if (text.length > state.remaining) {
+    parts.push(text.slice(0, state.remaining));
+    state.remaining = 0;
+    state.truncated = true;
+    return;
+  }
+
+  parts.push(text);
+  state.remaining -= text.length;
+};
+
 const getResultContent = (value: unknown): string => {
   if (typeof value === "string") {
-    return value;
+    return value.length > MAX_RESULT_CONTENT_CHARS
+      ? `${value.slice(0, MAX_RESULT_CONTENT_CHARS)}\n\n…内容过长，已截断预览…`
+      : value;
   }
 
   if (value == null) {
     return "";
   }
 
+  const parts: string[] = [];
+  const state = { remaining: MAX_RESULT_CONTENT_CHARS, truncated: false };
+  const seen = new WeakSet<object>();
+
+  const write = (text: string) => appendBoundedResultText(parts, text, state);
+  const writeIndent = (depth: number) => write("  ".repeat(depth));
+
+  const visit = (current: unknown, depth: number) => {
+    if (state.remaining <= 0) {
+      state.truncated = true;
+      return;
+    }
+
+    if (current == null) {
+      write(String(current));
+      return;
+    }
+
+    if (typeof current === "string") {
+      write(current);
+      return;
+    }
+
+    if (typeof current === "number" || typeof current === "boolean" || typeof current === "bigint") {
+      write(String(current));
+      return;
+    }
+
+    if (typeof current !== "object") {
+      write(String(current));
+      return;
+    }
+
+    if (seen.has(current)) {
+      write("[Circular]");
+      return;
+    }
+
+    seen.add(current);
+
+    if (Array.isArray(current)) {
+      write("[\n");
+      for (let index = 0; index < current.length; index += 1) {
+        if (state.remaining <= 0) break;
+        writeIndent(depth + 1);
+        visit(current[index], depth + 1);
+        if (index < current.length - 1) write(",");
+        write("\n");
+      }
+      if (state.remaining > 0) {
+        writeIndent(depth);
+        write("]");
+      }
+      seen.delete(current);
+      return;
+    }
+
+    write("{\n");
+    let rendered = 0;
+    for (const key in current as Record<string, unknown>) {
+      if (state.remaining <= 0) break;
+      writeIndent(depth + 1);
+      write(`${JSON.stringify(key)}: `);
+      visit((current as Record<string, unknown>)[key], depth + 1);
+      rendered += 1;
+      write(",\n");
+    }
+    if (state.remaining > 0) {
+      if (rendered > 0) writeIndent(depth);
+      write("}");
+    }
+    seen.delete(current);
+  };
+
   try {
-    return JSON.stringify(value, null, 2);
+    visit(value, 0);
   } catch {
-    return String(value);
+    return String(value).slice(0, MAX_RESULT_CONTENT_CHARS);
   }
+
+  const content = parts.join("");
+  return state.truncated
+    ? `${content}\n\n…内容过长，已截断预览…`
+    : content;
 };
 
 const COLLAPSE_HEIGHT = 300; // px
@@ -133,64 +242,77 @@ export const ResultMessage: React.FC<ResultMessageProps> = ({ message, className
                 }
               >
                 {resultContent && (
-                  <ErrorBoundary
-                    fallback={() => (
-                      <div className="text-sm text-foreground/80 whitespace-pre-wrap break-words font-mono bg-muted/20 p-3 rounded" style={{ overflowWrap: 'anywhere' }}>
-                        {resultContent}
-                      </div>
-                    )}
-                  >
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        code(props: any) {
-                          const { inline, className: codeClassName, children, ...rest } = props;
-                          const match = /language-(\w+)/.exec(codeClassName || "");
-                          const codeStr = String(children).replace(/\n$/, "");
-                          const supportsSyntax = checkSyntaxHighlightSupport();
-
-                          // 如果是代码块且浏览器支持语法高亮
-                          if (!inline && match && supportsSyntax) {
-                            return (
-                              <ErrorBoundary
-                                fallback={() => (
-                                  <pre className="p-3 text-xs font-mono overflow-auto text-foreground/80 bg-muted/20 rounded whitespace-pre-wrap break-words" style={{ overflowWrap: 'anywhere' }}>
-                                    {codeStr}
-                                  </pre>
-                                )}
-                              >
-                                <SyntaxHighlighter
-                                  style={syntaxTheme as any}
-                                  language={match[1]}
-                                  PreTag="div"
-                                >
-                                  {codeStr}
-                                </SyntaxHighlighter>
-                              </ErrorBoundary>
-                            );
-                          }
-
-                          // 代码块但不支持语法高亮，降级为纯文本
-                          if (!inline && match) {
-                            return (
-                              <pre className="p-3 text-xs font-mono overflow-auto text-foreground/80 bg-muted/20 rounded whitespace-pre-wrap break-words" style={{ overflowWrap: 'anywhere' }}>
-                                {codeStr}
-                              </pre>
-                            );
-                          }
-
-                          // 行内代码
-                          return (
-                            <code className={codeClassName} {...rest}>
-                              {children}
-                            </code>
-                          );
-                        },
-                      }}
+                  shouldRenderMarkdownAsPlainText(resultContent) ? (
+                    <LargePlainTextContent content={resultContent} />
+                  ) : (
+                    <ErrorBoundary
+                      fallback={() => (
+                        <div className="text-sm text-foreground/80 whitespace-pre-wrap break-words font-mono bg-muted/20 p-3 rounded" style={{ overflowWrap: 'anywhere' }}>
+                          {resultContent}
+                        </div>
+                      )}
                     >
-                      {resultContent}
-                    </ReactMarkdown>
-                  </ErrorBoundary>
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          code(props: any) {
+                            const { inline, className: codeClassName, children, ...rest } = props;
+                            const match = /language-(\w+)/.exec(codeClassName || "");
+                            const codeStr = String(children).replace(/\n$/, "");
+                            const supportsSyntax = checkSyntaxHighlightSupport();
+
+                            // 大代码块不进入 Prism，避免错误输出页也触发 Linux/WebKitGTK 长任务。
+                            if (!inline && match && shouldRenderCodeBlockAsPlainText(codeStr)) {
+                              return (
+                                <pre className="p-3 text-xs font-mono overflow-auto text-foreground/80 bg-muted/20 rounded whitespace-pre-wrap break-words" style={{ overflowWrap: 'anywhere' }}>
+                                  {codeStr}
+                                </pre>
+                              );
+                            }
+
+                            // 如果是代码块且浏览器支持语法高亮
+                            if (!inline && match && supportsSyntax) {
+                              return (
+                                <ErrorBoundary
+                                  fallback={() => (
+                                    <pre className="p-3 text-xs font-mono overflow-auto text-foreground/80 bg-muted/20 rounded whitespace-pre-wrap break-words" style={{ overflowWrap: 'anywhere' }}>
+                                      {codeStr}
+                                    </pre>
+                                  )}
+                                >
+                                  <SyntaxHighlighter
+                                    style={syntaxTheme as any}
+                                    language={match[1]}
+                                    PreTag="div"
+                                  >
+                                    {codeStr}
+                                  </SyntaxHighlighter>
+                                </ErrorBoundary>
+                              );
+                            }
+
+                            // 代码块但不支持语法高亮，降级为纯文本
+                            if (!inline && match) {
+                              return (
+                                <pre className="p-3 text-xs font-mono overflow-auto text-foreground/80 bg-muted/20 rounded whitespace-pre-wrap break-words" style={{ overflowWrap: 'anywhere' }}>
+                                  {codeStr}
+                                </pre>
+                              );
+                            }
+
+                            // 行内代码
+                            return (
+                              <code className={codeClassName} {...rest}>
+                                {children}
+                              </code>
+                            );
+                          },
+                        }}
+                      >
+                        {resultContent}
+                      </ReactMarkdown>
+                    </ErrorBoundary>
+                  )
                 )}
 
                 {errorMessage && (

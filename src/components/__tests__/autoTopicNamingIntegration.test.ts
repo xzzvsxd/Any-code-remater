@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const tabWrapper = readFileSync('src/components/TabSessionWrapper.tsx', 'utf8');
+const claudeCodeSession = readFileSync('src/components/ClaudeCodeSession.tsx', 'utf8');
 const generalSettings = readFileSync('src/components/settings/GeneralSettings.tsx', 'utf8');
 const zh = readFileSync('src/i18n/locales/zh.json', 'utf8');
 const en = readFileSync('src/i18n/locales/en.json', 'utf8');
@@ -12,6 +13,23 @@ describe('auto topic naming integration', () => {
     expect(tabWrapper).toContain('firstPromptForAutoTitleRef');
     expect(tabWrapper).toContain('autoNameSessionFromPrompt');
     expect(tabWrapper).toContain('autoTitleSessionIdsRef');
+  });
+
+  test('first prompt capture is not blocked by system/init messages', () => {
+    const firstPromptCaptureBlock = claudeCodeSession.slice(
+      claudeCodeSession.indexOf('// 新会话首条消息'),
+      claudeCodeSession.indexOf('if (sendJumpTimeoutRef.current)'),
+    );
+    expect(firstPromptCaptureBlock).toContain('hasUserAuthoredMessage');
+    expect(firstPromptCaptureBlock).toContain('wasCreatedAsNewSessionRef.current');
+    expect(firstPromptCaptureBlock).not.toContain('messagesRef.current.length === 0');
+  });
+
+  test('session promotion carries the first prompt as a fallback for workspace auto naming', () => {
+    expect(claudeCodeSession).toContain('firstUserPrompt?: string');
+    expect(claudeCodeSession).toContain('firstSubmittedPromptRef');
+    expect(tabWrapper).toContain('info.firstUserPrompt');
+    expect(tabWrapper).toContain('firstPromptForAutoTitleRef.current ?? info.firstUserPrompt');
   });
 
   test('general settings exposes default-on auto topic naming toggle in all locales', () => {

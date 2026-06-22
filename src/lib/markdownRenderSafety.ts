@@ -1,9 +1,11 @@
-export const MAX_SYNTAX_HIGHLIGHT_CHARS = 80_000;
-export const MAX_SYNTAX_HIGHLIGHT_LINES = 2_000;
-export const MAX_MARKDOWN_RENDER_CHARS = 120_000;
-export const MAX_MARKDOWN_RENDER_LINES = 3_000;
+export const MAX_SYNTAX_HIGHLIGHT_CHARS = 40_000;
+export const MAX_SYNTAX_HIGHLIGHT_LINES = 1_200;
+export const MAX_MARKDOWN_RENDER_CHARS = 80_000;
+export const MAX_MARKDOWN_RENDER_LINES = 2_000;
 export const MAX_STREAMING_MARKDOWN_RENDER_CHARS = 24_000;
 export const MAX_STREAMING_MARKDOWN_RENDER_LINES = 800;
+export const MAX_MARKDOWN_FENCED_CODE_CHARS = 12_000;
+export const MAX_MARKDOWN_FENCE_COUNT = 6;
 export const MAX_INCREMENTAL_TYPEWRITER_CHARS = 12_000;
 export const MAX_INCREMENTAL_TYPEWRITER_LINES = 200;
 export const MAX_INCREMENTAL_TYPEWRITER_LINE_CHARS = 2_000;
@@ -19,6 +21,8 @@ export interface MarkdownRenderOptions {
   isStreaming?: boolean;
   maxChars?: number;
   maxLines?: number;
+  maxFenceChars?: number;
+  maxFenceCount?: number;
 }
 
 export interface BoundedLineCount {
@@ -65,6 +69,57 @@ export function shouldRenderCodeBlockAsPlainText(code: string): boolean {
   return false;
 }
 
+function getFenceMarkerAt(content: string, index: number): '```' | '~~~' | null {
+  const marker = content.slice(index, index + 3);
+  return marker === '```' || marker === '~~~' ? marker : null;
+}
+
+/**
+ * Completed Markdown can still freeze WebKit if it contains a medium-sized
+ * fenced code block: ReactMarkdown builds the full AST first, then Prism walks
+ * the block again.  Detect those cases before entering ReactMarkdown.  This is
+ * intentionally a single linear scan and avoids split()/matchAll() allocations
+ * on large strings.
+ */
+export function hasUnsafeMarkdownCodeFences(
+  content: string,
+  maxFenceChars = MAX_MARKDOWN_FENCED_CODE_CHARS,
+  maxFenceCount = MAX_MARKDOWN_FENCE_COUNT,
+): boolean {
+  let openFenceMarker: '```' | '~~~' | null = null;
+  let openFenceContentStart = 0;
+  let fenceCount = 0;
+
+  for (let index = 0; index <= content.length - 3; index += 1) {
+    const marker = getFenceMarkerAt(content, index);
+    if (!marker) {
+      continue;
+    }
+
+    if (!openFenceMarker) {
+      openFenceMarker = marker;
+      openFenceContentStart = index + 3;
+      fenceCount += 1;
+      if (fenceCount > maxFenceCount) {
+        return true;
+      }
+      index += 2;
+      continue;
+    }
+
+    if (marker === openFenceMarker) {
+      if (index - openFenceContentStart > maxFenceChars) {
+        return true;
+      }
+      openFenceMarker = null;
+      openFenceContentStart = 0;
+      index += 2;
+    }
+  }
+
+  return openFenceMarker !== null && content.length - openFenceContentStart > maxFenceChars;
+}
+
 /**
  * ReactMarkdown + remark-gfm 会把 Markdown 展开成大量 React 节点；超大内容在 Linux
  * WebKitGTK 下容易把 renderer 主线程拖成白屏。超过阈值时改走“有界纯文本预览”，
@@ -101,7 +156,15 @@ export function shouldRenderMarkdownAsPlainText(
     return true;
   }
 
-  return countLinesUpTo(content, maxLines).exceeded;
+  if (countLinesUpTo(content, maxLines).exceeded) {
+    return true;
+  }
+
+  return hasUnsafeMarkdownCodeFences(
+    content,
+    Math.max(1, Math.floor(options.maxFenceChars ?? MAX_MARKDOWN_FENCED_CODE_CHARS)),
+    Math.max(1, Math.floor(options.maxFenceCount ?? MAX_MARKDOWN_FENCE_COUNT)),
+  );
 }
 
 /**
