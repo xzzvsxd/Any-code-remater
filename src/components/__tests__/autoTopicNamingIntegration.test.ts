@@ -11,8 +11,11 @@ const zhTW = readFileSync('src/i18n/locales/zh-TW.json', 'utf8');
 describe('auto topic naming integration', () => {
   test('new sessions keep first prompt and trigger Haiku auto naming after real session id is known', () => {
     expect(tabWrapper).toContain('firstPromptForAutoTitleRef');
-    expect(tabWrapper).toContain('autoNameSessionFromPrompt');
-    expect(tabWrapper).toContain('autoTitleSessionIdsRef');
+    expect(claudeCodeSession).toContain('autoNameSessionFromPrompt');
+    expect(claudeCodeSession).toContain('autoTitleSessionIdsRef');
+    expect(claudeCodeSession).toContain('onAutoSessionTitle');
+    expect(tabWrapper).toContain('onAutoSessionTitle');
+    expect(tabWrapper).not.toContain("import { autoNameSessionFromPrompt }");
   });
 
   test('first prompt capture is not blocked by system/init messages', () => {
@@ -30,6 +33,12 @@ describe('auto topic naming integration', () => {
     expect(claudeCodeSession).toContain('firstSubmittedPromptRef');
     expect(tabWrapper).toContain('info.firstUserPrompt');
     expect(tabWrapper).toContain('firstPromptForAutoTitleRef.current ?? info.firstUserPrompt');
+  });
+
+  test('detached and direct ClaudeCodeSession entrypoints still have internal auto naming', () => {
+    expect(claudeCodeSession).toContain('wasCreatedAsNewSessionRef.current');
+    expect(claudeCodeSession).toContain('autoNameSessionFromPrompt({');
+    expect(claudeCodeSession).toContain('onAutoSessionTitle?.');
   });
 
   test('general settings exposes default-on auto topic naming toggle in all locales', () => {

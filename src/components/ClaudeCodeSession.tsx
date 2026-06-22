@@ -53,6 +53,7 @@ import { loadUiOnlySessionMessages, mergeUiOnlySessionMessages, pruneUiOnlySessi
 import { prepareRecentProjects } from '@/lib/recentProjects';
 import { safeRandomUUID } from '@/lib/browserCompat';
 import { getSessionDisplayTitle } from '@/lib/sessionDisplayTitle';
+import { autoNameSessionFromPrompt } from '@/lib/sessionAutoTitle';
 import { SessionHeader } from "./session/SessionHeader";
 import { SessionMessages, type SessionMessagesRef } from "./session/SessionMessages";
 
@@ -97,6 +98,11 @@ interface ClaudeCodeSessionProps {
    * 仅在本会话此前没有任何消息时触发一次。
    */
   onFirstUserPrompt?: (prompt: string) => void;
+  /**
+   * 新会话自动备注名写入成功后回调。Tab 场景用于把标签名同步成 Haiku/兜底生成的备注名；
+   * 直接会话/独立窗口即使不传该回调，也会在组件内部持久化 session title。
+   */
+  onAutoSessionTitle?: (title: string, sessionId: string) => void;
   /**
    * Whether this session is currently active (for event listener management)
    */
@@ -177,6 +183,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   onEngineChange,
   onSessionInfoChange,
   onFirstUserPrompt,
+  onAutoSessionTitle,
   isActive = true, // 默认为活跃状态，保持向后兼容
   queueStorageKey: queueStorageKeyProp,
   tabId: tabIdProp,
@@ -333,6 +340,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   // 已有会话本就有名，挂载即视为已通知，避免覆盖。
   const firstPromptNotifiedRef = useRef(!!session);
   const firstSubmittedPromptRef = useRef<string | null>(null);
+  const autoTitleSessionIdsRef = useRef<Set<string>>(new Set());
   const hasUserAuthoredMessage = useCallback(() => (
     messagesRef.current.some((message) => message.type === 'user')
   ), []);
@@ -397,6 +405,28 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       });
     }
   }, [extractedSessionInfo, projectPath, onSessionInfoChange, getFirstUserAuthoredPrompt]);
+
+  // 自动话题命名是“会话”行为，不能只绑在 TabSessionWrapper 上：
+  // 独立窗口 / 旧 direct ClaudeCodeSession 入口不经过 TabSessionWrapper，也必须在拿到真实
+  // sessionId 后写入 session_meta，否则工作区列表只会继续显示首条 prompt 或短 id。
+  useEffect(() => {
+    const sessionId = extractedSessionInfo?.sessionId;
+    if (!wasCreatedAsNewSessionRef.current || !sessionId) return;
+    if (autoTitleSessionIdsRef.current.has(sessionId)) return;
+
+    const firstPrompt = firstSubmittedPromptRef.current ?? getFirstUserAuthoredPrompt();
+    if (!firstPrompt?.trim()) return;
+
+    autoTitleSessionIdsRef.current.add(sessionId);
+    autoNameSessionFromPrompt({
+      sessionId,
+      prompt: firstPrompt,
+    }).then((title) => {
+      if (title) {
+        onAutoSessionTitle?.(title, sessionId);
+      }
+    });
+  }, [extractedSessionInfo?.sessionId, getFirstUserAuthoredPrompt, onAutoSessionTitle]);
 
   const displayableMessages = useDisplayableMessages(visibleMessages, {
     hideWarmupMessages: filterConfig.hideWarmupMessages

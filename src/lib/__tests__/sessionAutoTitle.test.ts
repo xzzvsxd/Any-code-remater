@@ -74,4 +74,36 @@ describe('session auto topic naming helpers', () => {
     );
     warnSpy.mockRestore();
   });
+
+  test('falls back to a local title when the Haiku request hangs', async () => {
+    vi.useFakeTimers();
+    vi.mocked(claudeSDK.sendMessage).mockReturnValue(new Promise(() => {}) as any);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const naming = autoNameSessionFromPrompt({
+      sessionId: 'session-hangs',
+      prompt: 'Linux 下工作区新会话应该自动命名\n不要一直等网络',
+    });
+
+    const outcome = await Promise.race([
+      naming.then((title) => ({ kind: 'resolved' as const, title })),
+      vi.advanceTimersByTimeAsync(4_100).then(() => ({ kind: 'pending' as const })),
+    ]);
+
+    expect(outcome).toEqual({
+      kind: 'resolved',
+      title: 'Linux 下工作区新会话应该自动命名',
+    });
+    expect(api.setSessionTitle).toHaveBeenCalledWith(
+      'session-hangs',
+      'Linux 下工作区新会话应该自动命名',
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[SessionAutoTitle] Haiku topic naming failed, using local fallback:',
+      expect.any(Error),
+    );
+
+    warnSpy.mockRestore();
+    vi.useRealTimers();
+  });
 });

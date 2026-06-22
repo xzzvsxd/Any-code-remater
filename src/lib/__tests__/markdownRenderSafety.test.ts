@@ -3,6 +3,7 @@ import {
   countLinesUpTo,
   shouldRenderCodeBlockAsPlainText,
   shouldRenderMarkdownAsPlainText,
+  shouldRenderStructuredCommandOutputAsPlainText,
   shouldUseIncrementalTypewriter,
 } from '../markdownRenderSafety';
 
@@ -67,6 +68,12 @@ describe('markdown render safety', () => {
   test('uses plain text for every streaming delta to keep renderer work bounded', () => {
     expect(shouldRenderMarkdownAsPlainText('tiny **streaming** markdown', { isStreaming: true })).toBe(true);
     expect(shouldRenderMarkdownAsPlainText('- item\n- item 2', { isStreaming: true })).toBe(true);
+  });
+
+  test('large structured command output skips expensive table parsing', () => {
+    expect(shouldRenderStructuredCommandOutputAsPlainText('| A | B |\n|---|---|\n| 1 | 2 |')).toBe(false);
+    expect(shouldRenderStructuredCommandOutputAsPlainText('x'.repeat(32_001))).toBe(true);
+    expect(shouldRenderStructuredCommandOutputAsPlainText(Array.from({ length: 901 }, () => '| a | b |').join('\n'))).toBe(true);
   });
 
   test('counts lines with an upper bound for collapsed huge content summaries', () => {

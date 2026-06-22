@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { Project, Session } from '@/lib/api';
+import type { DraftSession, Project, Session } from '@/lib/api';
 import {
+  buildWorkbenchProjectSessionIndex,
   filterPromotedDraftSessionsForSidebar,
   getWorkbenchSessionRunningKey,
   isWorkbenchSessionRunning,
@@ -129,10 +130,64 @@ describe('workbench sidebar session ordering', () => {
     expect(ordered.map((s) => s.id)).toEqual(['new-real', 'older-real', 'idle']);
   });
 
+  test('pre-indexes open tabs and drafts by project to avoid per-project scans', () => {
+    const otherProject: Project = {
+      id: 'p2',
+      path: '/repo/other',
+      sessions: [],
+      created_at: 2,
+    };
+    const openByPath = session('open-by-path', '2026-06-15T02:30:00.000Z', {
+      project_id: '',
+      project_path: '/repo/app/',
+    });
+    const openById = session('open-by-id', '2026-06-15T02:30:00.000Z', {
+      project_id: 'p2',
+      project_path: '/wrong/path',
+    });
+    const drafts: DraftSession[] = [
+      {
+        id: 'draft-by-path',
+        project_id: '',
+        project_path: '/repo/app',
+        content: 'draft',
+        created_at: 1,
+        updated_at: 1,
+        engine: 'claude',
+      },
+      {
+        id: 'draft-by-id',
+        project_id: 'p2',
+        project_path: '/wrong/path',
+        content: 'draft',
+        created_at: 1,
+        updated_at: 1,
+        engine: 'codex',
+      },
+    ];
+
+    const index = buildWorkbenchProjectSessionIndex({
+      projects: [project, otherProject],
+      openTabSessions: [openByPath, openById],
+      draftSessions: drafts,
+      runningSessionKeys: new Set([workbenchSessionKey('open-by-path')]),
+    });
+
+    expect(index.openTabSessionsByProjectId.get('p1')?.map((s) => s.id)).toEqual(['open-by-path']);
+    expect(index.openTabSessionsByProjectId.get('p2')?.map((s) => s.id)).toEqual(['open-by-id']);
+    expect(index.draftSessionsByProjectId.get('p1')?.map((d) => d.id)).toEqual(['draft-by-path']);
+    expect(index.draftSessionsByProjectId.get('p2')?.map((d) => d.id)).toEqual(['draft-by-id']);
+    expect(index.runningCountByProjectId.get('p1')).toBe(1);
+    expect(index.runningCountByProjectId.get('p2') ?? 0).toBe(0);
+  });
+
   test('WorkbenchSidebar does not poll expanded projects while sessions are streaming', () => {
     expect(sidebarSource).toContain('shouldRefreshProjectSessionsOnFocus');
     expect(sidebarSource).toContain('orderProjectSessionsForSidebar');
     expect(sidebarSource).toContain('isWorkbenchSessionRunning');
+    expect(sidebarSource).toContain('buildWorkbenchProjectSessionIndex');
+    expect(sidebarSource).not.toContain('openTabSessions.filter(\r\n          (s) => tabSessionBelongsTo');
+    expect(sidebarSource).not.toContain('openTabSessions.filter(\n          (s) => tabSessionBelongsTo');
     expect(sidebarSource).not.toContain('runningSessionIds.has(session.id)');
     expect(sidebarSource).not.toContain('window.setInterval');
     expect(sidebarSource).not.toContain('???????');

@@ -2,6 +2,8 @@ import React, { useState } from "react";
 import { Info, Terminal, AlertCircle, Command, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toolRegistry } from "@/lib/toolRegistry";
+import { shouldRenderStructuredCommandOutputAsPlainText } from "@/lib/markdownRenderSafety";
+import { LargePlainTextContent } from "./MessageContent";
 import type { ClaudeStreamMessage } from "@/types/claude";
 
 /**
@@ -14,6 +16,9 @@ const formatCommandOutput = (text: string): React.ReactNode => {
   if (!match) return text;
 
   const content = match[1].trim();
+  if (shouldRenderStructuredCommandOutputAsPlainText(content)) {
+    return <LargePlainTextContent content={content} />;
+  }
 
   // 检测是否是表格格式（包含 | 分隔符）
   const isTable = content.includes('|') && content.includes('---');

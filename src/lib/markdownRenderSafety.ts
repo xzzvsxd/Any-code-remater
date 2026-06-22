@@ -9,6 +9,8 @@ export const MAX_MARKDOWN_FENCE_COUNT = 6;
 export const MAX_INCREMENTAL_TYPEWRITER_CHARS = 12_000;
 export const MAX_INCREMENTAL_TYPEWRITER_LINES = 200;
 export const MAX_INCREMENTAL_TYPEWRITER_LINE_CHARS = 2_000;
+export const MAX_STRUCTURED_COMMAND_OUTPUT_CHARS = 32_000;
+export const MAX_STRUCTURED_COMMAND_OUTPUT_LINES = 900;
 
 export interface IncrementalTypewriterOptions {
   isStreaming?: boolean;
@@ -165,6 +167,20 @@ export function shouldRenderMarkdownAsPlainText(
     Math.max(1, Math.floor(options.maxFenceChars ?? MAX_MARKDOWN_FENCED_CODE_CHARS)),
     Math.max(1, Math.floor(options.maxFenceCount ?? MAX_MARKDOWN_FENCE_COUNT)),
   );
+}
+
+export function shouldRenderStructuredCommandOutputAsPlainText(
+  content: string,
+  options: { maxChars?: number; maxLines?: number } = {},
+): boolean {
+  const maxChars = Math.max(1, Math.floor(options.maxChars ?? MAX_STRUCTURED_COMMAND_OUTPUT_CHARS));
+  const maxLines = Math.max(1, Math.floor(options.maxLines ?? MAX_STRUCTURED_COMMAND_OUTPUT_LINES));
+
+  if (content.length > maxChars) {
+    return true;
+  }
+
+  return countLinesUpTo(content, maxLines).exceeded;
 }
 
 /**

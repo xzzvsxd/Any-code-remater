@@ -27,6 +27,11 @@ const userMessageSource = readFileSync(
   'utf8',
 );
 
+const systemMessageSource = readFileSync(
+  resolve(process.cwd(), 'src/components/message/SystemMessage.tsx'),
+  'utf8',
+);
+
 const thinkingBlockSource = readFileSync(
   resolve(process.cwd(), 'src/components/message/ThinkingBlock.tsx'),
   'utf8',
@@ -75,6 +80,13 @@ describe('message render safety wiring', () => {
   test('UserMessage detects long prompts with bounded line scanning', () => {
     expect(userMessageSource).toContain('countLinesUpTo');
     expect(userMessageSource).not.toContain(".split('\\n').length");
+  });
+
+  test('slash and system command outputs fall back before expensive table splitting', () => {
+    expect(userMessageSource).toContain('shouldRenderStructuredCommandOutputAsPlainText');
+    expect(systemMessageSource).toContain('shouldRenderStructuredCommandOutputAsPlainText');
+    expect(userMessageSource).toContain('LargePlainTextContent');
+    expect(systemMessageSource).toContain('LargePlainTextContent');
   });
 
   test('streaming message row cursors avoid continuous pulse animations', () => {

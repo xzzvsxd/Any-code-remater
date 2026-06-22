@@ -1,6 +1,7 @@
 import type { ClaudeSettings } from './api';
 
 export const AUTO_TOPIC_NAMING_MODEL = 'claude-haiku-4-5-20251001';
+export const AUTO_TITLE_HAIKU_TIMEOUT_MS = 4_000;
 
 const AUTO_TITLE_MAX_LENGTH = 48;
 const FALLBACK_TITLE_MAX_SOURCE_CHARS = 160;
@@ -49,6 +50,19 @@ export function generateFallbackSessionTitleFromPrompt(prompt: string): string {
   return sanitizeGeneratedSessionTitle(firstUsefulLine);
 }
 
+function rejectAfterTimeout(ms: number): Promise<never> {
+  return new Promise((_, reject) => {
+    setTimeout(() => reject(new Error(`Haiku topic naming timed out after ${ms}ms`)), ms);
+  });
+}
+
+async function withAutoTitleTimeout<T>(promise: Promise<T>): Promise<T> {
+  return Promise.race([
+    promise,
+    rejectAfterTimeout(AUTO_TITLE_HAIKU_TIMEOUT_MS),
+  ]);
+}
+
 export async function generateSessionTitleFromPrompt(prompt: string): Promise<string> {
   const trimmedPrompt = prompt.trim();
   if (!trimmedPrompt) {
@@ -56,20 +70,22 @@ export async function generateSessionTitleFromPrompt(prompt: string): Promise<st
   }
 
   const { claudeSDK } = await import('./claudeSDK');
-  const response = await claudeSDK.sendMessage(
-    [
+  const response = await withAutoTitleTimeout(
+    claudeSDK.sendMessage(
+      [
+        {
+          role: 'user',
+          content: trimmedPrompt,
+        },
+      ],
       {
-        role: 'user',
-        content: trimmedPrompt,
-      },
-    ],
-    {
-      model: AUTO_TOPIC_NAMING_MODEL,
-      maxTokens: 32,
-      temperature: 0.2,
-      systemPrompt:
-        '请根据用户首条 prompt 生成一个简短的会话标题。要求：4-16 个汉字或 3-8 个英文词；只输出标题本身；不要引号、不要编号、不要解释。',
-    }
+        model: AUTO_TOPIC_NAMING_MODEL,
+        maxTokens: 32,
+        temperature: 0.2,
+        systemPrompt:
+          '请根据用户首条 prompt 生成一个简短的会话标题。要求：4-16 个汉字或 3-8 个英文词；只输出标题本身；不要引号、不要编号、不要解释。',
+      }
+    )
   );
 
   return sanitizeGeneratedSessionTitle(response.content);

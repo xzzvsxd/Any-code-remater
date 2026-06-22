@@ -1,4 +1,4 @@
-import type { Project, Session } from '@/lib/api';
+import type { DraftSession, Project, Session } from '@/lib/api';
 
 export type RunningSessionStartOrder = ReadonlyMap<string, number>;
 export type WorkbenchRunningSessionKey = `session:${string}` | `tab:${string}`;
@@ -145,4 +145,90 @@ export function orderProjectSessionsForSidebar({
 
 export function shouldRefreshProjectSessionsOnFocus(project: Project, runningSessions: Session[]): boolean {
   return !runningSessions.some((session) => sessionBelongsToWorkbenchProject(session, project));
+}
+
+export interface WorkbenchProjectSessionIndex {
+  openTabSessionsByProjectId: Map<string, Session[]>;
+  draftSessionsByProjectId: Map<string, DraftSession[]>;
+  runningCountByProjectId: Map<string, number>;
+}
+
+interface BuildWorkbenchProjectSessionIndexOptions {
+  projects: readonly Project[];
+  openTabSessions: readonly Session[];
+  draftSessions: readonly DraftSession[];
+  runningSessionKeys: ReadonlySet<string>;
+}
+
+const pushMapValue = <T>(map: Map<string, T[]>, key: string, value: T) => {
+  const existing = map.get(key);
+  if (existing) {
+    existing.push(value);
+  } else {
+    map.set(key, [value]);
+  }
+};
+
+const incrementMapValue = (map: Map<string, number>, key: string) => {
+  map.set(key, (map.get(key) ?? 0) + 1);
+};
+
+/**
+ * 预先把“已打开 tab 会话 / 草稿 / 运行计数”归档到项目 id。
+ *
+ * 旧实现是在每个 project renderItem 里反复：
+ * - openTabSessions.filter(...)
+ * - draftSessions.filter(...)
+ * - openTabSessions.filter(...running...)
+ *
+ * 大工作区下复杂度接近 O(projects × (openTabs + drafts))，Linux/WebKitGTK 在 streaming
+ * 状态变化或展开多个项目时会出现明显主线程卡顿。这里改成一次线性建索引，单个项目行只做
+ * Map.get(project.id)。
+ */
+export function buildWorkbenchProjectSessionIndex({
+  projects,
+  openTabSessions,
+  draftSessions,
+  runningSessionKeys,
+}: BuildWorkbenchProjectSessionIndexOptions): WorkbenchProjectSessionIndex {
+  const projectIds = new Set(projects.map((project) => project.id));
+  const projectIdByPath = new Map(
+    projects.map((project) => [normalizeWorkbenchPath(project.path), project.id]),
+  );
+
+  const resolveProjectId = (projectId?: string, projectPath?: string): string | undefined => {
+    if (projectId && projectIds.has(projectId)) {
+      return projectId;
+    }
+
+    const normalizedPath = normalizeWorkbenchPath(projectPath);
+    return normalizedPath ? projectIdByPath.get(normalizedPath) : undefined;
+  };
+
+  const openTabSessionsByProjectId = new Map<string, Session[]>();
+  const draftSessionsByProjectId = new Map<string, DraftSession[]>();
+  const runningCountByProjectId = new Map<string, number>();
+
+  openTabSessions.forEach((session) => {
+    const projectId = resolveProjectId(session.project_id, session.project_path);
+    if (!projectId) return;
+
+    pushMapValue(openTabSessionsByProjectId, projectId, session);
+    if (isWorkbenchSessionRunning(session, runningSessionKeys)) {
+      incrementMapValue(runningCountByProjectId, projectId);
+    }
+  });
+
+  draftSessions.forEach((draft) => {
+    const projectId = resolveProjectId(draft.project_id, draft.project_path);
+    if (!projectId) return;
+
+    pushMapValue(draftSessionsByProjectId, projectId, draft);
+  });
+
+  return {
+    openTabSessionsByProjectId,
+    draftSessionsByProjectId,
+    runningCountByProjectId,
+  };
 }

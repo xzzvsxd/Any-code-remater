@@ -4,7 +4,6 @@ import { useTabSession } from '@/hooks/useTabs';
 import { api } from '@/lib/api';
 import type { Session } from '@/lib/api';
 import { buildQueueStorageKey } from '@/lib/queuedPromptsStore';
-import { autoNameSessionFromPrompt } from '@/lib/sessionAutoTitle';
 
 interface TabSessionWrapperProps {
   tabId: string;
@@ -33,7 +32,6 @@ const TabSessionWrapperComponent: React.FC<TabSessionWrapperProps> = ({
     sessionId: null,
   });
   const firstPromptForAutoTitleRef = useRef<string | null>(null);
-  const autoTitleSessionIdsRef = useRef<Set<string>>(new Set());
 
   // 🔧 FIX: Cache the initial session prop value. When a tab is created as "new" (session=undefined),
   // we must always pass undefined to ClaudeCodeSession, even if the session prop later becomes
@@ -127,20 +125,14 @@ const TabSessionWrapperComponent: React.FC<TabSessionWrapperProps> = ({
     if (firstPrompt && !firstPromptForAutoTitleRef.current) {
       firstPromptForAutoTitleRef.current = firstPrompt;
     }
-    if (!firstPrompt || autoTitleSessionIdsRef.current.has(info.sessionId)) {
-      return;
-    }
+  }, [deletePromotedDraftCarrier, tabId, updateSession]);
 
-    autoTitleSessionIdsRef.current.add(info.sessionId);
-    autoNameSessionFromPrompt({
-      sessionId: info.sessionId,
-      prompt: firstPrompt,
-    }).then((title) => {
-      if (title) {
-        updateTitle(title);
-      }
-    });
-  }, [deletePromotedDraftCarrier, tabId, updateSession, updateTitle]);
+  const handleAutoSessionTitle = useCallback((title: string) => {
+    const trimmedTitle = title.trim();
+    if (trimmedTitle) {
+      updateTitle(trimmedTitle);
+    }
+  }, [updateTitle]);
 
   // 包装 onStreamingChange 以更新标签页状态
   // 🔧 性能修复：使用 useCallback 避免无限渲染循环（从 1236 renders/s 降至 1 render/s）
@@ -176,6 +168,7 @@ const TabSessionWrapperComponent: React.FC<TabSessionWrapperProps> = ({
         onEngineChange={handleEngineChange}
         onSessionInfoChange={handleSessionInfoChange}
         onFirstUserPrompt={handleFirstUserPrompt}
+        onAutoSessionTitle={handleAutoSessionTitle}
         isActive={isActive}
         planModeStorageKey={planModeStorageKey}
         queueStorageKey={queueStorageKey}

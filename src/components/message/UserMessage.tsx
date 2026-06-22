@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Undo2, AlertTriangle, ChevronDown, ChevronUp, User } from "lucide-react";
 import { MessageBubble } from "./MessageBubble";
+import { LargePlainTextContent } from "./MessageContent";
 import { MessageImagePreview, extractImagesFromContent, extractImagePathsFromText } from "./MessageImagePreview";
 import { MessageActions } from "./MessageActions";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,7 @@ import type { RewindCapabilities, RewindMode } from '@/lib/api';
 import { formatTimestamp } from "@/lib/messageUtils";
 import { api } from '@/lib/api';
 import { useTranslation } from "@/hooks/useTranslation";
-import { countLinesUpTo } from "@/lib/markdownRenderSafety";
+import { countLinesUpTo, shouldRenderStructuredCommandOutputAsPlainText } from "@/lib/markdownRenderSafety";
 
 interface UserMessageProps {
   /** 消息数据 */
@@ -74,6 +75,9 @@ const formatSlashCommandOutput = (text: string): React.ReactNode => {
   if (!match) return text;
 
   const content = match[1].trim();
+  if (shouldRenderStructuredCommandOutputAsPlainText(content)) {
+    return <LargePlainTextContent content={content} />;
+  }
 
   // 检测是否是表格格式（包含 | 分隔符）
   const isTable = content.includes('|') && content.includes('---');

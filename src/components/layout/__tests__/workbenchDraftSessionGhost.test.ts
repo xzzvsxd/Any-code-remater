@@ -45,7 +45,8 @@ describe('workbench draft session ghost protection', () => {
     expect(sidebarSource).toContain('filterPromotedDraftSessionsForSidebar');
     expect(sidebarSource).toContain('promotedDraftCarrierIdsSig');
     expect(sidebarSource).toContain('draftSessionsForSidebar');
-    expect(sidebarSource).toContain('draftSessions={draftSessionsForSidebar}');
+    expect(sidebarSource).toContain('draftSessions: draftSessionsForSidebar');
+    expect(sidebarSource).toContain('draftSessionsByProjectId={projectSessionIndex.draftSessionsByProjectId}');
   });
 
   test('TabSessionWrapper deletes the draft carrier when a new tab is promoted to a session', () => {

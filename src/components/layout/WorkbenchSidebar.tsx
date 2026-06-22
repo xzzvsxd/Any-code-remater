@@ -68,12 +68,12 @@ import type { View } from '@/types/navigation';
 import type { Project, Session } from '@/lib/api';
 import { truncateText, getFirstLine } from '@/lib/date-utils';
 import {
+  buildWorkbenchProjectSessionIndex,
   filterPromotedDraftSessionsForSidebar,
   getWorkbenchOpenTabId,
   isWorkbenchSessionRunning,
   normalizeWorkbenchPath,
   orderProjectSessionsForSidebar,
-  sessionBelongsToWorkbenchProject,
   shouldRefreshProjectSessionsOnFocus,
   withWorkbenchOpenTabMetadata,
   workbenchSessionKey,
@@ -413,6 +413,15 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
   const runningOpenTabSessions = React.useMemo(
     () => openTabSessions.filter((session) => isWorkbenchSessionRunning(session, runningSessionKeys)),
     [openTabSessions, runningSessionKeys],
+  );
+  const projectSessionIndex = React.useMemo(
+    () => buildWorkbenchProjectSessionIndex({
+      projects,
+      openTabSessions,
+      draftSessions: draftSessionsForSidebar,
+      runningSessionKeys,
+    }),
+    [projects, openTabSessions, draftSessionsForSidebar, runningSessionKeys],
   );
 
   // 活跃置顶时间戳：项目「首次进入 streaming」时打一次当前时间戳，供「活跃项目自动置顶」。
@@ -847,8 +856,9 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
         activeSessionId={activeSessionId}
         runningSessionKeys={runningSessionKeys}
         runningStartOrder={runningStartOrder}
-        openTabSessions={openTabSessions}
-        draftSessions={draftSessionsForSidebar}
+        openTabSessionsByProjectId={projectSessionIndex.openTabSessionsByProjectId}
+        draftSessionsByProjectId={projectSessionIndex.draftSessionsByProjectId}
+        runningCountByProjectId={projectSessionIndex.runningCountByProjectId}
         onToggleProject={toggleProject}
         onOpenSession={openSession}
         onNewSession={onNewSession}
@@ -1087,10 +1097,12 @@ interface ProjectTreeProps {
   runningSessionKeys: Set<string>;
   /** 运行中会话进入 streaming 的稳定顺序：避免 assistant 输出更新时间导致运行项互相换位 */
   runningStartOrder: ReadonlyMap<string, number>;
-  /** 已在标签页打开的会话（含未落盘的新建会话），实时合并进树 */
-  openTabSessions: Session[];
-  /** 草稿会话（来自后端落盘），按所属项目渲染为红色标注条目 */
-  draftSessions: import('@/lib/api').DraftSession[];
+  /** 已按项目预索引的打开 tab 会话（含未落盘的新建会话），实时合并进树 */
+  openTabSessionsByProjectId: ReadonlyMap<string, Session[]>;
+  /** 已按项目预索引的草稿会话（来自后端落盘），按所属项目渲染为红色标注条目 */
+  draftSessionsByProjectId: ReadonlyMap<string, import('@/lib/api').DraftSession[]>;
+  /** 已按项目预索引的运行中会话数量，避免每个项目行重复扫描 openTabSessions */
+  runningCountByProjectId: ReadonlyMap<string, number>;
   onToggleProject: (project: Project) => void;
   onOpenSession: (session: Session) => void;
   onNewSession: () => void;
@@ -1113,7 +1125,8 @@ interface ProjectTreeProps {
 // 配合上方所有 props 已稳定引用化（useCallback/useMemo + 稳定签名），memo 才能真正生效，
 // 从而消除会话列表的鬼畜/上下乱跳/乱闪（根治抖动的最后一环）。
 const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
-  projects, selectedProjectId, sessions, sessionsByProject, sessionsLoading, expandedProjects, activeSessionId, runningSessionKeys, runningStartOrder, openTabSessions, draftSessions,
+  projects, selectedProjectId, sessions, sessionsByProject, sessionsLoading, expandedProjects, activeSessionId, runningSessionKeys, runningStartOrder,
+  openTabSessionsByProjectId, draftSessionsByProjectId, runningCountByProjectId,
   onToggleProject, onOpenSession,
   onNewSession, onNewSessionInProject, onRefreshProject, onOpenInExplorer, onCopyText, onDuplicateSession, onExportSession,
   sessionTitles, onRenameSession, sessionOrder, onReorderSessions, onReorderProjects,
@@ -1131,12 +1144,6 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
     const norm = p.path.replace(/\\/g, '/').replace(/\/+$/, '');
     return norm.split('/').pop() || norm;
   };
-
-  // 标签页会话与项目的归一化路径匹配：project_id 在虚拟项目/大小写差异下可能对不上，
-  // 故同时以归一化路径作为回退匹配键，确保新会话落到正确项目。
-  const normPath = (p?: string) => (p ? p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() : '');
-  const tabSessionBelongsTo = (s: Session, project: Project) =>
-    sessionBelongsToWorkbenchProject(s, project);
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto py-2 px-1">
@@ -1169,14 +1176,11 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
         // 实时合并该项目下"已在标签页打开但尚未落盘/尚未刷新"的会话，
         // 使新建会话拿到 sessionId 后立刻出现在树里，无需等 AI 完成事件。
         const diskIds = new Set(diskSessions.map((s) => s.id));
-        const pendingTabSessions = openTabSessions.filter(
-          (s) => tabSessionBelongsTo(s, project) && !diskIds.has(s.id),
-        );
+        const indexedOpenTabSessions = openTabSessionsByProjectId.get(project.id) ?? [];
+        const pendingTabSessions = indexedOpenTabSessions.filter((s) => !diskIds.has(s.id));
         // 该项目的草稿会话：转成 Session 形态混进列表（置顶），用 is_draft 标记走红色渲染。
         // first_message 用草稿正文首行预览；点击时据 is_draft 走「恢复草稿」入口。
-        const projectDrafts: Session[] = draftSessions
-          .filter((d) => d.project_id === project.id
-            || (!!d.project_path && normPath(d.project_path) === normPath(project.path)))
+        const projectDrafts: Session[] = (draftSessionsByProjectId.get(project.id) ?? [])
           .map((d) => ({
             id: d.id,
             project_id: project.id,
@@ -1235,11 +1239,8 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
         const hiddenSessionCount = Math.max(projectSessions.length - visible.length, 0);
         const nextSessionBatchCount = Math.min(EXPANDED_SESSION_BATCH_SIZE, hiddenSessionCount);
 
-        // 该项目下运行中的会话数：取所有已打开标签会话中归属本项目、且处于 streaming 的。
-        // 用 openTabSessions（不依赖项目是否展开/缓存是否命中），保证未展开项目也能显示运行标识。
-        const runningCount = openTabSessions.filter(
-          (s) => tabSessionBelongsTo(s, project) && isWorkbenchSessionRunning(s, runningSessionKeys),
-        ).length;
+        // 该项目下运行中的会话数：来自父层线性预索引，不在每个项目行里重复扫描 openTabSessions。
+        const runningCount = runningCountByProjectId.get(project.id) ?? 0;
         const hasRunning = runningCount > 0;
 
         return (
