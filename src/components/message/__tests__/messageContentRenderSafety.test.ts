@@ -100,7 +100,7 @@ describe('message render safety wiring', () => {
     expect(thinkingBlockSource).not.toContain('useTypewriter(');
     expect(thinkingBlockSource).not.toContain('transition-all');
     expect(thinkingBlockSource).not.toContain('max-h-[500px]');
-    expect(thinkingBlockSource).not.toContain('setTimeout(() =>');
+    expect(thinkingBlockSource).toContain('autoCollapseTimerRef');
   });
 
   test('message scroll container does not blanket-disable loader animations', () => {

@@ -11,7 +11,7 @@ interface ThinkingBlockProps {
   content: string;
   /** 是否正在流式输出 */
   isStreaming?: boolean;
-  /** 保留兼容旧调用；Linux/WebKitGTK 下不再做流式结束后的定时自动收起 */
+  /** 流式结束后自动收起延迟 */
   autoCollapseDelay?: number;
   /** 保留兼容旧调用；思考内容不再逐字符打字，避免每帧重渲染 */
   typewriterSpeed?: number;
@@ -23,22 +23,26 @@ interface ThinkingBlockProps {
  * 功能：
  * - 流式思考内容直接显示当前文本，避免逐字符 setState 造成 Linux/WebKitGTK 卡顿
  * - 默认展开状态
- * - 历史消息默认收起；刚结束的流式思考保持原高度，避免虚拟列表高度骤缩导致底部弹跳
+ * - 历史消息默认收起；流式思考结束后延迟自动收起
  * - 支持手动展开/收起
  */
 export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
   content,
   isStreaming = false,
+  autoCollapseDelay = 2500,
 }) => {
   const rootRef = useRef<HTMLDivElement>(null);
   // 历史消息首帧就保持收起，避免先按展开态测出大行高，再折叠后留下虚拟列表旧高度空白。
   // 正在流式输出的 thinking 仍然默认展开。
   const [isOpen, setIsOpen] = useState(isStreaming);
 
-  // 历史消息只在首次挂载时默认收起；正在 streaming 的消息结束后不再定时收起，
-  // 避免 max-height/高度骤缩触发虚拟列表 ResizeObserver 风暴和底部上弹。
+  // 历史消息只在首次挂载时默认收起；流式消息结束后只自动收起一次。
+  // v5.29.64 已让 layout-change 后把真实 DOM 高度 resizeItem 回 TanStack cache，
+  // 因此恢复延迟自动收起不会再留下虚拟高度空白。
   const hasInitializedHistoricalCollapseRef = useRef(false);
   const hasEverStreamedRef = useRef(isStreaming);
+  const hasAutoCollapsedAfterStreamingRef = useRef(false);
+  const autoCollapseTimerRef = useRef<number | null>(null);
 
   // 是否用户手动操作过（手动操作后不再自动收起）
   const userInteractedRef = useRef(false);
@@ -69,6 +73,13 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
         }),
       );
     });
+  };
+
+  const clearAutoCollapseTimer = () => {
+    if (autoCollapseTimerRef.current !== null) {
+      window.clearTimeout(autoCollapseTimerRef.current);
+      autoCollapseTimerRef.current = null;
+    }
   };
   
   // 处理分割符：将 ---divider--- 替换为可视化的分割线组件
@@ -106,19 +117,20 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
     ));
   };
 
-  // 历史消息默认收起；流式消息结束后保持展开，防止底部被高度收缩“弹上去”。
+  // 历史消息默认收起；流式消息结束后按 autoCollapseDelay 延迟自动收起。
   useEffect(() => {
     if (isStreaming) {
       hasEverStreamedRef.current = true;
+      clearAutoCollapseTimer();
       return;
     }
 
-    if (
-      content &&
-      !hasEverStreamedRef.current &&
-      !userInteractedRef.current &&
-      !hasInitializedHistoricalCollapseRef.current
-    ) {
+    if (!content || userInteractedRef.current) {
+      clearAutoCollapseTimer();
+      return;
+    }
+
+    if (!hasEverStreamedRef.current && !hasInitializedHistoricalCollapseRef.current) {
       setIsOpen((prev) => {
         if (prev) {
           notifyLayoutChanged('thinking-block-auto-collapse');
@@ -126,11 +138,36 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
         return false;
       });
       hasInitializedHistoricalCollapseRef.current = true;
+      clearAutoCollapseTimer();
+      return;
     }
-  }, [isStreaming, content]);
+
+    if (hasEverStreamedRef.current && !hasAutoCollapsedAfterStreamingRef.current) {
+      clearAutoCollapseTimer();
+      autoCollapseTimerRef.current = window.setTimeout(() => {
+        autoCollapseTimerRef.current = null;
+        if (userInteractedRef.current) return;
+
+        hasAutoCollapsedAfterStreamingRef.current = true;
+        setIsOpen((prev) => {
+          if (prev) {
+            notifyLayoutChanged('thinking-block-auto-collapse');
+          }
+          return false;
+        });
+      }, Math.max(0, autoCollapseDelay));
+    }
+
+    return clearAutoCollapseTimer;
+  }, [isStreaming, content, autoCollapseDelay]);
+
+  useEffect(() => {
+    return clearAutoCollapseTimer;
+  }, []);
 
   // 用户点击切换展开/收起
   const handleToggle = () => {
+    clearAutoCollapseTimer();
     userInteractedRef.current = true;
     setIsOpen(prev => !prev);
     notifyLayoutChanged('thinking-block-toggle');

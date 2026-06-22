@@ -98,6 +98,15 @@ describe('session message virtualization safety', () => {
     expect(sessionMessagesSource).toContain('rowVirtualizer.measure()');
   });
 
+  test('streamed thinking rows schedule one delayed auto-collapse after streaming ends', () => {
+    expect(thinkingBlockSource).toContain('autoCollapseDelay = 2500');
+    expect(thinkingBlockSource).toContain('autoCollapseTimerRef');
+    expect(thinkingBlockSource).toContain('hasAutoCollapsedAfterStreamingRef');
+    expect(thinkingBlockSource).toContain('window.setTimeout');
+    expect(thinkingBlockSource).toContain('clearAutoCollapseTimer');
+    expect(thinkingBlockSource).toContain("notifyLayoutChanged('thinking-block-auto-collapse')");
+  });
+
   test('layout remeasure writes visible DOM heights back into TanStack item cache', () => {
     expect(sessionMessagesSource).toContain('pendingRemeasureItemIndexesRef');
     expect(sessionMessagesSource).toContain('measureVisibleRowsIntoVirtualizer');
