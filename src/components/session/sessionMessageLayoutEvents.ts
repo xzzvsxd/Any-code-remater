@@ -8,5 +8,5 @@ export type SessionMessageLayoutChangedReason =
 export interface SessionMessageLayoutChangedDetail {
   reason: SessionMessageLayoutChangedReason;
   itemKey?: string;
+  itemIndex?: number;
 }
-

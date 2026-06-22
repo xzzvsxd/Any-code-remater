@@ -7,6 +7,7 @@
 
 import { useMemo, useRef } from 'react';
 import type { ClaudeStreamMessage } from '@/types/claude';
+import { getRenderableAiContent } from '@/lib/aiMessageContent';
 
 /**
  * 过滤选项
@@ -102,10 +103,89 @@ const TOOLS_WITH_DEDICATED_WIDGETS = new Set([
   'grep',
 ]);
 
+const STREAM_MESSAGE_RENDERED_TYPES = new Set([
+  'user',
+  'assistant',
+  'system',
+  'result',
+  'summary',
+  'thinking',
+]);
+
 function shouldSkipToolResultForToolUse(toolUse: any): boolean {
   const toolName = typeof toolUse?.name === 'string' ? toolUse.name : '';
   const normalizedToolName = toolName.toLowerCase();
   return TOOLS_WITH_DEDICATED_WIDGETS.has(normalizedToolName) || toolName.startsWith('mcp__');
+}
+
+function messageHasExtractableContent(message: ClaudeStreamMessage): boolean {
+  const content = message.message?.content ?? (message as any).content;
+  if (typeof content === 'string') {
+    return content.trim().length > 0;
+  }
+  if (Array.isArray(content)) {
+    return content.some((item: any) => {
+      if (typeof item === 'string') return item.trim().length > 0;
+      if (!item || typeof item !== 'object') return false;
+      return (
+        (typeof item.text === 'string' && item.text.trim().length > 0) ||
+        (typeof item.content === 'string' && item.content.trim().length > 0) ||
+        (typeof item.message === 'string' && item.message.trim().length > 0)
+      );
+    });
+  }
+  if (content && typeof content === 'object') {
+    const record = content as Record<string, unknown>;
+    return (
+      (typeof record.text === 'string' && record.text.trim().length > 0) ||
+      (typeof record.content === 'string' && record.content.trim().length > 0) ||
+      (typeof record.message === 'string' && record.message.trim().length > 0)
+    );
+  }
+  return content != null;
+}
+
+function shouldRenderMessageAsNull(message: ClaudeStreamMessage): boolean {
+  const messageType = (message as any).type;
+
+  if (
+    messageType === 'tool_use' ||
+    messageType === 'queue-operation' ||
+    (message as any)._toolResultOnly === true
+  ) {
+    return true;
+  }
+
+  if (!STREAM_MESSAGE_RENDERED_TYPES.has(messageType)) {
+    return true;
+  }
+
+  if (messageType === 'assistant') {
+    const renderable = getRenderableAiContent(message);
+    return !renderable.text && !renderable.hasThinking && !renderable.hasToolCalls;
+  }
+
+  if (messageType === 'thinking') {
+    const content = (message as any).content;
+    return typeof content !== 'string' || content.trim().length === 0;
+  }
+
+  if (messageType === 'result') {
+    const isError = Boolean((message as any).is_error) || Boolean(message.subtype?.toLowerCase().includes('error'));
+    return !isError;
+  }
+
+  if (messageType === 'summary') {
+    const summary = (message as any).summary;
+    return typeof summary !== 'string' || summary.trim().length === 0;
+  }
+
+  if (messageType === 'system' && message.subtype !== 'init') {
+    const hasStatusContent = typeof (message as any).result === 'string' && (message as any).result.trim().length > 0;
+    return !hasStatusContent && !messageHasExtractableContent(message);
+  }
+
+  return false;
 }
 
 function rememberSkippableToolUses(message: ClaudeStreamMessage, skippableToolUseIds: Set<string>): void {
@@ -161,31 +241,37 @@ export interface DisplayableMessagesCache extends DisplayableFilterState {
 
 function hasVisibleUserContent(message: ClaudeStreamMessage, skippableToolUseIds: Set<string>): boolean {
   const msg = message.message;
-  if (!msg) return true;
+  void skippableToolUseIds;
+  if (!msg) return false;
+  const rawContent = msg.content as unknown;
 
   // 检查是否有空内容
-  if (!msg.content || (Array.isArray(msg.content) && msg.content.length === 0)) {
+  if (!rawContent || (Array.isArray(rawContent) && rawContent.length === 0)) {
     return false;
   }
 
-  if (!Array.isArray(msg.content)) {
-    return true;
+  if (!Array.isArray(rawContent)) {
+    return typeof rawContent === 'string' && rawContent.trim().length > 0;
   }
 
-  for (const content of msg.content) {
+  for (const content of rawContent) {
     // 如果有文本内容，保留消息
     if (content.type === 'text') {
+      const text = typeof content.text === 'string' ? content.text : content.content;
+      if (typeof text === 'string' && text.trim().length > 0) {
+        return true;
+      }
+      continue;
+    }
+
+    if (content.type === 'image' && (content.source || content.data)) {
       return true;
     }
 
-    // 工具结果只在「此前已看到」对应 tool_use 且该工具已有专用 Widget 时跳过。
-    // 旧实现对每个 tool_result 从当前位置回扫全部历史；长会话/大量工具输出会把过滤变成
-    // O(n * gap) 主线程长任务。这里随线性扫描维护已见 tool_use 索引，语义仍等价于“只看前文”。
+    // 工具结果由 MessagesProvider 提取进 ToolCallsGroup 渲染；UserMessage 本身不渲染
+    // tool_result-only 内容。让它进入虚拟列表只会留下一个有估算高度的空行。
     if (content.type === 'tool_result') {
-      const toolUseId = content.tool_use_id;
-      if (!toolUseId || !skippableToolUseIds.has(toolUseId)) {
-        return true;
-      }
+      continue;
     }
   }
 
@@ -203,14 +289,10 @@ function shouldDisplayMessageAtIndex(
   const message = messages[index];
   let shouldDisplay = true;
 
-  // 这些消息类型在 StreamMessageV2 中会直接 return null。
+  // 这些消息在 StreamMessageV2 / 子消息组件中会直接 return null。
   // 如果让它们进入虚拟列表，行本身仍会保留估算高度，表现为对话中“莫名空白”。
   // 因此必须在 displayable 阶段过滤掉，而不是等渲染阶段再返回 null。
-  if (
-    message.type === 'tool_use' ||
-    message.type === 'queue-operation' ||
-    (message as any)._toolResultOnly === true
-  ) {
+  if (shouldRenderMessageAsNull(message)) {
     shouldDisplay = false;
   }
 
@@ -230,7 +312,7 @@ function shouldDisplayMessageAtIndex(
   }
 
   // 规则 2 & 3：处理用户消息
-  if (shouldDisplay && message.type === 'user' && message.message) {
+  if (shouldDisplay && message.type === 'user') {
     // 跳过元消息标记的用户消息
     if (message.isMeta) {
       shouldDisplay = false;

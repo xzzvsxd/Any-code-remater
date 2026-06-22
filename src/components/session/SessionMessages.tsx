@@ -102,6 +102,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
   const promptScrollSearchTokenRef = useRef(0);
   const virtualizerRemeasureRafRef = useRef<number>(0);
   const pendingRemeasureItemKeysRef = useRef<Set<string>>(new Set());
+  const pendingRemeasureItemIndexesRef = useRef<Set<number>>(new Set());
   const pendingFullRemeasureRef = useRef(false);
   const cancelBottomScrollLoop = () => {
     if (bottomScrollRafRef.current) {
@@ -136,6 +137,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       virtualizerRemeasureRafRef.current = 0;
     }
     pendingRemeasureItemKeysRef.current.clear();
+    pendingRemeasureItemIndexesRef.current.clear();
     pendingFullRemeasureRef.current = false;
   };
 
@@ -214,23 +216,61 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
     });
   };
 
+  const measureVisibleRowsIntoVirtualizer = useCallback((options: {
+    all: boolean;
+    itemKeys: Set<string>;
+    itemIndexes: Set<number>;
+  }) => {
+    const scrollElement = parentRef.current;
+    if (!scrollElement) return;
+
+    const rowElements = scrollElement.querySelectorAll<HTMLElement>('[data-index][data-item-key]');
+    rowElements.forEach((rowElement) => {
+      const itemKey = rowElement.getAttribute('data-item-key') ?? undefined;
+      const itemIndex = Number(rowElement.getAttribute('data-index'));
+      if (!Number.isFinite(itemIndex)) return;
+
+      const shouldMeasure =
+        options.all ||
+        options.itemIndexes.has(itemIndex) ||
+        (itemKey ? options.itemKeys.has(itemKey) : false);
+      if (!shouldMeasure) return;
+
+      const rawHeight = rowElement.getBoundingClientRect().height;
+      if (rawHeight <= 0) return;
+
+      if (itemKey) {
+        measuredHeightsRef.current.set(itemKey, rawHeight);
+      }
+      rowVirtualizer.resizeItem(itemIndex, rawHeight);
+    });
+  }, [parentRef, rowVirtualizer]);
+
   /**
    * 子组件折叠/展开（尤其 ThinkingBlock）会让行高从几百 px 变成几十 px。
-   * TanStack Virtual 的 ResizeObserver 在 WebKitGTK/Tauri 下偶尔不会及时让
-   * estimateSize 里的 measuredHeightsRef 失效，于是旧高度继续撑开 totalSize，
-   * 表现就是 Thinking 折叠条后面、或会话结束后底部出现一大段空白。
+   * TanStack Virtual 的 `measure()` 只会清空内部 itemSizeCache 并 notify，
+   * 不会立刻读 DOM；如果 ResizeObserver 没再触发，就会继续按估算高度撑出空白。
    *
    * 这里把“明确会改变布局高度”的事件合并进一个 rAF：
-   * - 有 itemKey：只删这一行的真实高度缓存，避免大会话全量抖动；
-   * - 没有 itemKey：清空缓存做一次兜底重测；
-   * - 最后调用 rowVirtualizer.measure()，让虚拟列表重新计算 totalSize/start。
+   * - 有 itemKey/itemIndex：只处理这一行，避免大会话全量抖动；
+   * - 没有定位信息：清空缓存做兜底重测；
+   * - 先 rowVirtualizer.measure() 清 TanStack 内部缓存；
+   * - 再把当前可见 DOM 的真实高度用 resizeItem(index, height) 写回内部 item cache。
    */
   const scheduleVirtualizerRemeasure = useCallback((detail?: SessionMessageLayoutChangedDetail) => {
     const itemKey = detail?.itemKey;
+    const itemIndex =
+      typeof detail?.itemIndex === 'number' && Number.isFinite(detail.itemIndex)
+        ? detail.itemIndex
+        : undefined;
 
     if (itemKey) {
       pendingRemeasureItemKeysRef.current.add(itemKey);
-    } else {
+    }
+    if (itemIndex !== undefined) {
+      pendingRemeasureItemIndexesRef.current.add(itemIndex);
+    }
+    if (!itemKey && itemIndex === undefined) {
       pendingFullRemeasureRef.current = true;
     }
 
@@ -238,20 +278,29 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
 
     virtualizerRemeasureRafRef.current = requestAnimationFrame(() => {
       virtualizerRemeasureRafRef.current = 0;
+      const shouldMeasureAllVisible = pendingFullRemeasureRef.current;
+      const targetItemKeys = new Set(pendingRemeasureItemKeysRef.current);
+      const targetItemIndexes = new Set(pendingRemeasureItemIndexesRef.current);
 
-      if (pendingFullRemeasureRef.current) {
+      if (shouldMeasureAllVisible) {
         measuredHeightsRef.current.clear();
       } else {
-        pendingRemeasureItemKeysRef.current.forEach((itemKey) => {
+        targetItemKeys.forEach((itemKey) => {
           measuredHeightsRef.current.delete(itemKey);
         });
       }
 
       pendingFullRemeasureRef.current = false;
       pendingRemeasureItemKeysRef.current.clear();
+      pendingRemeasureItemIndexesRef.current.clear();
       rowVirtualizer.measure();
+      measureVisibleRowsIntoVirtualizer({
+        all: shouldMeasureAllVisible,
+        itemKeys: targetItemKeys,
+        itemIndexes: targetItemIndexes,
+      });
     });
-  }, [rowVirtualizer]);
+  }, [measureVisibleRowsIntoVirtualizer, rowVirtualizer]);
 
   // 切换会话时清空高度缓存：不同会话的消息 key 可能因 index 复用而碰撞，
   // 旧高度会污染新会话首屏布局。会话切换不频繁，清空成本可忽略。

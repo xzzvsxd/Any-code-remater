@@ -88,6 +88,7 @@ describe('session message virtualization safety', () => {
   test('collapsed thinking rows invalidate stale virtual height cache and remeasure the list', () => {
     expect(thinkingBlockSource).toContain('SESSION_MESSAGE_LAYOUT_CHANGED_EVENT');
     expect(thinkingBlockSource).toContain("closest('[data-item-key]')");
+    expect(thinkingBlockSource).toContain("getAttribute('data-index')");
     expect(thinkingBlockSource).toContain("notifyLayoutChanged('thinking-block-toggle')");
     expect(thinkingBlockSource).toContain("notifyLayoutChanged('thinking-block-auto-collapse')");
 
@@ -95,6 +96,13 @@ describe('session message virtualization safety', () => {
     expect(sessionMessagesSource).toContain('scheduleVirtualizerRemeasure');
     expect(sessionMessagesSource).toContain('measuredHeightsRef.current.delete(itemKey)');
     expect(sessionMessagesSource).toContain('rowVirtualizer.measure()');
+  });
+
+  test('layout remeasure writes visible DOM heights back into TanStack item cache', () => {
+    expect(sessionMessagesSource).toContain('pendingRemeasureItemIndexesRef');
+    expect(sessionMessagesSource).toContain('measureVisibleRowsIntoVirtualizer');
+    expect(sessionMessagesSource).toContain("querySelectorAll<HTMLElement>('[data-index][data-item-key]')");
+    expect(sessionMessagesSource).toContain('rowVirtualizer.resizeItem(itemIndex, rawHeight)');
   });
 
   test('streaming completion remeasures rows so finished sessions do not keep bottom whitespace', () => {

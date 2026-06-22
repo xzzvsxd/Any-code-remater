@@ -49,10 +49,14 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
   const notifyLayoutChanged = (reason: SessionMessageLayoutChangedReason) => {
     if (typeof window === 'undefined') return;
 
+    const rowElement = rootRef.current?.closest('[data-item-key]');
     const itemKey =
-      rootRef.current
-        ?.closest('[data-item-key]')
-        ?.getAttribute('data-item-key') ?? undefined;
+      rowElement?.getAttribute('data-item-key') ?? undefined;
+    const itemIndexRaw = rowElement?.getAttribute('data-index');
+    const itemIndex =
+      itemIndexRaw != null && itemIndexRaw.trim() !== ''
+        ? Number(itemIndexRaw)
+        : undefined;
 
     window.requestAnimationFrame(() => {
       window.dispatchEvent(
@@ -60,6 +64,7 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
           detail: {
             reason,
             itemKey,
+            itemIndex: Number.isFinite(itemIndex) ? itemIndex : undefined,
           },
         }),
       );

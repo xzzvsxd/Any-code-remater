@@ -14,6 +14,48 @@ const assistantText = (text: string) => ({
   message: { role: 'assistant', content: [{ type: 'text', text }] },
 });
 
+const emptyAssistant = {
+  type: 'assistant',
+  message: { role: 'assistant', content: [] },
+};
+
+const assistantThinking = {
+  type: 'assistant',
+  message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'checking' }] },
+};
+
+const emptyTopLevelThinking = {
+  type: 'thinking',
+  content: '',
+};
+
+const topLevelThinking = {
+  type: 'thinking',
+  content: 'checking',
+};
+
+const emptyUserWithoutMessage = {
+  type: 'user',
+};
+
+const userImageOnly = {
+  type: 'user',
+  message: {
+    role: 'user',
+    content: [
+      {
+        type: 'image',
+        source: { type: 'base64', data: 'abc', media_type: 'image/png' },
+      },
+    ],
+  },
+};
+
+const unsupportedMessageType = {
+  type: 'debug-event',
+  content: 'not rendered by StreamMessageV2',
+};
+
 const toolResult = (id: string) => ({
   type: 'user',
   message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] },
@@ -37,6 +79,22 @@ const queueOperation = {
   content: 'queued',
 };
 
+const successResult = {
+  type: 'result',
+  result: 'ok',
+};
+
+const errorResult = {
+  type: 'result',
+  is_error: true,
+  result: 'failed',
+};
+
+const emptySummary = {
+  type: 'summary',
+  summary: '',
+};
+
 const systemInit = {
   type: 'system',
   subtype: 'init',
@@ -50,10 +108,10 @@ describe('displayable message filtering render safety', () => {
     expect(filterDisplayableMessages(messages as any)).toEqual([messages[0], messages[1]]);
   });
 
-  test('does not let future tool_use messages hide earlier tool results', () => {
+  test('hides tool-result-only user rows even when matching tool_use appears later', () => {
     const messages = [toolResult('future-tool'), toolUse('future-tool', 'bash')];
 
-    expect(filterDisplayableMessages(messages as any)).toEqual(messages);
+    expect(filterDisplayableMessages(messages as any)).toEqual([messages[1]]);
   });
 
   test('filters messages that render null before they enter virtualized rows', () => {
@@ -62,10 +120,26 @@ describe('displayable message filtering render safety', () => {
       topLevelToolUse('standalone-tool'),
       queueOperation,
       toolResultOnly('standalone-tool'),
+      emptyAssistant,
+      successResult,
+      emptySummary,
+      emptyTopLevelThinking,
+      emptyUserWithoutMessage,
+      unsupportedMessageType,
       visible,
+      assistantThinking,
+      topLevelThinking,
+      userImageOnly,
+      errorResult,
     ];
 
-    expect(filterDisplayableMessages(messages as any)).toEqual([visible]);
+    expect(filterDisplayableMessages(messages as any)).toEqual([
+      visible,
+      assistantThinking,
+      topLevelThinking,
+      userImageOnly,
+      errorResult,
+    ]);
   });
 
   test('source does not do per-tool-result backward scans through message history', async () => {
@@ -96,7 +170,7 @@ describe('displayable message filtering render safety', () => {
     expect(updated.displayableMessages[1]).toBe(replacementAssistant);
   });
 
-  test('tail replacement uses tool_use state before the old tail message', () => {
+  test('tail replacement removes tool-result-only rows that would render blank', () => {
     const oldTailToolUse = toolUse('future-tool', 'bash');
     const initial = updateDisplayableMessagesCache(null, [oldTailToolUse] as any);
 
@@ -104,6 +178,6 @@ describe('displayable message filtering render safety', () => {
     const updated = updateDisplayableMessagesCache(initial, [replacementToolResult] as any);
 
     expect(updated).toBe(initial);
-    expect(updated.displayableMessages).toEqual([replacementToolResult]);
+    expect(updated.displayableMessages).toEqual([]);
   });
 });
