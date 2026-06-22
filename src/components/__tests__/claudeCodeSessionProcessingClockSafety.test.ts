@@ -30,25 +30,31 @@ describe('processing clock render isolation', () => {
     expect(claudeCodeSessionSource).not.toContain('[messages.length, isLoading]');
   });
 
-  test('CLI processing indicator derives live time from stable timestamps locally', () => {
+  test('CLI processing indicator receives timestamps but does not run a text refresh clock', () => {
     expect(cliProcessingIndicatorSource).toContain('startedAt?: number | null');
     expect(cliProcessingIndicatorSource).toContain('lastOutputAt?: number | null');
-    expect(cliProcessingIndicatorSource).toContain('liveElapsedSeconds');
-    expect(cliProcessingIndicatorSource).toContain('liveIdleSeconds');
+    expect(cliProcessingIndicatorSource).toContain('elapsedSeconds?: number');
+    expect(cliProcessingIndicatorSource).toContain('idleSeconds?: number');
   });
 
-  test('CLI processing indicator uses one low-frequency clock and no text animation intervals', () => {
-    expect(cliProcessingIndicatorSource).toContain('setClockTick');
-    expect(cliProcessingIndicatorSource).toContain('}, 2000);');
+  test('CLI processing indicator has no React interval-driven status text churn', () => {
+    expect(cliProcessingIndicatorSource).not.toContain('setClockTick');
+    expect(cliProcessingIndicatorSource).not.toContain('setInterval');
     expect(cliProcessingIndicatorSource).not.toContain('dotInterval');
     expect(cliProcessingIndicatorSource).not.toContain('verbInterval');
     expect(cliProcessingIndicatorSource).not.toContain('setVerbIndex');
+    expect(cliProcessingIndicatorSource).toContain('cli-processing-spark');
+    expect(cliProcessingIndicatorSource).toContain('cli-processing-progress');
   });
 
-  test('floating prompt status copy owns its own lightweight clock', () => {
+  test('floating prompt status copy does not own a React timer but keeps loader animation', () => {
     expect(floatingPromptInputSource).toContain('const ProcessingStatusCopy');
-    expect(floatingPromptInputSource).toContain('setClockTick');
-    expect(floatingPromptInputSource).toContain('}, 2000);');
+    const statusCopyBody = floatingPromptInputSource.slice(
+      floatingPromptInputSource.indexOf('const ProcessingStatusCopy'),
+      floatingPromptInputSource.indexOf('const NOOP_CANCEL_HANDLER'),
+    );
+    expect(statusCopyBody).not.toContain('setClockTick');
+    expect(statusCopyBody).not.toContain('setInterval');
     expect(floatingPromptInputSource).toContain('executionStatus.lastOutputAt');
     expect(floatingPromptInputSource).toContain('animate-spin text-amber-500');
   });

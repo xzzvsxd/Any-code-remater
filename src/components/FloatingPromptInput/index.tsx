@@ -38,15 +38,6 @@ export type { FloatingPromptInputRef, FloatingPromptInputProps, ThinkingMode, Mo
 
 const ProcessingStatusCopy: React.FC<{ executionStatus?: ExecutionStatusInfo }> = ({ executionStatus }) => {
   const { t } = useTranslation();
-  const [, setClockTick] = useState(0);
-
-  useEffect(() => {
-    if (!executionStatus?.isRunning) return;
-    const timer = window.setInterval(() => {
-      setClockTick((tick) => (tick + 1) % 1_000_000);
-    }, 2000);
-    return () => window.clearInterval(timer);
-  }, [executionStatus?.isRunning]);
 
   if (!executionStatus) {
     return (
@@ -61,18 +52,13 @@ const ProcessingStatusCopy: React.FC<{ executionStatus?: ExecutionStatusInfo }> 
     );
   }
 
-  const now = Date.now();
-  const startedAt = executionStatus.startedAt ?? now;
-  const outputAt = executionStatus.lastOutputAt ?? startedAt;
-  const elapsedSeconds = executionStatus.isRunning
-    ? Math.max(0, Math.floor((now - startedAt) / 1000))
-    : executionStatus.elapsedSeconds;
-  const idleSeconds = executionStatus.isRunning
-    ? Math.max(0, Math.floor((now - outputAt) / 1000))
-    : executionStatus.idleSeconds;
+  const hasOutputTimestamp = Boolean(executionStatus.lastOutputAt);
+  const idleSeconds = hasOutputTimestamp
+    ? Math.max(0, Math.floor(executionStatus.idleSeconds))
+    : 0;
   const statusLabel = executionStatus.isCancelling
     ? `正在取消当前 ${executionStatus.engineName} 会话...`
-    : `${executionStatus.engineName} 正在执行 · 已运行 ${formatDuration(elapsedSeconds)}`;
+    : `${executionStatus.engineName} 正在执行`;
   const statusHint = idleSeconds >= 60
     ? `已 ${formatDuration(idleSeconds)} 无新输出，可能仍在后台执行。完成后会弹出提醒。`
     : executionStatus.canCancel

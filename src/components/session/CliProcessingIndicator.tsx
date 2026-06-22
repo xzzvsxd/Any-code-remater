@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 interface CliProcessingIndicatorProps {
@@ -33,36 +33,17 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
   isProcessing,
   onCancel,
   engineName = "AI",
-  startedAt,
-  lastOutputAt,
-  elapsedSeconds = 0,
   idleSeconds = 0,
   canCancel = true,
   isCancelling = false,
 }) => {
   const { t } = useTranslation();
-  const [clockTick, setClockTick] = useState(0);
 
   // 随机选择初始动词
   const initialVerbIndex = useMemo(() =>
     Math.floor(Math.random() * PROCESSING_VERBS.length),
     []
   );
-
-  // 单一低频时钟：只刷新 elapsed/idle 文案；处理词和省略号保持静态。
-  // 视觉反馈交给 CSS opacity/transform 动画，避免 React 文本 churn。
-  useEffect(() => {
-    if (!isProcessing) {
-      setClockTick(0);
-      return;
-    }
-
-    const interval = setInterval(() => {
-      setClockTick((prev) => (prev + 1) % Number.MAX_SAFE_INTEGER);
-    }, 2000);
-
-    return () => clearInterval(interval);
-  }, [isProcessing]);
 
   // 监听 Escape 键取消
   useEffect(() => {
@@ -81,22 +62,15 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
 
   const currentVerb = PROCESSING_VERBS[initialVerbIndex];
   const paddedDots = "...";
-  const now = Date.now() + clockTick * 0;
-  const liveElapsedSeconds = isProcessing && startedAt
-    ? Math.max(0, Math.floor((now - startedAt) / 1000))
-    : elapsedSeconds;
-  const outputAt = lastOutputAt ?? startedAt;
-  const liveIdleSeconds = isProcessing && outputAt
-    ? Math.max(0, Math.floor((now - outputAt) / 1000))
-    : idleSeconds;
   const formatElapsed = (seconds: number) => {
     const safeSeconds = Math.max(0, Math.floor(seconds));
     const minutes = Math.floor(safeSeconds / 60);
     const remainingSeconds = safeSeconds % 60;
     return `${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
   };
-  const idleNotice = liveIdleSeconds >= 60
-    ? `长时间无新输出（${formatElapsed(liveIdleSeconds)}），${engineName} 可能仍在后台执行`
+  const stableIdleSeconds = Math.max(0, Math.floor(idleSeconds));
+  const idleNotice = stableIdleSeconds >= 60
+    ? `长时间无新输出（${formatElapsed(stableIdleSeconds)}），${engineName} 可能仍在后台执行`
     : null;
 
   if (!isProcessing) return null;
@@ -122,7 +96,7 @@ export const CliProcessingIndicator: React.FC<CliProcessingIndicatorProps> = ({
         {/* 提示信息 */}
         <span className="text-muted-foreground/60 text-xs">
           (
-          <span className="font-mono">已运行 {formatElapsed(liveElapsedSeconds)}</span>
+          <span>{t('cliIndicator.running', '运行中')}</span>
           <span className="mx-1">·</span>
           {onCancel && canCancel && !isCancelling && (
             <button

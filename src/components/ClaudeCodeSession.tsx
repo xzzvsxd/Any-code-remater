@@ -408,7 +408,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     const canCancel = Boolean(cancelSessionId);
     const statusLabel = isCancellingExecution
       ? `正在取消当前 ${engineName} 会话...`
-      : `${engineName} 正在执行 · 已运行 ${formatDuration(elapsedSeconds)}`;
+      : `${engineName} 正在执行`;
     const statusHint = idleSeconds >= 60
       ? `已 ${formatDuration(idleSeconds)} 无新输出，可能仍在后台执行。完成后会弹出提醒。`
       : canCancel
