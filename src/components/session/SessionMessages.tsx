@@ -670,6 +670,17 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
     }
   }));
 
+  const virtualItems = rowVirtualizer.getVirtualItems();
+  const firstVirtualItem = virtualItems[0];
+  const lastVirtualItem = virtualItems[virtualItems.length - 1];
+  const virtualTotalSize = Math.max(rowVirtualizer.getTotalSize(), 100);
+  const virtualPaddingTop = firstVirtualItem
+    ? Math.max(0, firstVirtualItem.start)
+    : 0;
+  const virtualPaddingBottom = lastVirtualItem
+    ? Math.max(0, virtualTotalSize - lastVirtualItem.end)
+    : 0;
+
   return (
     // ✅ 重构布局: 移除固定 paddingBottom，因为输入框不再使用 fixed 定位
     // 消息区域现在是 Flex 容器的一部分，自然与输入区域分离
@@ -692,11 +703,21 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
         <div
           className="relative w-full max-w-5xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-[85%] mx-auto px-4"
           style={{
-            height: `${Math.max(rowVirtualizer.getTotalSize(), 100)}px`,
             minHeight: '100px',
           }}
         >
-          {rowVirtualizer.getVirtualItems().map((virtualItem) => {
+          {virtualPaddingTop > 0 && (
+            <div
+              data-virtual-padding="top"
+              aria-hidden="true"
+              style={{
+                height: `${virtualPaddingTop}px`,
+                flexShrink: 0,
+              }}
+            />
+          )}
+
+          {virtualItems.map((virtualItem) => {
             const messageGroup = messageGroups[virtualItem.index];
 
             // 防御性检查：确保 messageGroup 存在
@@ -743,10 +764,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
                   itemKey={virtualItem.key}
                   measurementKey={measurementKey}
                   measureElement={rowVirtualizer.measureElement}
-                  className="absolute inset-x-4 top-0"
-                  style={{
-                    transform: `translateY(${virtualItem.start}px)`,
-                  }}
+                  className="relative w-full"
                 >
                   {/* group 容器：hover 时在右上角显示分支按钮，不打断现有消息渲染 */}
                   <div className="relative group/msg">
@@ -794,6 +812,17 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
                 </MeasurableItem>
               );
             })}
+
+          {virtualPaddingBottom > 0 && (
+            <div
+              data-virtual-padding="bottom"
+              aria-hidden="true"
+              style={{
+                height: `${virtualPaddingBottom}px`,
+                flexShrink: 0,
+              }}
+            />
+          )}
         </div>
 
         {/* CLI风格的处理状态指示器 - 显示在消息列表底部 */}

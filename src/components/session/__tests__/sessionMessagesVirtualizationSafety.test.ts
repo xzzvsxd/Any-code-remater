@@ -49,8 +49,13 @@ describe('session message virtualization safety', () => {
     expect(sessionMessagesSource).toContain('useAnimationFrameWithResizeObserver: true');
   });
 
-  test('positions virtual rows with compositor-friendly transforms instead of top offsets', () => {
-    expect(sessionMessagesSource).toContain('transform: `translateY(${virtualItem.start}px)`');
+  test('positions virtual rows in normal document flow with spacers instead of overlapping absolute transforms', () => {
+    expect(sessionMessagesSource).toContain('const virtualPaddingTop');
+    expect(sessionMessagesSource).toContain('const virtualPaddingBottom');
+    expect(sessionMessagesSource).toContain('data-virtual-padding="top"');
+    expect(sessionMessagesSource).toContain('data-virtual-padding="bottom"');
+    expect(sessionMessagesSource).not.toContain('transform: `translateY(${virtualItem.start}px)`');
+    expect(sessionMessagesSource).not.toContain('className="absolute inset-x-4 top-0"');
     expect(sessionMessagesSource).not.toContain('top: virtualItem.start');
   });
 
