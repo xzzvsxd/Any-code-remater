@@ -103,6 +103,11 @@ const StreamMessageV2Component: React.FC<StreamMessageV2Props> = ({
         // 提取 assistant 消息的内容
         if (msg.message?.content && Array.isArray(msg.message.content)) {
           aggregatedContent.push(...msg.message.content);
+        } else if (typeof msg.message?.content === 'string') {
+          aggregatedContent.push({
+            type: 'text',
+            text: msg.message.content,
+          });
         }
         // 提取 thinking 消息的内容
         else if (msg.type === 'thinking') {

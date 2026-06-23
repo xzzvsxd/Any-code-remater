@@ -22,6 +22,22 @@ const rawTaggedThinking = (text: string): ClaudeStreamMessage => ({
   },
 });
 
+const standardThinking = (text: string): ClaudeStreamMessage => ({
+  type: 'assistant',
+  message: {
+    role: 'assistant',
+    content: [{ type: 'thinking', thinking: text }],
+  },
+});
+
+const assistantText = (text: string): ClaudeStreamMessage => ({
+  type: 'assistant',
+  message: {
+    role: 'assistant',
+    content: [{ type: 'text', text }],
+  },
+});
+
 describe('grouped messages render safety', () => {
   test('uses append-only grouping cache for common streaming updates', () => {
     expect(groupedMessagesSource).toContain('GroupedMessagesCache');
@@ -83,6 +99,77 @@ describe('grouped messages render safety', () => {
       type: 'aggregated',
       messages: [firstThinking, secondThinking],
       index: 0,
+    });
+  });
+
+  test('attaches thinking-only rows to the following assistant response turn', () => {
+    const thinking = standardThinking('先分析');
+    const answer = assistantText('然后回答');
+
+    const grouped = updateGroupedMessagesCache(null, [thinking, answer], {
+      enableSubagentGrouping: true,
+    });
+
+    expect(grouped.groups).toHaveLength(1);
+    expect(grouped.groups[0]).toMatchObject({
+      type: 'aggregated',
+      messages: [thinking, answer],
+      index: 0,
+    });
+  });
+
+  test('does not pile multiple thinking turns into the first assistant response', () => {
+    const firstThinking = standardThinking('第一轮思考');
+    const firstAnswer = assistantText('第一轮回答');
+    const secondThinking = standardThinking('第二轮思考');
+    const secondAnswer = assistantText('第二轮回答');
+
+    const grouped = updateGroupedMessagesCache(
+      null,
+      [firstThinking, firstAnswer, secondThinking, secondAnswer],
+      { enableSubagentGrouping: true },
+    );
+
+    expect(grouped.groups).toHaveLength(2);
+    expect(grouped.groups[0]).toMatchObject({
+      type: 'aggregated',
+      messages: [firstThinking, firstAnswer],
+      index: 0,
+    });
+    expect(grouped.groups[1]).toMatchObject({
+      type: 'aggregated',
+      messages: [secondThinking, secondAnswer],
+      index: 2,
+    });
+  });
+
+  test('does not attach pending thinking across a user boundary', () => {
+    const thinking = standardThinking('孤立思考');
+    const interruptingUser: ClaudeStreamMessage = {
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'text', text: '插入问题' }] },
+    };
+    const answer = assistantText('后续回答');
+
+    const grouped = updateGroupedMessagesCache(null, [thinking, interruptingUser, answer], {
+      enableSubagentGrouping: true,
+    });
+
+    expect(grouped.groups).toHaveLength(3);
+    expect(grouped.groups[0]).toMatchObject({
+      type: 'aggregated',
+      messages: [thinking],
+      index: 0,
+    });
+    expect(grouped.groups[1]).toMatchObject({
+      type: 'normal',
+      message: interruptingUser,
+      index: 1,
+    });
+    expect(grouped.groups[2]).toMatchObject({
+      type: 'normal',
+      message: answer,
+      index: 2,
     });
   });
 });

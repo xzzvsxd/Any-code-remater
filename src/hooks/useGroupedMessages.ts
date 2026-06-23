@@ -7,6 +7,7 @@
 import { useMemo, useRef } from 'react';
 import type { ClaudeStreamMessage } from '@/types/claude';
 import {
+  canAttachToPendingThinkingAggregation,
   getTechnicalMessageType,
   groupMessages,
   isSubagentMessage,
@@ -52,6 +53,20 @@ const appendNormalGroup = (
 
   const technicalType = getTechnicalMessageType(message);
   if (!technicalType) {
+    const lastGroup = groups[groups.length - 1];
+    if (
+      lastGroup?.type === 'aggregated' &&
+      canAttachToPendingThinkingAggregation(lastGroup.messages, message)
+    ) {
+      const nextGroups = groups.slice();
+      nextGroups[nextGroups.length - 1] = {
+        type: 'aggregated',
+        messages: lastGroup.messages.concat(message),
+        index: lastGroup.index,
+      };
+      return nextGroups;
+    }
+
     return groups.concat({
       type: 'normal' as const,
       message,
@@ -61,8 +76,11 @@ const appendNormalGroup = (
 
   const lastGroup = groups[groups.length - 1];
   if (lastGroup?.type === 'aggregated') {
-    const lastType = getTechnicalMessageType(lastGroup.messages[0]);
-    if (lastType === technicalType) {
+    const lastType = getTechnicalMessageType(lastGroup.messages[lastGroup.messages.length - 1]);
+    if (
+      lastType === technicalType ||
+      canAttachToPendingThinkingAggregation(lastGroup.messages, message)
+    ) {
       const nextGroups = groups.slice();
       nextGroups[nextGroups.length - 1] = {
         type: 'aggregated',

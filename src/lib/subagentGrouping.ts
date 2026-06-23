@@ -192,6 +192,17 @@ export function getTechnicalMessageType(message: ClaudeStreamMessage): 'tool' | 
   return null;
 }
 
+function isPendingThinkingAggregation(messages: ClaudeStreamMessage[]): boolean {
+  return messages.length > 0 && messages.every(message => getTechnicalMessageType(message) === 'thinking');
+}
+
+export function canAttachToPendingThinkingAggregation(
+  aggregationMessages: ClaudeStreamMessage[],
+  nextMessage: ClaudeStreamMessage,
+): boolean {
+  return nextMessage.type === 'assistant' && isPendingThinkingAggregation(aggregationMessages);
+}
+
 /**
  * 对消息列表进行分组
  *
@@ -337,6 +348,7 @@ export function groupMessages(messages: ClaudeStreamMessage[]): MessageGroup[] {
     messages: ClaudeStreamMessage[]; 
     startIndex: number;
     aggType: 'tool' | 'thinking'; // 记录当前聚合组的类型
+    canAttachAssistantTurn: boolean;
   } | null = null;
 
   for (const group of intermediateGroups) {
@@ -366,6 +378,12 @@ export function groupMessages(messages: ClaudeStreamMessage[]): MessageGroup[] {
           if (currentAggregation.aggType === msgType) {
             // 类型一致，合并
             currentAggregation.messages.push(msg);
+          } else if (currentAggregation.canAttachAssistantTurn && msg.type === 'assistant') {
+            // 同一个 assistant turn 可能被拆成 thinking-only 行后跟 tool_use/text 行。
+            // 这里把紧邻的 assistant 技术行归回 pending thinking，随后按新技术类型继续聚合。
+            currentAggregation.messages.push(msg);
+            currentAggregation.aggType = msgType;
+            currentAggregation.canAttachAssistantTurn = false;
           } else {
             // 类型不一致（例如 Thinking -> Tool），结算上一个聚合，开始新的聚合
             finalGroups.push({
@@ -376,7 +394,8 @@ export function groupMessages(messages: ClaudeStreamMessage[]): MessageGroup[] {
             currentAggregation = { 
               messages: [msg], 
               startIndex: group.index,
-              aggType: msgType 
+              aggType: msgType,
+              canAttachAssistantTurn: msgType === 'thinking',
             };
           }
         } else {
@@ -384,10 +403,26 @@ export function groupMessages(messages: ClaudeStreamMessage[]): MessageGroup[] {
           currentAggregation = { 
             messages: [msg], 
             startIndex: group.index,
-            aggType: msgType 
+            aggType: msgType,
+            canAttachAssistantTurn: msgType === 'thinking',
           };
         }
       } else {
+        // 如果 Claude/历史回放把同一个 assistant turn 拆成「thinking-only 行 + 正文行」，
+        // 正文行必须归回前面的 thinking，而不是把 thinking 作为独立气泡堆在上下文前后。
+        // 只允许“紧邻的 assistant 正文/混合内容”吸收 pending thinking；
+        // user/system/result/subagent 边界一律打断，避免跨轮次串味。
+        if (currentAggregation?.canAttachAssistantTurn && msg.type === 'assistant') {
+          currentAggregation.messages.push(msg);
+          finalGroups.push({
+            type: 'aggregated',
+            messages: currentAggregation.messages,
+            index: currentAggregation.startIndex
+          });
+          currentAggregation = null;
+          continue;
+        }
+
         // 不可聚合的消息（文本等），结算之前的聚合
         if (currentAggregation) {
           finalGroups.push({

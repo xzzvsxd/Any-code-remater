@@ -10,7 +10,7 @@ import { MessageActions } from "./MessageActions";
 import { cn } from "@/lib/utils";
 import { tokenExtractor } from "@/lib/tokenExtractor";
 import { formatTimestamp } from "@/lib/messageUtils";
-import { getRenderableAiContent } from "@/lib/aiMessageContent";
+import { getRenderableAiContentParts, summarizeRenderableAiContentParts } from "@/lib/aiMessageContent";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ClaudeStreamMessage } from '@/types/claude';
 
@@ -40,12 +40,13 @@ export const AIMessage: React.FC<AIMessageProps> = ({
   className,
   onLinkDetected
 }) => {
+  const contentParts = getRenderableAiContentParts(message);
   const {
     text,
     hasToolCalls: hasTools,
     hasThinking,
     thinkingContent,
-  } = getRenderableAiContent(message);
+  } = summarizeRenderableAiContentParts(contentParts);
 
   // Detect engine type for avatar styling
   const isCodexMessage = (message as any).engine === 'codex';
@@ -120,34 +121,43 @@ export const AIMessage: React.FC<AIMessageProps> = ({
 
             {/* Main Content */}
             <div className="space-y-3">
-              {text && (
-                <div className="prose prose-neutral dark:prose-invert max-w-none leading-relaxed text-[15px] break-words" style={{ overflowWrap: 'anywhere' }}>
-                  <MessageContent
-                    content={text}
-                    isStreaming={enableTypewriter && !hasTools && !hasThinking}
-                    enableTypewriter={enableTypewriter && !hasTools && !hasThinking}
-                  />
-                </div>
-              )}
+              {contentParts.map((part, index) => {
+                if (part.type === 'text') {
+                  return (
+                    <div
+                      key={`text-${index}`}
+                      className="prose prose-neutral dark:prose-invert max-w-none leading-relaxed text-[15px] break-words"
+                      style={{ overflowWrap: 'anywhere' }}
+                    >
+                      <MessageContent
+                        content={part.content}
+                        isStreaming={enableTypewriter && !hasTools && !hasThinking && contentParts.length === 1}
+                        enableTypewriter={enableTypewriter && !hasTools && !hasThinking && contentParts.length === 1}
+                      />
+                    </div>
+                  );
+                }
 
-              {/* Thinking Block */}
-              {hasThinking && thinkingContent && (
-                <ThinkingBlock
-                  content={thinkingContent}
-                  isStreaming={enableTypewriter}
-                  autoCollapseDelay={2500}
-                />
-              )}
+                if (part.type === 'thinking') {
+                  return (
+                    <ThinkingBlock
+                      key={`thinking-${index}`}
+                      content={part.content}
+                      isStreaming={enableTypewriter}
+                      autoCollapseDelay={2500}
+                    />
+                  );
+                }
 
-              {/* Tool Calls */}
-              {hasTools && (
-                <div className="mt-2">
-                  <ToolCallsGroup
-                    message={message}
-                    onLinkDetected={onLinkDetected}
-                  />
-                </div>
-              )}
+                return (
+                  <div key={`tools-${index}`} className="mt-2">
+                    <ToolCallsGroup
+                      message={message}
+                      onLinkDetected={onLinkDetected}
+                    />
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

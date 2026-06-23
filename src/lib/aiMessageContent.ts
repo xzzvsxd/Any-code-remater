@@ -14,12 +14,31 @@ export interface RenderableAiContent {
   hasToolCalls: boolean;
 }
 
+export type RenderableAiContentPart =
+  | { type: 'text'; content: string }
+  | { type: 'thinking'; content: string }
+  | { type: 'tools'; content: '' };
+
 const toText = (value: unknown): string => {
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
     return String(value);
   }
   return '';
+};
+
+const pushTextPart = (parts: RenderableAiContentPart[], value: string) => {
+  const text = value.trim();
+  if (text) {
+    parts.push({ type: 'text', content: text });
+  }
+};
+
+const pushThinkingPart = (parts: RenderableAiContentPart[], value: string) => {
+  const thinking = value.trim();
+  if (thinking) {
+    parts.push({ type: 'thinking', content: thinking });
+  }
 };
 
 /**
@@ -75,18 +94,55 @@ export function extractTaggedThinkingFromText(rawText: unknown): TaggedThinkingE
   };
 }
 
-export function getRenderableAiContent(message: ClaudeStreamMessage): RenderableAiContent {
+export function splitTaggedThinkingContent(rawText: unknown): RenderableAiContentPart[] {
+  const originalText = toText(rawText);
+  if (!originalText) {
+    return [];
+  }
+  if (!/<thinking>/i.test(originalText)) {
+    const text = originalText.trim();
+    return text ? [{ type: 'text', content: text }] : [];
+  }
+
+  const parts: RenderableAiContentPart[] = [];
+  const closedTagPattern = /<thinking>\s*([\s\S]*?)\s*<\/thinking>/gi;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = closedTagPattern.exec(originalText)) !== null) {
+    pushTextPart(parts, originalText.slice(cursor, match.index));
+    pushThinkingPart(parts, match[1]);
+    cursor = match.index + match[0].length;
+  }
+
+  const tail = originalText.slice(cursor);
+  const openOnlyMatch = /(^|\n)([ \t]*)<thinking>\s*/i.exec(tail);
+  if (openOnlyMatch?.index !== undefined) {
+    const tagStart = openOnlyMatch.index + openOnlyMatch[1].length;
+    const tagEnd = openOnlyMatch.index + openOnlyMatch[0].length;
+    pushTextPart(parts, tail.slice(0, tagStart));
+    pushThinkingPart(parts, tail.slice(tagEnd));
+  } else {
+    pushTextPart(parts, tail);
+  }
+
+  return parts;
+}
+
+export function getRenderableAiContentParts(message: ClaudeStreamMessage): RenderableAiContentPart[] {
   const content = message.message?.content;
-  const textParts: string[] = [];
-  const thinkingBlocks: string[] = [];
-  let hasToolCalls = false;
+  const parts: RenderableAiContentPart[] = [];
+  let emittedToolMarker = false;
 
   const addText = (value: unknown) => {
-    const extracted = extractTaggedThinkingFromText(value);
-    if (extracted.text) {
-      textParts.push(extracted.text);
+    parts.push(...splitTaggedThinkingContent(value));
+  };
+
+  const addToolMarker = () => {
+    if (!emittedToolMarker) {
+      parts.push({ type: 'tools', content: '' });
+      emittedToolMarker = true;
     }
-    thinkingBlocks.push(...extracted.thinkingBlocks);
   };
 
   if (typeof content === 'string') {
@@ -94,21 +150,31 @@ export function getRenderableAiContent(message: ClaudeStreamMessage): Renderable
   } else if (Array.isArray(content)) {
     content.forEach((item: any) => {
       if (!item || typeof item !== 'object') {
+        addText(item);
         return;
       }
 
       if (item.type === 'text') {
         addText(item.text ?? item.content);
       } else if (item.type === 'thinking') {
-        const thinking = toText(item.thinking ?? item.content).trim();
-        if (thinking) {
-          thinkingBlocks.push(thinking);
-        }
+        pushThinkingPart(parts, toText(item.thinking ?? item.content));
       } else if (item.type === 'tool_use') {
-        hasToolCalls = true;
+        addToolMarker();
       }
     });
   }
+
+  return parts;
+}
+
+export function summarizeRenderableAiContentParts(parts: RenderableAiContentPart[]): RenderableAiContent {
+  const textParts = parts
+    .filter((part): part is Extract<RenderableAiContentPart, { type: 'text' }> => part.type === 'text')
+    .map((part) => part.content);
+  const thinkingBlocks = parts
+    .filter((part): part is Extract<RenderableAiContentPart, { type: 'thinking' }> => part.type === 'thinking')
+    .map((part) => part.content);
+  const hasToolCalls = parts.some((part) => part.type === 'tools');
 
   return {
     text: textParts.join('\n\n'),
@@ -116,4 +182,8 @@ export function getRenderableAiContent(message: ClaudeStreamMessage): Renderable
     hasThinking: thinkingBlocks.length > 0,
     hasToolCalls,
   };
+}
+
+export function getRenderableAiContent(message: ClaudeStreamMessage): RenderableAiContent {
+  return summarizeRenderableAiContentParts(getRenderableAiContentParts(message));
 }
