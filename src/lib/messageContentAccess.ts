@@ -24,3 +24,46 @@ export function getMessageContentArray(message: ClaudeStreamMessage | undefined 
   const content = getMessageContent(message);
   return Array.isArray(content) ? content : null;
 }
+
+const ROLE_BY_MESSAGE_TYPE: Record<string, string | undefined> = {
+  assistant: 'assistant',
+  user: 'user',
+  system: 'system',
+};
+
+/**
+ * Normalize older/partially converted history rows to the official
+ * `{ message: { role, content } }` shape while preserving the top-level
+ * `content` field for backward compatibility.
+ *
+ * This fixes the class of bugs where the latest streamed rows render correctly
+ * but older history rows lose user prompts / assistant text / tool results in
+ * code paths that still expect `message.content` (prompt navigation, export,
+ * tool result lookup, slash-command rendering, context extraction, etc.).
+ */
+export function normalizeMessageContentShape<T extends ClaudeStreamMessage>(message: T): T {
+  if (!message) return message;
+
+  const topLevelContent = (message as any).content;
+  if (topLevelContent === undefined || message.message?.content !== undefined) {
+    return message;
+  }
+
+  const role = message.message?.role ?? ROLE_BY_MESSAGE_TYPE[(message as any).type];
+  if (!role) {
+    return message;
+  }
+
+  return {
+    ...message,
+    message: {
+      ...(message.message ?? {}),
+      role,
+      content: topLevelContent,
+    },
+  };
+}
+
+export function normalizeMessagesContentShape<T extends ClaudeStreamMessage>(messages: T[]): T[] {
+  return messages.map(normalizeMessageContentShape);
+}

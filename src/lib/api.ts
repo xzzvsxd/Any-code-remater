@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { HooksConfiguration } from '@/types/hooks';
 import { HooksManager } from '@/lib/hooksManager';
 import { codexProviderPresets } from '@/config/codexProviderPresets';
+import { normalizeMessagesContentShape } from '@/lib/messageContentAccess';
 
 let codexSessionsCache: {
   value: import('@/types/codex').CodexSession[];
@@ -1249,7 +1250,8 @@ export const api = {
       return this.loadCodexSessionHistory(sessionId);
     }
     // For Claude sessions, use existing backend
-    return invoke("load_session_history", { sessionId, projectId });
+    const history = await invoke<any[]>("load_session_history", { sessionId, projectId });
+    return Array.isArray(history) ? normalizeMessagesContentShape(history as any[]) : history;
   },
 
   /**
