@@ -6,6 +6,7 @@ import {
   createBatchedUpdater,
   type TailUpdateResult,
 } from "@/lib/stream/batchedStateUpdater";
+import { normalizeMessageContentShape, normalizeMessagesContentShape } from '@/lib/messageContentAccess';
 
 export interface ToolResultEntry {
   toolUseId: string;
@@ -218,7 +219,9 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({
   deriveToolResults = true,
   children,
 }) => {
-  const [messages, setMessages] = React.useState<ClaudeStreamMessage[]>(initialMessages);
+  const [messages, setMessages] = React.useState<ClaudeStreamMessage[]>(() =>
+    normalizeMessagesContentShape(initialMessages),
+  );
   const [isStreaming, setIsStreaming] = React.useState<boolean>(initialIsStreaming);
   const [filterConfig, setFilterConfig] = React.useState<MessageFilterConfig>({
     hideWarmupMessages:
@@ -443,38 +446,43 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({
       // 通用函数式更新可能依赖当前完整数组；先排空 append-only / tail 队列，保持调用顺序。
       appendBatched.flushNow();
       tailBatched.flushNow();
-      batched.enqueue(action as (prev: ClaudeStreamMessage[]) => ClaudeStreamMessage[]);
+      batched.enqueue((prev) =>
+        normalizeMessagesContentShape((action as (prev: ClaudeStreamMessage[]) => ClaudeStreamMessage[])(prev)),
+      );
     } else {
       // 直接赋值（重置/历史加载/清空）：先 flush 挂起的增量，再同步覆盖，保证最终状态正确。
       batched.flushNow();
       appendBatched.flushNow();
       tailBatched.flushNow();
-      rawSetMessagesRef.current(action);
+      rawSetMessagesRef.current(normalizeMessagesContentShape(action));
     }
   }, []);
 
   const appendMessage = React.useCallback((message: ClaudeStreamMessage) => {
+    const normalizedMessage = normalizeMessageContentShape(message);
     // append-only 更新排在任何已入队通用/tail 更新之后，避免流式 delta/merge 与 append 乱序。
     batchedRef.current!.flushNow();
     tailBatchedRef.current!.flushNow();
-    appendBatchedRef.current!.enqueue(message);
+    appendBatchedRef.current!.enqueue(normalizedMessage);
   }, []);
 
   const appendMessageImmediate = React.useCallback((message: ClaudeStreamMessage) => {
+    const normalizedMessage = normalizeMessageContentShape(message);
     // 用户刚提交的 prompt 必须同步进入 UI。若继续走 rAF append 队列，极端时序下后续
     // history/reset 直接 setMessages 可能覆盖尚未 flush 的 optimistic user message，
     // 表现为“prompt 已发送但偶发不显示”。streaming 输出仍走 appendMessage 批处理。
     batchedRef.current!.flushNow();
     appendBatchedRef.current!.flushNow();
     tailBatchedRef.current!.flushNow();
-    rawSetMessagesRef.current((prev) => prev.concat(message));
+    rawSetMessagesRef.current((prev) => prev.concat(normalizedMessage));
   }, []);
 
   const appendMessages = React.useCallback((messages: ClaudeStreamMessage[]) => {
     if (messages.length === 0) return;
+    const normalizedMessages = normalizeMessagesContentShape(messages);
     batchedRef.current!.flushNow();
     tailBatchedRef.current!.flushNow();
-    appendBatchedRef.current!.enqueueAll(messages);
+    appendBatchedRef.current!.enqueueAll(normalizedMessages);
   }, []);
 
   const replaceLastMessage = React.useCallback((
@@ -484,7 +492,16 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({
     // 后续同帧多个 tail updater 则由 createBatchedTailUpdater 合并为一次数组拷贝。
     batchedRef.current!.flushNow();
     appendBatchedRef.current!.flushNow();
-    tailBatchedRef.current!.enqueue((lastMessage) => updater(lastMessage));
+    tailBatchedRef.current!.enqueue((lastMessage) => {
+      const result = updater(lastMessage);
+      if (!result || result.type === 'none') {
+        return { type: 'none' };
+      }
+      return {
+        ...result,
+        item: normalizeMessageContentShape(result.item),
+      };
+    });
   }, []);
 
   // ✅ 性能优化: 操作函数独立缓存，确保引用稳定

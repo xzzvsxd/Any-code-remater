@@ -65,5 +65,13 @@ export function normalizeMessageContentShape<T extends ClaudeStreamMessage>(mess
 }
 
 export function normalizeMessagesContentShape<T extends ClaudeStreamMessage>(messages: T[]): T[] {
-  return messages.map(normalizeMessageContentShape);
+  let changed = false;
+  const normalized = messages.map((message) => {
+    const nextMessage = normalizeMessageContentShape(message);
+    if (nextMessage !== message) {
+      changed = true;
+    }
+    return nextMessage;
+  });
+  return changed ? normalized : messages;
 }

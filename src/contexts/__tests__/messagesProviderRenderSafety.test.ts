@@ -64,7 +64,13 @@ describe('MessagesProvider background derivation safety', () => {
 
   test('exposes an immediate append path for user-submitted optimistic messages', () => {
     expect(messagesContextSource).toContain('appendMessageImmediate');
-    expect(messagesContextSource).toContain('rawSetMessagesRef.current((prev) => prev.concat(message))');
+    expect(messagesContextSource).toContain('rawSetMessagesRef.current((prev) => prev.concat(normalizedMessage))');
+  });
+
+  test('normalizes incoming message content at the message store boundary', () => {
+    expect(messagesContextSource).toContain("import { normalizeMessageContentShape, normalizeMessagesContentShape } from '@/lib/messageContentAccess'");
+    expect(messagesContextSource).toContain('normalizeMessagesContentShape(action)');
+    expect(messagesContextSource).toContain('normalizeMessageContentShape(message)');
   });
 
   test('exposes a batched tail replacement path for same-length streaming deltas', () => {
