@@ -75,21 +75,27 @@ const ContextWindowIndicatorComponent: React.FC<ContextWindowIndicatorProps> = (
   const [showPopover, setShowPopover] = React.useState(false);
 
   const usage = useContextWindowUsage(messages, model, engine);
-  const colors = USAGE_LEVEL_COLORS[usage.level];
+  const displayUsage = usage.hasData
+    ? usage
+    : {
+      ...usage,
+      formattedPercentage: '0.0%',
+    };
+  const colors = USAGE_LEVEL_COLORS[displayUsage.level];
 
-  // 如果没有数据或不显示，返回 null
-  if (!show || !usage.hasData) {
+  // show=false 才隐藏；没有 usage 快照时仍显示 0.0% 占位，避免新/运行中会话底部指标消失。
+  if (!show) {
     return null;
   }
 
   // 计算 Auto-compact 相关数据（仅 Claude 引擎）
   const isClaudeEngine = engine === 'claude';
-  const autoCompactBuffer = getAutoCompactBuffer(usage.contextWindowSize);
-  const autoCompactThreshold = usage.contextWindowSize - autoCompactBuffer;
-  const autoCompactThresholdPercentage = (autoCompactThreshold / usage.contextWindowSize) * 100;
-  const tokensUntilCompact = Math.max(0, autoCompactThreshold - usage.currentTokens);
-  const isNearCompact = isClaudeEngine && usage.currentTokens >= autoCompactThreshold * 0.9; // 90% of threshold
-  const willTriggerCompact = isClaudeEngine && usage.currentTokens >= autoCompactThreshold;
+  const autoCompactBuffer = getAutoCompactBuffer(displayUsage.contextWindowSize);
+  const autoCompactThreshold = displayUsage.contextWindowSize - autoCompactBuffer;
+  const autoCompactThresholdPercentage = (autoCompactThreshold / displayUsage.contextWindowSize) * 100;
+  const tokensUntilCompact = Math.max(0, autoCompactThreshold - displayUsage.currentTokens);
+  const isNearCompact = isClaudeEngine && displayUsage.currentTokens >= autoCompactThreshold * 0.9; // 90% of threshold
+  const willTriggerCompact = isClaudeEngine && displayUsage.currentTokens >= autoCompactThreshold;
 
   return (
     <div
@@ -114,7 +120,7 @@ const ContextWindowIndicatorComponent: React.FC<ContextWindowIndicatorProps> = (
             <div className="w-12 h-1.5 bg-muted rounded-full overflow-hidden relative">
               <div
                 className={cn('h-full transition-all duration-300', colors.progress)}
-                style={{ width: `${Math.min(usage.percentage, 100)}%` }}
+                style={{ width: `${Math.min(displayUsage.percentage, 100)}%` }}
               />
               {/* Auto-compact 阈值线（仅 Claude） */}
               {isClaudeEngine && (
@@ -125,7 +131,7 @@ const ContextWindowIndicatorComponent: React.FC<ContextWindowIndicatorProps> = (
               )}
             </div>
             <span className={cn('font-mono text-xs', colors.text)}>
-              {usage.formattedPercentage}
+              {displayUsage.formattedPercentage}
             </span>
             {/* 显示压缩图标提示即将压缩 */}
             {willTriggerCompact ? (
@@ -150,14 +156,14 @@ const ContextWindowIndicatorComponent: React.FC<ContextWindowIndicatorProps> = (
                   {t('contextWindow.usage', '使用率')}
                 </span>
                 <span className={cn('font-mono font-medium', colors.text)}>
-                  {usage.formattedPercentage}
+                  {displayUsage.formattedPercentage}
                 </span>
               </div>
               {/* 自定义进度条以支持阈值线 */}
               <div className="relative h-2 w-full overflow-hidden rounded-full bg-secondary">
                 <div
                   className={cn('h-full transition-all duration-300', colors.progress)}
-                  style={{ width: `${Math.min(usage.percentage, 100)}%` }}
+                  style={{ width: `${Math.min(displayUsage.percentage, 100)}%` }}
                 />
                 {/* Auto-compact 阈值线（仅 Claude） */}
                 {isClaudeEngine && (
@@ -169,8 +175,13 @@ const ContextWindowIndicatorComponent: React.FC<ContextWindowIndicatorProps> = (
                 )}
               </div>
               <div className="text-xs text-muted-foreground text-center">
-                {usage.formattedTokens}
+                {displayUsage.formattedTokens}
               </div>
+              {!usage.hasData && (
+                <div className="text-[11px] text-muted-foreground text-center">
+                  等待运行时 usage 快照
+                </div>
+              )}
             </div>
 
             {/* Auto-compact Buffer 信息（仅 Claude 引擎） */}
@@ -237,26 +248,26 @@ const ContextWindowIndicatorComponent: React.FC<ContextWindowIndicatorProps> = (
                   {t('contextWindow.inputTokens', '输入 Tokens')}:
                 </span>
                 <span className="font-mono">
-                  {usage.breakdown.inputTokens.toLocaleString()}
+                  {displayUsage.breakdown.inputTokens.toLocaleString()}
                 </span>
               </div>
-              {usage.breakdown.cacheCreationTokens > 0 && (
+              {displayUsage.breakdown.cacheCreationTokens > 0 && (
                 <div className="flex justify-between gap-4">
                   <span className="text-muted-foreground">
                     {t('contextWindow.cacheCreation', '缓存创建')}:
                   </span>
                   <span className="font-mono">
-                    {usage.breakdown.cacheCreationTokens.toLocaleString()}
+                    {displayUsage.breakdown.cacheCreationTokens.toLocaleString()}
                   </span>
                 </div>
               )}
-              {usage.breakdown.cacheReadTokens > 0 && (
+              {displayUsage.breakdown.cacheReadTokens > 0 && (
                 <div className="flex justify-between gap-4">
                   <span className="text-muted-foreground">
                     {t('contextWindow.cacheRead', '缓存读取')}:
                   </span>
                   <span className="font-mono">
-                    {usage.breakdown.cacheReadTokens.toLocaleString()}
+                    {displayUsage.breakdown.cacheReadTokens.toLocaleString()}
                   </span>
                 </div>
               )}
@@ -265,18 +276,18 @@ const ContextWindowIndicatorComponent: React.FC<ContextWindowIndicatorProps> = (
                   {t('contextWindow.outputTokens', '输出 Tokens')}:
                 </span>
                 <span className="font-mono text-muted-foreground">
-                  {usage.breakdown.outputTokens.toLocaleString()}
+                  {displayUsage.breakdown.outputTokens.toLocaleString()}
                 </span>
               </div>
             </div>
 
             {/* 提示信息 */}
-            {usage.level === 'critical' && !isClaudeEngine && (
+            {displayUsage.level === 'critical' && !isClaudeEngine && (
               <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 p-2 rounded">
                 {t('contextWindow.criticalWarning', '上下文窗口接近上限，建议开始新会话')}
               </div>
             )}
-            {usage.level === 'high' && !isClaudeEngine && (
+            {displayUsage.level === 'high' && !isClaudeEngine && (
               <div className="text-xs text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/20 p-2 rounded">
                 {t('contextWindow.highWarning', '上下文使用率较高')}
               </div>

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -58,9 +58,71 @@ interface ControlBarProps {
   onSend: () => void;
 }
 
+const PASSIVE_WIDGET_SIGNAL_TAIL_SCAN_COUNT = 8;
+
+const readUsageNumber = (usage: any, ...keys: string[]) => {
+  for (const key of keys) {
+    const value = usage?.[key];
+    if (typeof value === 'number') return value;
+  }
+  return '';
+};
+
+const getPassiveMessageSignal = (message: any, engine?: string): string | null => {
+  const usage =
+    message?.context_window?.current_usage ??
+    message?.message?.usage ??
+    message?.usage ??
+    (engine === 'codex' ? message?.codexMetadata?.usage : undefined);
+  const contextWindowSize =
+    message?.context_window?.context_window_size ??
+    message?.context_window_size ??
+    message?.codexMetadata?.modelContextWindow;
+  const model = message?.model ?? message?.message?.model;
+  const rateLimits = engine === 'codex' ? message?.codexMetadata?.rateLimits : undefined;
+
+  if (!usage && typeof contextWindowSize !== 'number' && typeof model !== 'string' && !rateLimits) {
+    return null;
+  }
+
+  const primaryRate = rateLimits?.primary ?? {};
+  const secondaryRate = rateLimits?.secondary ?? {};
+  return [
+    message?.type ?? '',
+    model ?? '',
+    typeof contextWindowSize === 'number' ? contextWindowSize : '',
+    readUsageNumber(usage, 'input_tokens', 'inputTokens'),
+    readUsageNumber(usage, 'cache_creation_input_tokens', 'cache_creation_tokens', 'cacheCreationTokens'),
+    readUsageNumber(usage, 'cache_read_input_tokens', 'cache_read_tokens', 'cached_input_tokens', 'cacheReadTokens'),
+    readUsageNumber(usage, 'output_tokens', 'outputTokens'),
+    primaryRate.used_percent ?? primaryRate.usedPercent ?? '',
+    secondaryRate.used_percent ?? secondaryRate.usedPercent ?? '',
+  ].join('|');
+};
+
+const getPassiveWidgetSignalKey = (messages?: any[], engine?: string): string => {
+  if (!messages || messages.length === 0) {
+    return 'empty';
+  }
+
+  const start = Math.max(0, messages.length - PASSIVE_WIDGET_SIGNAL_TAIL_SCAN_COUNT);
+  for (let index = messages.length - 1; index >= start; index -= 1) {
+    const signal = getPassiveMessageSignal(messages[index], engine);
+    if (signal) {
+      return `signal:${signal}`;
+    }
+  }
+
+  return 'nonempty:no-signal';
+};
+
 const areControlBarPropsEqual = (prev: ControlBarProps, next: ControlBarProps) => {
   const streaming = prev.isLoading && next.isLoading;
-  const messagesEqual = streaming ? true : prev.messages === next.messages;
+  const passiveSignalEqual = streaming
+    ? getPassiveWidgetSignalKey(prev.messages, prev.executionEngineConfig.engine) ===
+      getPassiveWidgetSignalKey(next.messages, next.executionEngineConfig.engine)
+    : true;
+  const messagesEqual = streaming ? passiveSignalEqual : prev.messages === next.messages;
   const sessionStatsEqual = streaming
     ? true
     : prev.sessionCost === next.sessionCost && prev.sessionStats === next.sessionStats;
@@ -152,16 +214,17 @@ const ControlBarComponent: React.FC<ControlBarProps> = ({
     isCancellingExecution,
   });
   const passiveMessagesRef = useRef(messages);
-
-  useEffect(() => {
-    if (!isLoading || !passiveMessagesRef.current) {
-      passiveMessagesRef.current = messages;
-    }
-  }, [isLoading, messages]);
+  const passiveWidgetSignalRef = useRef(getPassiveWidgetSignalKey(messages, executionEngineConfig.engine));
+  const passiveWidgetSignal = getPassiveWidgetSignalKey(messages, executionEngineConfig.engine);
 
   // Context usage / export / fallback rate-limit widgets are passive controls.
-  // During streaming the full messages array churns every frame; freeze these widgets to
-  // their last idle snapshot so input controls stay responsive on Linux/WebKitGTK.
+  // During streaming the full messages array churns every frame; freeze these widgets unless
+  // a bounded tail scan sees a real context/rate-limit signal. This keeps Linux/WebKitGTK
+  // responsive without making the context percentage disappear for new/running sessions.
+  if (!isLoading || !passiveMessagesRef.current || passiveWidgetSignalRef.current !== passiveWidgetSignal) {
+    passiveMessagesRef.current = messages;
+    passiveWidgetSignalRef.current = passiveWidgetSignal;
+  }
   const messagesForPassiveWidgets = isLoading ? passiveMessagesRef.current : messages;
 
   // 解析 Claude 引擎下用于上下文窗口计算的真实模型名。

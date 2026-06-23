@@ -26,6 +26,18 @@ describe('control bar render safety', () => {
     expect(controlBarSource).toContain('React.memo(ControlBarComponent, areControlBarPropsEqual)');
   });
 
+  test('streaming passive widgets refresh only when context usage signal changes', () => {
+    expect(controlBarSource).toContain('getPassiveWidgetSignalKey');
+    expect(controlBarSource).toContain('passiveSignalEqual');
+    expect(controlBarSource).toContain('passiveWidgetSignalRef');
+  });
+
+  test('context indicator remains visible while waiting for first usage snapshot', () => {
+    expect(contextIndicatorSource).toContain('displayUsage');
+    expect(contextIndicatorSource).toContain('usage.hasData');
+    expect(contextIndicatorSource).not.toContain('!usage.hasData) {\n    return null');
+  });
+
   test('does not use motion or pulse animations in always-visible streaming controls', () => {
     expect(controlBarSource).not.toContain('framer-motion');
     expect(contextIndicatorSource).not.toContain('framer-motion');
