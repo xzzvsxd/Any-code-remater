@@ -124,7 +124,7 @@ describe('session message virtualization safety', () => {
 
     expect(sessionMessagesSource).toContain('SESSION_MESSAGE_LAYOUT_CHANGED_EVENT');
     expect(sessionMessagesSource).toContain('scheduleVirtualizerRemeasure');
-    expect(sessionMessagesSource).toContain('measuredHeightsRef.current.delete(itemKey)');
+    expect(sessionMessagesSource).toContain('measuredHeightsRef.current.delete(measurementKey)');
     expect(sessionMessagesSource).toContain('rowVirtualizer.measure()');
   });
 
@@ -140,8 +140,28 @@ describe('session message virtualization safety', () => {
   test('layout remeasure writes visible DOM heights back into TanStack item cache', () => {
     expect(sessionMessagesSource).toContain('pendingRemeasureItemIndexesRef');
     expect(sessionMessagesSource).toContain('measureVisibleRowsIntoVirtualizer');
-    expect(sessionMessagesSource).toContain("querySelectorAll<HTMLElement>('[data-index][data-item-key]')");
+    expect(sessionMessagesSource).toContain("querySelectorAll<HTMLElement>('[data-index][data-item-key][data-measurement-key]')");
     expect(sessionMessagesSource).toContain('rowVirtualizer.resizeItem(itemIndex, rawHeight)');
+  });
+
+  test('height cache is keyed by render revision so changed rows cannot reuse stale measurements', () => {
+    expect(sessionMessagesSource).toContain('getMessageGroupMeasurementCacheKey');
+    expect(sessionMessagesSource).toContain('data-measurement-key={measurementKey}');
+    expect(sessionMessagesSource).toContain("getAttribute?.('data-measurement-key')");
+    expect(sessionMessagesSource).not.toContain('measuredHeightsRef.current.get(getGroupKey');
+    expect(sessionMessagesSource).not.toContain('measuredHeightsRef.current.set(itemKey, rawHeight)');
+  });
+
+  test('message render-revision changes clear TanStack item sizes before stale starts create overlap or blank space', () => {
+    expect(sessionMessagesSource).toContain('getMessageGroupsRenderSignature');
+    expect(sessionMessagesSource).toContain('messageGroupsRenderSignature');
+    expect(sessionMessagesSource).toContain("reason: 'message-groups-revised'");
+  });
+
+  test('virtualizer spacing uses TanStack padding instead of CSS padding outside totalSize accounting', () => {
+    expect(sessionMessagesSource).toContain('paddingStart: SESSION_MESSAGES_PADDING_START');
+    expect(sessionMessagesSource).toContain('paddingEnd: SESSION_MESSAGES_PADDING_END');
+    expect(sessionMessagesSource).not.toContain('px-4 pt-8 pb-4');
   });
 
   test('streaming completion remeasures rows so finished sessions do not keep bottom whitespace', () => {

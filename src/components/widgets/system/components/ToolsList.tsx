@@ -135,6 +135,7 @@ export const ToolsList = React.memo<ToolsListProps>(({
 
     const rowElement = rootRef.current?.closest('[data-item-key]');
     const itemKey = rowElement?.getAttribute('data-item-key') ?? undefined;
+    const measurementKey = rowElement?.getAttribute('data-measurement-key') ?? undefined;
     const itemIndexRaw = rowElement?.getAttribute('data-index');
     const itemIndex =
       itemIndexRaw != null && itemIndexRaw.trim() !== ''
@@ -147,6 +148,7 @@ export const ToolsList = React.memo<ToolsListProps>(({
           detail: {
             reason,
             itemKey,
+            measurementKey,
             itemIndex: Number.isFinite(itemIndex) ? itemIndex : undefined,
           },
         }),

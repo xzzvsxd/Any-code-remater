@@ -6,6 +6,11 @@ import type { ClaudeStreamMessage } from "@/types/claude";
 // 拖慢 Linux/WebKitGTK。白屏不靠加大 overscan 解决，而是修 measureElement 的 0 高度兜底
 // （见 SessionMessages.tsx：测到非正高度时回退缓存/估算，绝不把 0 喂给虚拟列表造成位置塌缩）。
 export const SESSION_MESSAGES_OVERSCAN = 4;
+// 与原先虚拟列表容器 pt-8 / pb-4 对齐，但交给 TanStack Virtual 计入 totalSize。
+// 如果用 CSS padding 包在绝对定位行外面，scrollHeight 与 virtualizer.getTotalSize()
+// 会分属两套模型，动态测高时容易在底部/顶部留下不可解释空白。
+export const SESSION_MESSAGES_PADDING_START = 32;
+export const SESSION_MESSAGES_PADDING_END = 16;
 
 const DEFAULT_ESTIMATE = 220;
 const MAX_NORMAL_MESSAGE_ESTIMATE = 1_200;

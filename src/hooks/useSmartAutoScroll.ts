@@ -11,7 +11,10 @@ import {
   shouldFollowResizeToBottom,
   shouldRunStickyAutoScroll,
 } from './smartAutoScrollPolicy';
-import { shouldMarkDownwardIntentFromScrollDelta } from './smartAutoScrollIntentPolicy';
+import {
+  shouldMarkDownwardIntentFromScrollDelta,
+  shouldReleaseAutoScrollFromScrollDelta,
+} from './smartAutoScrollIntentPolicy';
 
 interface SmartAutoScrollConfig {
   /** 可显示的消息列表（用于触发滚动） */
@@ -273,6 +276,20 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
       lastScrollTopRef.current = currentScrollTop;
       const now = performance.now();
       const isProgrammatic = now <= programmaticScrollUntilRef.current;
+      const distance = getDistanceFromBottom(scrollElement);
+      if (shouldReleaseAutoScrollFromScrollDelta({
+        delta,
+        deadband: STICK_BOTTOM_DEADBAND,
+        isProgrammatic,
+        hasRecentDirectUserIntent: now <= directScrollGestureUntilRef.current,
+        distanceFromBottom: distance,
+      })) {
+        cancelResumeConfirmation();
+        userIntentReleasedRef.current = true;
+        userIntentDownwardRef.current = false;
+        syncAutoScrollState(false);
+        return;
+      }
       if (shouldMarkDownwardIntentFromScrollDelta({
         delta,
         deadband: STICK_BOTTOM_DEADBAND,
@@ -292,7 +309,6 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
         ? RESUME_AT_BOTTOM_THRESHOLD
         : RESUME_AUTO_SCROLL_THRESHOLD;
 
-      const distance = getDistanceFromBottom(scrollElement);
       if (distance > resumeThreshold) {
         cancelResumeConfirmation();
         return;

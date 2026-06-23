@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'vitest';
 import {
+  getMessageGroupMeasurementCacheKey,
+  getMessageGroupRenderRevision,
   getMessageGroupVirtualKey,
+  getMessageGroupsRenderSignature,
   safeEstimateMessageGroupHeight,
 } from '../messageGroupVirtualization';
 import type { MessageGroup } from '@/lib/subagentGrouping';
@@ -33,6 +36,73 @@ describe('message group virtualization identity and safety', () => {
       getMessageGroupVirtualKey(shiftedIndex, 2),
     );
     expect(getMessageGroupVirtualKey(firstIndex, 1)).not.toContain('n-1');
+  });
+
+  test('separates stable virtual identity from render-revision measurement cache identity', () => {
+    const initial: MessageGroup = {
+      type: 'normal',
+      message: userMessage('same-message', 'short'),
+      index: 1,
+    };
+    const expanded: MessageGroup = {
+      type: 'normal',
+      message: userMessage('same-message', 'short\n'.repeat(120)),
+      index: 1,
+    };
+
+    expect(getMessageGroupVirtualKey(initial, 1)).toBe(
+      getMessageGroupVirtualKey(expanded, 1),
+    );
+    expect(getMessageGroupRenderRevision(initial, 1)).not.toBe(
+      getMessageGroupRenderRevision(expanded, 1),
+    );
+    expect(getMessageGroupMeasurementCacheKey(initial, 1)).not.toBe(
+      getMessageGroupMeasurementCacheKey(expanded, 1),
+    );
+    expect(getMessageGroupMeasurementCacheKey(initial, 1)).toContain(
+      getMessageGroupVirtualKey(initial, 1),
+    );
+  });
+
+  test('render signature changes when an offscreen row keeps identity but changes height-relevant content', () => {
+    const initial: MessageGroup = {
+      type: 'normal',
+      message: userMessage('same-message', 'short'),
+      index: 1,
+    };
+    const expanded: MessageGroup = {
+      type: 'normal',
+      message: userMessage('same-message', 'short\n'.repeat(120)),
+      index: 1,
+    };
+
+    expect(getMessageGroupsRenderSignature([initial])).not.toBe(
+      getMessageGroupsRenderSignature([expanded]),
+    );
+  });
+
+  test('render revision changes when equal-length content has different line layout', () => {
+    const singleLine = 'a'.repeat(120);
+    const manyLines = Array.from({ length: 41 }, () => 'ab').join('\n').slice(0, 120);
+    expect(singleLine.length).toBe(manyLines.length);
+
+    const initial: MessageGroup = {
+      type: 'normal',
+      message: userMessage('same-message', singleLine),
+      index: 1,
+    };
+    const reflowed: MessageGroup = {
+      type: 'normal',
+      message: userMessage('same-message', manyLines),
+      index: 1,
+    };
+
+    expect(getMessageGroupRenderRevision(initial, 1)).not.toBe(
+      getMessageGroupRenderRevision(reflowed, 1),
+    );
+    expect(getMessageGroupMeasurementCacheKey(initial, 1)).not.toBe(
+      getMessageGroupMeasurementCacheKey(reflowed, 1),
+    );
   });
 
   test('uses optimistic UI event ids so submitted prompts do not collide while history catches up', () => {

@@ -1,7 +1,7 @@
 {
   "name": "any-code",
   "private": true,
-  "version": "5.29.71",
+  "version": "5.29.72",
   "license": "AGPL-3.0",
   "type": "module",
   "scripts": {

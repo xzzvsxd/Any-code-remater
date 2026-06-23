@@ -1,4 +1,4 @@
-import React, { useImperativeHandle, forwardRef, useEffect, useRef, useCallback } from "react";
+import React, { useImperativeHandle, forwardRef, useEffect, useRef, useCallback, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { StreamMessageV2 } from "@/components/message";
 import { MessageBranchButton } from "@/components/message/MessageBranchButton";
@@ -11,9 +11,13 @@ import { evaluateBottomScrollFrame } from "./bottomScrollStabilizer";
 import { shouldPreserveScrollAnchorOnMeasuredSizeChange } from "./virtualizerScrollAdjustmentPolicy";
 import {
   SESSION_MESSAGES_OVERSCAN,
+  SESSION_MESSAGES_PADDING_END,
+  SESSION_MESSAGES_PADDING_START,
 } from "./messageHeightEstimate";
 import {
+  getMessageGroupMeasurementCacheKey,
   getMessageGroupRenderRevision,
+  getMessageGroupsRenderSignature,
   getMessageGroupVirtualKey,
   safeEstimateMessageGroupHeight,
 } from "./messageGroupVirtualization";
@@ -29,13 +33,14 @@ import {
  * 不再叠加组件自己的 ResizeObserver：TanStack Virtual 内部已经会观察被测元素，
  * 双 observer 会在长历史/顶部区域制造重复测量和 rAF 风暴，表现为滚动抖动与卡顿。
  */
-const MeasurableItem = ({ virtualItem, itemKey, measureElement, children, ...props }: any) => {
+const MeasurableItem = ({ virtualItem, itemKey, measurementKey, measureElement, children, ...props }: any) => {
   return (
     <div
       {...props}
       ref={measureElement}
       data-index={virtualItem.index}
       data-item-key={itemKey}
+      data-measurement-key={measurementKey}
     >
       {children}
     </div>
@@ -89,6 +94,13 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
   // index 会整体平移；如果复用旧 index key，TanStack 的测高缓存会串到另一条消息上，
   // 造成行距错乱、重叠，严重时可见项被推出视口形成白屏。
   const getGroupKey = getMessageGroupVirtualKey;
+  const getMeasurementCacheKey = getMessageGroupMeasurementCacheKey;
+  const messageGroupsRenderSignature = useMemo(
+    () => (isLoading
+      ? `streaming:${messageGroups.length}`
+      : getMessageGroupsRenderSignature(messageGroups)),
+    [isLoading, messageGroups],
+  );
 
   // 已测量行的真实高度缓存（key -> 高度）。estimateSize 优先返回缓存值，
   // 使未在窗口内的行也能用「上次测得的真实高度」占位，而非粗估，避免重测时整列跳动。
@@ -100,9 +112,12 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
   const topScrollRafsRef = useRef<number[]>([]);
   const promptScrollSearchTokenRef = useRef(0);
   const virtualizerRemeasureRafRef = useRef<number>(0);
+  const lastMessageGroupsRenderSignatureRef = useRef<string | null>(null);
+  const pendingRemeasureMeasurementKeysRef = useRef<Set<string>>(new Set());
   const pendingRemeasureItemKeysRef = useRef<Set<string>>(new Set());
   const pendingRemeasureItemIndexesRef = useRef<Set<number>>(new Set());
   const pendingFullRemeasureRef = useRef(false);
+  const pendingPruneStaleMeasurementsRef = useRef(false);
   const cancelBottomScrollLoop = () => {
     if (bottomScrollRafRef.current) {
       cancelAnimationFrame(bottomScrollRafRef.current);
@@ -135,10 +150,33 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       cancelAnimationFrame(virtualizerRemeasureRafRef.current);
       virtualizerRemeasureRafRef.current = 0;
     }
+    pendingRemeasureMeasurementKeysRef.current.clear();
     pendingRemeasureItemKeysRef.current.clear();
     pendingRemeasureItemIndexesRef.current.clear();
     pendingFullRemeasureRef.current = false;
+    pendingPruneStaleMeasurementsRef.current = false;
   };
+
+  const deleteMeasuredHeightsForItemKey = useCallback((itemKey: string) => {
+    const prefix = `${itemKey}::rev:`;
+    for (const measurementKey of measuredHeightsRef.current.keys()) {
+      if (measurementKey === itemKey || measurementKey.startsWith(prefix)) {
+        measuredHeightsRef.current.delete(measurementKey);
+      }
+    }
+  }, []);
+
+  const pruneMeasuredHeightsToCurrentRevisions = useCallback(() => {
+    const liveMeasurementKeys = new Set(
+      messageGroups.map((messageGroup, index) => getMeasurementCacheKey(messageGroup, index)),
+    );
+
+    for (const measurementKey of measuredHeightsRef.current.keys()) {
+      if (!liveMeasurementKeys.has(measurementKey)) {
+        measuredHeightsRef.current.delete(measurementKey);
+      }
+    }
+  }, [getMeasurementCacheKey, messageGroups]);
 
   /**
    * ✅ OPTIMIZED: Virtual list configuration for improved performance
@@ -147,6 +185,8 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
     count: messageGroups.length,
     getItemKey: (index) => getGroupKey(messageGroups[index], index),
     getScrollElement: () => parentRef.current,
+    paddingStart: SESSION_MESSAGES_PADDING_START,
+    paddingEnd: SESSION_MESSAGES_PADDING_END,
     estimateSize: (index) => {
       // ✅ Dynamic height estimation based on message group type
       const messageGroup = messageGroups[index];
@@ -158,7 +198,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       // 让视图停在「离底一点点」（表现为贴底时被往上弹）。该行不读缓存，交给实时测量驱动粘底。
       const isStreamingRow = isLoading && index === messageGroups.length - 1;
       if (!isStreamingRow) {
-        const cached = measuredHeightsRef.current.get(getGroupKey(messageGroup, index));
+        const cached = measuredHeightsRef.current.get(getMeasurementCacheKey(messageGroup, index));
         if (cached) return cached;
       }
 
@@ -173,7 +213,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       // Ensure element is fully rendered before measurement
       const el = element as HTMLElement;
       const rawHeight = el?.getBoundingClientRect().height ?? 0;
-      const key = el?.getAttribute?.('data-item-key');
+      const measurementKey = el?.getAttribute?.('data-measurement-key');
       const idxAttr = el?.getAttribute?.('data-index');
       const measuredIndex = idxAttr !== null ? Number(idxAttr) : NaN;
       const isStreamingRow = isLoading && idxAttr !== null && measuredIndex === messageGroups.length - 1;
@@ -188,13 +228,13 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
         // 供 estimateSize 复用真实高度，消除重测时的整列跳动。
         // 例外：正在 streaming 的最后一行高度时刻在变，不写缓存——否则会留下滞后旧值，
         // 下次 estimateSize 用它低估 totalSize，把贴底视图往上弹。
-        if (key && !isStreamingRow) {
-          measuredHeightsRef.current.set(key, rawHeight);
+        if (measurementKey && !isStreamingRow) {
+          measuredHeightsRef.current.set(measurementKey, rawHeight);
         }
         return rawHeight;
       }
 
-      const cached = key ? measuredHeightsRef.current.get(key) : undefined;
+      const cached = measurementKey ? measuredHeightsRef.current.get(measurementKey) : undefined;
       if (cached && cached > 0) return cached;
       return safeEstimateMessageGroupHeight(messageGroups[measuredIndex]);
     },
@@ -217,20 +257,23 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
 
   const measureVisibleRowsIntoVirtualizer = useCallback((options: {
     all: boolean;
+    measurementKeys: Set<string>;
     itemKeys: Set<string>;
     itemIndexes: Set<number>;
   }) => {
     const scrollElement = parentRef.current;
     if (!scrollElement) return;
 
-    const rowElements = scrollElement.querySelectorAll<HTMLElement>('[data-index][data-item-key]');
+    const rowElements = scrollElement.querySelectorAll<HTMLElement>('[data-index][data-item-key][data-measurement-key]');
     rowElements.forEach((rowElement) => {
       const itemKey = rowElement.getAttribute('data-item-key') ?? undefined;
+      const measurementKey = rowElement.getAttribute('data-measurement-key') ?? undefined;
       const itemIndex = Number(rowElement.getAttribute('data-index'));
       if (!Number.isFinite(itemIndex)) return;
 
       const shouldMeasure =
         options.all ||
+        (measurementKey ? options.measurementKeys.has(measurementKey) : false) ||
         options.itemIndexes.has(itemIndex) ||
         (itemKey ? options.itemKeys.has(itemKey) : false);
       if (!shouldMeasure) return;
@@ -238,8 +281,8 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       const rawHeight = rowElement.getBoundingClientRect().height;
       if (rawHeight <= 0) return;
 
-      if (itemKey) {
-        measuredHeightsRef.current.set(itemKey, rawHeight);
+      if (measurementKey) {
+        measuredHeightsRef.current.set(measurementKey, rawHeight);
       }
       rowVirtualizer.resizeItem(itemIndex, rawHeight);
     });
@@ -257,19 +300,26 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
    * - 再把当前可见 DOM 的真实高度用 resizeItem(index, height) 写回内部 item cache。
    */
   const scheduleVirtualizerRemeasure = useCallback((detail?: SessionMessageLayoutChangedDetail) => {
+    const measurementKey = detail?.measurementKey;
     const itemKey = detail?.itemKey;
     const itemIndex =
       typeof detail?.itemIndex === 'number' && Number.isFinite(detail.itemIndex)
         ? detail.itemIndex
         : undefined;
 
+    if (measurementKey) {
+      pendingRemeasureMeasurementKeysRef.current.add(measurementKey);
+    }
     if (itemKey) {
       pendingRemeasureItemKeysRef.current.add(itemKey);
     }
     if (itemIndex !== undefined) {
       pendingRemeasureItemIndexesRef.current.add(itemIndex);
     }
-    if (!itemKey && itemIndex === undefined) {
+    if (detail?.reason === 'message-groups-revised' || detail?.reason === 'streaming-ended') {
+      pendingPruneStaleMeasurementsRef.current = true;
+    }
+    if (!measurementKey && !itemKey && itemIndex === undefined) {
       pendingFullRemeasureRef.current = true;
     }
 
@@ -278,28 +328,53 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
     virtualizerRemeasureRafRef.current = requestAnimationFrame(() => {
       virtualizerRemeasureRafRef.current = 0;
       const shouldMeasureAllVisible = pendingFullRemeasureRef.current;
+      const shouldPruneStaleMeasurements = pendingPruneStaleMeasurementsRef.current;
+      const targetMeasurementKeys = new Set(pendingRemeasureMeasurementKeysRef.current);
       const targetItemKeys = new Set(pendingRemeasureItemKeysRef.current);
       const targetItemIndexes = new Set(pendingRemeasureItemIndexesRef.current);
 
       if (shouldMeasureAllVisible) {
-        measuredHeightsRef.current.clear();
+        if (shouldPruneStaleMeasurements) {
+          pruneMeasuredHeightsToCurrentRevisions();
+        } else {
+          measuredHeightsRef.current.clear();
+        }
       } else {
+        targetMeasurementKeys.forEach((measurementKey) => {
+          measuredHeightsRef.current.delete(measurementKey);
+        });
         targetItemKeys.forEach((itemKey) => {
-          measuredHeightsRef.current.delete(itemKey);
+          deleteMeasuredHeightsForItemKey(itemKey);
+        });
+        targetItemIndexes.forEach((itemIndex) => {
+          const messageGroup = messageGroups[itemIndex];
+          if (!messageGroup) return;
+          const measurementKey = getMeasurementCacheKey(messageGroup, itemIndex);
+          measuredHeightsRef.current.delete(measurementKey);
         });
       }
 
       pendingFullRemeasureRef.current = false;
+      pendingPruneStaleMeasurementsRef.current = false;
+      pendingRemeasureMeasurementKeysRef.current.clear();
       pendingRemeasureItemKeysRef.current.clear();
       pendingRemeasureItemIndexesRef.current.clear();
       rowVirtualizer.measure();
       measureVisibleRowsIntoVirtualizer({
         all: shouldMeasureAllVisible,
+        measurementKeys: targetMeasurementKeys,
         itemKeys: targetItemKeys,
         itemIndexes: targetItemIndexes,
       });
     });
-  }, [measureVisibleRowsIntoVirtualizer, rowVirtualizer]);
+  }, [
+    deleteMeasuredHeightsForItemKey,
+    getMeasurementCacheKey,
+    measureVisibleRowsIntoVirtualizer,
+    messageGroups,
+    pruneMeasuredHeightsToCurrentRevisions,
+    rowVirtualizer,
+  ]);
 
   // 切换会话时清空高度缓存：不同会话的消息 key 可能因 index 复用而碰撞，
   // 旧高度会污染新会话首屏布局。会话切换不频繁，清空成本可忽略。
@@ -328,6 +403,19 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       scheduleVirtualizerRemeasure({ reason: 'streaming-ended' });
     }
   }, [isLoading, scheduleVirtualizerRemeasure]);
+
+  useEffect(() => {
+    const previousSignature = lastMessageGroupsRenderSignatureRef.current;
+    lastMessageGroupsRenderSignatureRef.current = messageGroupsRenderSignature;
+
+    if (previousSignature === null || previousSignature === messageGroupsRenderSignature) {
+      return;
+    }
+
+    // 离屏行内容变更不会触发 ResizeObserver。这里清 TanStack itemSizeCache，
+    // 但保留 revision-keyed 外部测高缓存里未变化行的真实高度，避免整列回退到粗估。
+    scheduleVirtualizerRemeasure({ reason: 'message-groups-revised' });
+  }, [messageGroupsRenderSignature, scheduleVirtualizerRemeasure]);
 
   useEffect(() => {
     const onMessageLayoutChanged = (event: Event) => {
@@ -589,7 +677,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
     >
       <div data-session-scroll-content className="min-h-full">
         <div
-          className="relative w-full max-w-5xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-[85%] mx-auto px-4 pt-8 pb-4"
+          className="relative w-full max-w-5xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-[85%] mx-auto px-4"
           style={{
             height: `${Math.max(rowVirtualizer.getTotalSize(), 100)}px`,
             minHeight: '100px',
@@ -633,12 +721,14 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
                   : -1;
 
               const isStreaming = virtualItem.index === messageGroups.length - 1 && isLoading;
+              const measurementKey = getMeasurementCacheKey(messageGroup, virtualItem.index);
 
               return (
                 <MeasurableItem
                   key={virtualItem.key}
                   virtualItem={virtualItem}
                   itemKey={virtualItem.key}
+                  measurementKey={measurementKey}
                   measureElement={rowVirtualizer.measureElement}
                   className="absolute inset-x-4 top-0"
                   style={{

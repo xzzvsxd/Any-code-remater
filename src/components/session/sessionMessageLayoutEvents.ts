@@ -7,10 +7,12 @@ export type SessionMessageLayoutChangedReason =
   | 'system-tools-toggle'
   | 'mcp-tools-toggle'
   | 'tool-calls-toggle'
-  | 'fallback-tool-toggle';
+  | 'fallback-tool-toggle'
+  | 'message-groups-revised';
 
 export interface SessionMessageLayoutChangedDetail {
   reason: SessionMessageLayoutChangedReason;
   itemKey?: string;
+  measurementKey?: string;
   itemIndex?: number;
 }

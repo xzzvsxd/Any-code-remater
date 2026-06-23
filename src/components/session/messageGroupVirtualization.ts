@@ -14,6 +14,19 @@ const stableHash = (value: string): string => {
   return (hash >>> 0).toString(36);
 };
 
+const stableHashParts = (parts: Iterable<string>): string => {
+  let hash = 2166136261;
+  for (const part of parts) {
+    for (let index = 0; index < part.length; index += 1) {
+      hash ^= part.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    hash ^= 10; // 分隔符，避免 ['ab','c'] 与 ['a','bc'] 碰撞到同一字符流
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+};
+
 const keyPart = (value: unknown): string | null => {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -69,7 +82,8 @@ const contentPreview = (value: unknown, depth = 0): string => {
   return '';
 };
 
-const getContentSignature = (message: ClaudeStreamMessage): string => {
+const getContentSignature = (message: ClaudeStreamMessage | undefined): string => {
+  if (!message) return 'missing';
   const raw = message as any;
   const content = raw.message?.content ?? raw.content;
   return `${contentLengthHint(content)}:${stableHash(contentPreview(content))}`;
@@ -175,28 +189,64 @@ export const getMessageGroupRenderRevision = (
     if (!group) return `missing:${fallbackIndex}`;
 
     if (group.type === 'normal') {
-      const content = group.message?.message?.content ?? (group.message as any)?.content;
-      return `normal:${getMessageVirtualIdentity(group.message, group.index)}:len:${contentLengthHint(content)}`;
+      return `normal:${getMessageVirtualIdentity(group.message, group.index)}:sig:${getContentSignature(group.message)}`;
     }
 
     if (group.type === 'subagent') {
       const subagentGroup = (group as any).group;
-      return `sub:${subagentGroup?.subagentMessages?.length ?? 0}:${getMessageVirtualIdentity(subagentGroup?.taskMessage, subagentGroup?.startIndex ?? fallbackIndex)}`;
+      const subagentMessages = Array.isArray(subagentGroup?.subagentMessages)
+        ? subagentGroup.subagentMessages
+        : [];
+      const subagentSignature = stableHashParts(
+        subagentMessages.map((message: ClaudeStreamMessage) => getContentSignature(message)),
+      );
+      return `sub:${subagentMessages.length}:sig:${subagentSignature}:${getMessageVirtualIdentity(subagentGroup?.taskMessage, subagentGroup?.startIndex ?? fallbackIndex)}`;
     }
 
     if (group.type === 'aggregated') {
       const messages = Array.isArray(group.messages) ? group.messages : [];
-      const totalLength = messages.reduce((sum, message) => {
-        const content = message?.message?.content ?? (message as any)?.content;
-        return sum + contentLengthHint(content);
-      }, 0);
-      return `agg:${messages.length}:len:${totalLength}:${getMessageGroupVirtualKey(group, fallbackIndex)}`;
+      const aggregateSignature = stableHashParts(
+        messages.map((message) => `${getMessageVirtualIdentity(message, fallbackIndex)}:${getContentSignature(message)}`),
+      );
+      return `agg:${messages.length}:sig:${aggregateSignature}:${getMessageGroupVirtualKey(group, fallbackIndex)}`;
     }
 
     return `unknown:${fallbackIndex}`;
   } catch {
     return `invalid:${fallbackIndex}`;
   }
+};
+
+/**
+ * 高度测量缓存 key 必须比虚拟行 identity 更细。
+ *
+ * react-virtual 的 getItemKey 需要稳定，避免历史回填/聚合重排时按 index 串行；
+ * 但行内容、Thinking 折叠、工具结果到达后，同一个稳定 identity 的真实高度会变。
+ * 因此外部 measuredHeightsRef 不能只按 virtual key 复用旧高度，否则会出现：
+ * - 旧高度过小：后续行 translateY(start) 提前，消息互相重叠；
+ * - 旧高度过大：getTotalSize 被撑大，底部/中间留下大片空白。
+ */
+export const getMessageGroupMeasurementCacheKey = (
+  group: MessageGroup | undefined,
+  fallbackIndex: number,
+): string => {
+  const virtualKey = getMessageGroupVirtualKey(group, fallbackIndex);
+  const revision = getMessageGroupRenderRevision(group, fallbackIndex);
+  return `${virtualKey}::rev:${stableHash(revision)}`;
+};
+
+/**
+ * 当前消息列表的“高度相关渲染签名”。
+ *
+ * 用于发现离屏行内容变更：这些行没有 DOM/ResizeObserver，TanStack 内部 itemSizeCache
+ * 不会自动失效；签名变化时需要清内部 size cache，再靠 revision-keyed 外部缓存保留未变行高度。
+ */
+export const getMessageGroupsRenderSignature = (
+  groups: readonly MessageGroup[],
+): string => {
+  return `${groups.length}:${stableHashParts(
+    groups.map((group, index) => getMessageGroupMeasurementCacheKey(group, index)),
+  )}`;
 };
 
 export const safeEstimateMessageGroupHeight = (group: MessageGroup | undefined): number => {
