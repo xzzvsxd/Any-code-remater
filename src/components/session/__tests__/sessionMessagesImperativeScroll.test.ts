@@ -48,7 +48,7 @@ describe('SessionMessages imperative scrolling invariants', () => {
   });
 
   test('virtualizer uses content-aware estimates instead of fixed 150/200px guesses', () => {
-    expect(source).toContain('estimateMessageGroupHeight(messageGroups[index])');
+    expect(source).toContain('safeEstimateMessageGroupHeight(messageGroups[index])');
     expect(source).toContain('overscan: SESSION_MESSAGES_OVERSCAN');
   });
 });

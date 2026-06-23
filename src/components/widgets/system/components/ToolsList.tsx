@@ -4,10 +4,15 @@
  * 从 SystemInitializedWidget 中提取，用于展示可用工具列表
  */
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import { Wrench, Package, Package2, ChevronDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/hooks/useTranslation";
+import {
+  SESSION_MESSAGE_LAYOUT_CHANGED_EVENT,
+  type SessionMessageLayoutChangedReason,
+} from "@/components/session/sessionMessageLayoutEvents";
 
 export interface ToolsListProps {
   /** 工具列表 */
@@ -100,6 +105,8 @@ export const ToolsList = React.memo<ToolsListProps>(({
   mcpExpanded,
   onMcpToggle,
 }) => {
+  const { t } = useTranslation();
+  const rootRef = useRef<HTMLDivElement>(null);
   const splitTools = useMemo(
     () => splitToolsForDisplay(tools),
     [tools]
@@ -123,27 +130,56 @@ export const ToolsList = React.memo<ToolsListProps>(({
   const hiddenRegularToolCount = regularExpanded
     ? 0
     : Math.max(0, regularTools.length - displayedRegularTools.length);
+  const notifyLayoutChanged = useCallback((reason: SessionMessageLayoutChangedReason) => {
+    if (typeof window === 'undefined') return;
+
+    const rowElement = rootRef.current?.closest('[data-item-key]');
+    const itemKey = rowElement?.getAttribute('data-item-key') ?? undefined;
+    const itemIndexRaw = rowElement?.getAttribute('data-index');
+    const itemIndex =
+      itemIndexRaw != null && itemIndexRaw.trim() !== ''
+        ? Number(itemIndexRaw)
+        : undefined;
+
+    window.requestAnimationFrame(() => {
+      window.dispatchEvent(
+        new CustomEvent(SESSION_MESSAGE_LAYOUT_CHANGED_EVENT, {
+          detail: {
+            reason,
+            itemKey,
+            itemIndex: Number.isFinite(itemIndex) ? itemIndex : undefined,
+          },
+        }),
+      );
+    });
+  }, []);
   const handleRegularToggle = useCallback(() => {
     setRegularExpanded((expanded) => !expanded);
-  }, []);
+    notifyLayoutChanged('system-tools-toggle');
+  }, [notifyLayoutChanged]);
+
+  const handleMcpToggle = useCallback(() => {
+    onMcpToggle();
+    notifyLayoutChanged('mcp-tools-toggle');
+  }, [notifyLayoutChanged, onMcpToggle]);
 
   if (tools.length === 0) {
     return (
       <div className="text-xs text-muted-foreground italic">
-        无工具可用
+        {t('systemInit.noTools', '无工具可用')}
       </div>
     );
   }
 
   return (
-    <div className="space-y-4">
+    <div ref={rootRef} className="space-y-4">
       {/* 常规工具 */}
       {regularTools.length > 0 && (
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <Wrench className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="text-xs font-medium text-muted-foreground">
-              Available Tools ({regularTools.length})
+              {t('systemInit.availableTools', '可用工具')} ({regularTools.length})
             </span>
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -162,7 +198,7 @@ export const ToolsList = React.memo<ToolsListProps>(({
                 onClick={handleRegularToggle}
                 className="rounded-md border border-border/60 px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:border-border hover:text-foreground"
               >
-                {regularExpanded ? '收起' : `+${hiddenRegularToolCount} more`}
+                {regularExpanded ? t('systemInit.collapse', '收起') : t('systemInit.moreTools', '+{{count}} 个', { count: hiddenRegularToolCount })}
               </button>
             )}
           </div>
@@ -173,11 +209,11 @@ export const ToolsList = React.memo<ToolsListProps>(({
       {mcpToolCount > 0 && (
         <div className="space-y-2">
           <button
-            onClick={onMcpToggle}
+            onClick={handleMcpToggle}
             className="flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
           >
             <Package className="h-3.5 w-3.5" />
-            <span>MCP Services ({mcpToolCount})</span>
+            <span>{t('systemInit.mcpServices', 'MCP 服务')} ({mcpToolCount})</span>
             <ChevronDown className={cn(
               "h-3 w-3 transition-transform",
               mcpExpanded && "rotate-180"

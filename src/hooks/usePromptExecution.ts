@@ -1929,6 +1929,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
         // 🆕 检测斜杠命令 - 斜杠命令显示为"执行命令"系统消息，而不是用户消息
         const isSlashCmd = isSlashCommand(prompt);
+        const submittedAt = new Date().toISOString();
 
         if (isSlashCmd) {
           // 斜杠命令显示为 command-meta 系统消息
@@ -1943,7 +1944,12 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
                 }
               ]
             },
-            timestamp: new Date().toISOString(),
+            timestamp: submittedAt,
+            receivedAt: submittedAt,
+            uiOnly: true,
+            uiOptimisticPrompt: true,
+            uiEventId: createUiEventId(),
+            excludeFromAiContext: true,
             ...(executionEngine === 'codex' ? { engine: 'codex' as const } : {}),
             ...(executionEngine === 'gemini' ? { engine: 'gemini' as const } : {})
           };
@@ -1960,7 +1966,11 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
                 }
               ]
             },
-            sentAt: new Date().toISOString(),
+            sentAt: submittedAt,
+            uiOnly: true,
+            uiOptimisticPrompt: true,
+            uiEventId: createUiEventId(),
+            excludeFromAiContext: true,
             ...(executionEngine === 'codex' ? { engine: 'codex' as const } : {}),
             ...(executionEngine === 'gemini' ? { engine: 'gemini' as const } : {}),
             // Add translation metadata for debugging/info

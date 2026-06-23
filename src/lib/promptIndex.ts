@@ -66,6 +66,9 @@ export function isTrackedUserPrompt(message: ClaudeStreamMessage | unknown): boo
   const candidate = message as ClaudeStreamMessage | undefined;
   if (candidate?.type !== 'user') return false;
 
+  // 前端本地 optimistic prompt 只用于 UI 兜底显示，后端 JSONL / prompt_tracker
+  // 尚未包含它时不能参与 promptIndex 计数；否则撤回/分支索引会比后端多 1，导致错位。
+  if ((candidate as any).uiOnly === true || (candidate as any).excludeFromAiContext === true) return false;
   if ((candidate as any).isSidechain === true) return false;
   if ((candidate as any).parent_tool_use_id != null) return false;
 

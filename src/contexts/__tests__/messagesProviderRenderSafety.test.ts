@@ -17,6 +17,11 @@ const promptExecutionSource = readFileSync(
   'utf8',
 );
 
+const sessionStreamSource = readFileSync(
+  resolve(process.cwd(), 'src/hooks/useSessionStream.ts'),
+  'utf8',
+);
+
 const useToolResultsSource = readFileSync(
   resolve(process.cwd(), 'src/hooks/useToolResults.ts'),
   'utf8',
@@ -72,6 +77,12 @@ describe('MessagesProvider background derivation safety', () => {
   test('prompt execution uses immediate append for optimistic user-visible prompts', () => {
     expect(promptExecutionSource).toContain('appendMessageImmediate(commandMessage)');
     expect(promptExecutionSource).toContain('appendMessageImmediate(userMessage)');
+  });
+
+  test('history reload preserves locally submitted optimistic prompts instead of swallowing them', () => {
+    expect(promptExecutionSource).toContain('uiOptimisticPrompt: true');
+    expect(sessionStreamSource).toContain('mergePendingLocalSubmittedPrompts');
+    expect(sessionStreamSource).toContain('setMessages((currentMessages)');
   });
 
   test('Gemini same-length assistant deltas use the tail replacement queue instead of generic setMessages', () => {

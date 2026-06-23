@@ -12,6 +12,7 @@ import { getClaudeSyntaxTheme } from "@/lib/claudeSyntaxTheme";
 import { useTheme } from "@/contexts/ThemeContext";
 import { getLanguage } from "../common/languageDetector";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/hooks/useTranslation";
 import {
   countLinesUpTo,
   shouldRenderCodeBlockAsPlainText,
@@ -160,6 +161,7 @@ const ReadResultExpandedContent: React.FC<{
  */
 export const ReadResultWidget: React.FC<ReadResultWidgetProps> = ({ content, filePath }) => {
   const { theme } = useTheme();
+  const { t } = useTranslation();
 
   // 折叠态只做有上限的换行扫描，避免大文件 Read 结果还没展开就 full split。
   const lineSummary = countLinesUpTo(content, 10_000);
@@ -168,6 +170,7 @@ export const ReadResultWidget: React.FC<ReadResultWidgetProps> = ({ content, fil
     : lineSummary.lineCount.toLocaleString();
   // 所有文件默认折叠
   const [isExpanded, setIsExpanded] = useState(false);
+  const fileName = filePath ? filePath.split(/[/\\]/).pop() : t('tool.fileContent', '文件内容');
 
   return (
     <div className="w-full">
@@ -179,22 +182,30 @@ export const ReadResultWidget: React.FC<ReadResultWidgetProps> = ({ content, fil
         )}
         onClick={() => setIsExpanded(!isExpanded)}
       >
-        <div className="flex items-center gap-3 flex-1 min-w-0">
-          <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center gap-3 flex-1 min-w-0 overflow-hidden">
+          <div
+            className="flex items-center gap-2 flex-1 min-w-0 whitespace-nowrap overflow-hidden"
+            style={{ overflowWrap: 'normal', wordBreak: 'keep-all' }}
+          >
             <FileText className="h-4 w-4 text-blue-500 flex-shrink-0" />
-            <span className="text-sm font-medium text-muted-foreground">Read</span>
-            <span className="text-muted-foreground/30">|</span>
-            <span className="text-sm font-mono text-foreground/90 font-medium truncate" title={filePath}>
-              {filePath ? filePath.split(/[/\\]/).pop() : "File content"}
+            <span
+              className="text-sm font-medium text-muted-foreground flex-shrink-0 whitespace-nowrap"
+              style={{ whiteSpace: 'nowrap', wordBreak: 'keep-all' }}
+            >
+              {t('tool.read', '读取')}
+            </span>
+            <span className="text-muted-foreground/30 flex-shrink-0">|</span>
+            <span className="text-sm font-mono text-foreground/90 font-medium truncate min-w-0 flex-1" title={filePath}>
+              {fileName}
             </span>
             {filePath && (
-              <span className="text-xs text-muted-foreground truncate hidden sm:inline-block max-w-[200px] opacity-70">
+              <span className="text-xs text-muted-foreground truncate hidden md:inline-block max-w-[200px] opacity-70 flex-shrink-0">
                 {filePath}
               </span>
             )}
           </div>
           <span className="text-xs text-muted-foreground ml-1 flex-shrink-0 font-mono">
-            ({lineLabel} lines)
+            ({lineLabel} {t('tool.lines', '行')})
           </span>
         </div>
 

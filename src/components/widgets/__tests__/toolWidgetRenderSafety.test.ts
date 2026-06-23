@@ -22,6 +22,16 @@ const useToolTranslationSource = readFileSync(
   'utf8',
 );
 
+const thinkingBlockSource = readFileSync(
+  resolve(process.cwd(), 'src/components/message/ThinkingBlock.tsx'),
+  'utf8',
+);
+
+const readResultWidgetSource = readFileSync(
+  resolve(process.cwd(), 'src/components/widgets/file-operations/ReadResultWidget.tsx'),
+  'utf8',
+);
+
 describe('heavy tool output render safety', () => {
   test('MCPWidget keeps collapsed cards cheap and lazily builds large details only after expansion', () => {
     expect(mcpWidgetSource).toContain('getMcpContentSummary');
@@ -48,5 +58,21 @@ describe('heavy tool output render safety', () => {
     expect(useToolTranslationSource).toContain('React.useCallback(async (content: string, cacheKey: string) =>');
     expect(useToolTranslationSource).toContain('}, [])');
     expect(useToolTranslationSource).not.toContain('}, [translatedContent]');
+  });
+
+  test('thinking block header uses localized Chinese-friendly labels instead of hardcoded English', () => {
+    expect(thinkingBlockSource).toContain("t('widget.thinkingProcess'");
+    expect(thinkingBlockSource).toContain("t('common.characters'");
+    expect(thinkingBlockSource).not.toContain('>Thinking Process<');
+    expect(thinkingBlockSource).not.toContain('} chars');
+  });
+
+  test('read result header is localized and keeps long filenames on one row', () => {
+    expect(readResultWidgetSource).toContain("t('tool.read'");
+    expect(readResultWidgetSource).not.toContain('>Read<');
+    expect(readResultWidgetSource).toContain('whitespace-nowrap');
+    expect(readResultWidgetSource).toContain('flex-1 min-w-0');
+    expect(readResultWidgetSource).toContain("wordBreak: 'keep-all'");
+    expect(toolCallsGroupSource).toContain("wordBreak: 'normal'");
   });
 });

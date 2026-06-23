@@ -32,4 +32,14 @@ describe('system initialized render safety', () => {
     expect(toolsListSource).toContain('areToolListsEqual(prev.tools, next.tools)');
     expect(toolsListSource).not.toContain('tools.filter(tool =>');
   });
+
+  test('system initialization labels are localized instead of hardcoded English', () => {
+    expect(systemInitializedSource).toContain("t('systemInit.title'");
+    expect(systemInitializedSource).toContain("t('systemInit.sessionId'");
+    expect(systemInitializedSource).toContain("t('systemInit.workingDirectory'");
+    expect(toolsListSource).toContain("t('systemInit.availableTools'");
+    expect(toolsListSource).toContain("t('systemInit.mcpServices'");
+    expect(systemInitializedSource).not.toContain('>System Initialized<');
+    expect(toolsListSource).not.toContain('>Available Tools');
+  });
 });

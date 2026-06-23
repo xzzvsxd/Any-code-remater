@@ -13,6 +13,10 @@ import { toolRegistry } from '@/lib/toolRegistry';
 import { useToolResults } from '@/hooks/useToolResults';
 import { useTranslation } from '@/hooks/useTranslation';
 import { TaskListAggregateWidget } from '@/components/widgets';
+import {
+  SESSION_MESSAGE_LAYOUT_CHANGED_EVENT,
+  type SessionMessageLayoutChangedReason,
+} from '@/components/session/sessionMessageLayoutEvents';
 import type { TaskToolCall } from '@/components/widgets';
 import type { ClaudeStreamMessage } from '@/types/claude';
 import type { ToolResultEntry } from '@/contexts/MessagesContext';
@@ -23,6 +27,33 @@ interface ToolCall {
   name: string;
   input?: Record<string, any>;
 }
+
+const notifyLayoutChangedFromElement = (
+  element: HTMLElement | null,
+  reason: SessionMessageLayoutChangedReason,
+) => {
+  if (typeof window === 'undefined') return;
+
+  const rowElement = element?.closest('[data-item-key]');
+  const itemKey = rowElement?.getAttribute('data-item-key') ?? undefined;
+  const itemIndexRaw = rowElement?.getAttribute('data-index');
+  const itemIndex =
+    itemIndexRaw != null && itemIndexRaw.trim() !== ''
+      ? Number(itemIndexRaw)
+      : undefined;
+
+  window.requestAnimationFrame(() => {
+    window.dispatchEvent(
+      new CustomEvent(SESSION_MESSAGE_LAYOUT_CHANGED_EVENT, {
+        detail: {
+          reason,
+          itemKey,
+          itemIndex: Number.isFinite(itemIndex) ? itemIndex : undefined,
+        },
+      }),
+    );
+  });
+};
 
 export interface ToolCallsGroupProps {
   /** 消息数据 */
@@ -53,6 +84,7 @@ export const ToolCallsGroup: React.FC<ToolCallsGroupProps> = ({
   className,
 }) => {
   const { t } = useTranslation();
+  const rootRef = useRef<HTMLDivElement>(null);
   // 提取工具调用
   const toolCalls = useMemo((): ToolCall[] => {
     if (!message.message?.content || !Array.isArray(message.message.content)) {
@@ -91,6 +123,7 @@ export const ToolCallsGroup: React.FC<ToolCallsGroupProps> = ({
   const toggleCollapse = () => {
     const newState = !isCollapsed;
     setIsCollapsed(newState);
+    notifyLayoutChangedFromElement(rootRef.current, 'tool-calls-toggle');
     onToggle?.(newState);
   };
 
@@ -127,7 +160,7 @@ export const ToolCallsGroup: React.FC<ToolCallsGroupProps> = ({
   // 如果全部都是 task 工具，直接渲染聚合组件
   if (taskAggregateData && otherToolCalls.length === 0) {
     return (
-      <div className={cn('tool-single-call my-2', className)}>
+      <div ref={rootRef} className={cn('tool-single-call my-2', className)}>
         <TaskListAggregateWidget toolCalls={taskAggregateData} />
       </div>
     );
@@ -137,7 +170,7 @@ export const ToolCallsGroup: React.FC<ToolCallsGroupProps> = ({
   if (toolCalls.length === 1) {
     const tool = toolCalls[0];
     return (
-      <div className={cn('tool-single-call my-2', className)}>
+      <div ref={rootRef} className={cn('tool-single-call my-2', className)}>
         <SingleToolCall
           tool={tool}
           result={getResultById(tool.id)}
@@ -149,7 +182,7 @@ export const ToolCallsGroup: React.FC<ToolCallsGroupProps> = ({
   }
 
   return (
-    <div className={cn('tool-calls-group my-2 border border-border rounded-lg overflow-hidden', className)}>
+    <div ref={rootRef} className={cn('tool-calls-group my-2 border border-border rounded-lg overflow-hidden', className)}>
       {/* 折叠/展开头部 */}
       <button
         onClick={toggleCollapse}
@@ -342,7 +375,7 @@ const SingleToolCallComponent: React.FC<SingleToolCallProps> = ({ tool, result, 
 
       {/* 使用注册的工具渲染器 */}
       {renderer ? (
-        <div className="tool-widget-container">
+        <div className="tool-widget-container" style={{ overflowWrap: 'normal', wordBreak: 'normal' }}>
           <renderer.render {...renderProps} />
         </div>
       ) : (
@@ -528,6 +561,7 @@ const parseResultContent = (content: any, maxChars = Number.POSITIVE_INFINITY): 
 const FallbackToolDetails: React.FC<FallbackToolRenderProps> = ({ tool, result }) => {
   const { t } = useTranslation();
   const COLLAPSE_HEIGHT = 300;
+  const rootRef = useRef<HTMLDivElement>(null);
   const resultRef = useRef<HTMLPreElement>(null);
   const [shouldCollapse, setShouldCollapse] = useState(false);
   const [collapsed, setCollapsed] = useState(true);
@@ -541,16 +575,22 @@ const FallbackToolDetails: React.FC<FallbackToolRenderProps> = ({ tool, result }
     setCollapsed(need);
   }, [result]);
 
-  const toggle = () => setCollapsed((v) => !v);
+  const toggle = () => {
+    setCollapsed((v) => !v);
+    notifyLayoutChangedFromElement(rootRef.current, 'fallback-tool-toggle');
+  };
 
   // 处理结果内容
   const resultContent = result ? parseResultContent(result.content, MAX_FALLBACK_PREVIEW_CHARS) : '';
   const inputPreview = tool.input ? extractTextContent(tool.input, MAX_FALLBACK_PREVIEW_CHARS) : '';
 
   return (
-    <div className="fallback-tool-details space-y-2 text-xs">
+    <div ref={rootRef} className="fallback-tool-details space-y-2 text-xs">
       {tool.input && Object.keys(tool.input).length > 0 && (
-        <details className="text-xs">
+        <details
+          className="text-xs"
+          onToggle={() => notifyLayoutChangedFromElement(rootRef.current, 'fallback-tool-toggle')}
+        >
           <summary className="cursor-pointer text-muted-foreground hover:text-foreground select-none">
             {t('tools.inputParams')}
           </summary>
@@ -594,18 +634,22 @@ const FallbackToolDetails: React.FC<FallbackToolRenderProps> = ({ tool, result }
 
 const FallbackToolRender: React.FC<FallbackToolRenderProps> = ({ tool, result }) => {
   const { t } = useTranslation();
+  const rootRef = useRef<HTMLDivElement>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const hasInput = hasObjectContent(tool.input);
   const resultSummary = result ? getToolContentSummary(result.content) : { charCountEstimate: 0, truncated: false };
   const inputSummary = hasInput ? getToolContentSummary(tool.input) : { charCountEstimate: 0, truncated: false };
 
   return (
-    <div className="fallback-tool-render space-y-2 text-xs">
+    <div ref={rootRef} className="fallback-tool-render space-y-2 text-xs">
       <div className="flex items-center justify-between gap-2">
         <div className="text-muted-foreground">{t('tools.unregisteredTool')}</div>
         {(hasInput || result) && (
           <button
-            onClick={() => setDetailsOpen(open => !open)}
+            onClick={() => {
+              setDetailsOpen(open => !open);
+              notifyLayoutChangedFromElement(rootRef.current, 'fallback-tool-toggle');
+            }}
             className="text-[11px] text-primary underline underline-offset-2"
           >
             {detailsOpen ? t('tools.collapseContent') : t('tools.expandAll')}

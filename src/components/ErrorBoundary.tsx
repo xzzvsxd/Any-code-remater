@@ -6,6 +6,14 @@ import { Card, CardContent } from "@/components/ui/card";
 interface ErrorBoundaryProps {
   children: ReactNode;
   fallback?: (error: Error, reset: () => void) => ReactNode;
+  /**
+   * Reset the boundary when these values change.
+   *
+   * Virtualized rows can temporarily render malformed streaming data; once the
+   * same row is reconciled with complete history it must get another render
+   * chance instead of staying stuck in the fallback forever.
+   */
+  resetKeys?: unknown[];
   /** Optional callback when an error is caught */
   onError?: (error: Error, errorInfo: React.ErrorInfo) => void;
 }
@@ -14,6 +22,16 @@ interface ErrorBoundaryState {
   hasError: boolean;
   error: Error | null;
 }
+
+const haveResetKeysChanged = (prevKeys: unknown[] = [], nextKeys: unknown[] = []): boolean => {
+  if (prevKeys.length !== nextKeys.length) return true;
+  for (let index = 0; index < prevKeys.length; index += 1) {
+    if (!Object.is(prevKeys[index], nextKeys[index])) {
+      return true;
+    }
+  }
+  return false;
+};
 
 /**
  * ✅ Enhanced Error Boundary component to catch and display React rendering errors
@@ -46,6 +64,15 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
     // ✅ NEW: Call optional error handler (e.g., for monitoring/logging)
     this.props.onError?.(error, errorInfo);
+  }
+
+  componentDidUpdate(prevProps: ErrorBoundaryProps) {
+    if (
+      this.state.hasError &&
+      haveResetKeysChanged(prevProps.resetKeys, this.props.resetKeys)
+    ) {
+      this.setState({ hasError: false, error: null });
+    }
   }
 
   reset = () => {
@@ -98,4 +125,4 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
     return this.props.children;
   }
-} 
+}

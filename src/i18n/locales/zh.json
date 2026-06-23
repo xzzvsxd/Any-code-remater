@@ -297,7 +297,8 @@
     "invalid": "无效",
     "overview": "概览",
     "timeline": "时间线",
-    "sessions": "会话"
+    "sessions": "会话",
+    "characters": "字符"
   },
   "extensions": {
     "title": "Claude 扩展管理器",
@@ -1131,7 +1132,7 @@
     "waitingForResult": "等待执行结果...",
     "performanceModeEnabled": "⚠️ 文件变动较大，已启用性能模式",
     "unchangedLines": "... {{count}} 未更改的行 ...",
-    "thinkingProcess": "思考过程",
+    "thinkingProcess": "思维过程",
     "executeCommand": "执行命令",
     "copyCommand": "复制命令",
     "openWithDefault": "用系统默认应用打开",
@@ -1482,6 +1483,22 @@
     "cacheRead": "缓存读取",
     "criticalWarning": "上下文窗口接近上限，建议开始新会话",
     "highWarning": "上下文使用率较高"
+  },
+  "systemInit": {
+    "title": "系统初始化",
+    "sessionId": "会话 ID",
+    "model": "模型",
+    "workingDirectory": "工作目录",
+    "availableTools": "可用工具",
+    "mcpServices": "MCP 服务",
+    "noTools": "无工具可用",
+    "collapse": "收起",
+    "moreTools": "+{{count}} 个"
+  },
+  "tool": {
+    "read": "读取",
+    "fileContent": "文件内容",
+    "lines": "行"
   },
   "cliIndicator": {
     "escToCancel": "esc 取消",

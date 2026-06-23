@@ -297,7 +297,8 @@
     "invalid": "Invalid",
     "overview": "Overview",
     "timeline": "Timeline",
-    "sessions": "Sessions"
+    "sessions": "Sessions",
+    "characters": "chars"
   },
   "extensions": {
     "title": "Claude Extensions Manager",
@@ -1488,6 +1489,22 @@
     "cacheRead": "Cache Read",
     "criticalWarning": "Context window nearly full, consider starting a new session",
     "highWarning": "Context usage is high"
+  },
+  "systemInit": {
+    "title": "System Initialized",
+    "sessionId": "Session ID",
+    "model": "Model",
+    "workingDirectory": "Working Directory",
+    "availableTools": "Available Tools",
+    "mcpServices": "MCP Services",
+    "noTools": "No tools available",
+    "collapse": "Collapse",
+    "moreTools": "+{{count}} more"
+  },
+  "tool": {
+    "read": "Read",
+    "fileContent": "File content",
+    "lines": "lines"
   },
   "cliIndicator": {
     "escToCancel": "esc to cancel",

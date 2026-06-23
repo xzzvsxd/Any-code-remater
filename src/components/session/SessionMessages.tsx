@@ -2,6 +2,7 @@ import React, { useImperativeHandle, forwardRef, useEffect, useRef, useCallback 
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { StreamMessageV2 } from "@/components/message";
 import { MessageBranchButton } from "@/components/message/MessageBranchButton";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import type { MessageGroup } from "@/lib/subagentGrouping";
 import { useSession } from "@/contexts/SessionContext";
 import { CliProcessingIndicator } from "./CliProcessingIndicator";
@@ -10,8 +11,12 @@ import { evaluateBottomScrollFrame } from "./bottomScrollStabilizer";
 import { shouldPreserveScrollAnchorOnMeasuredSizeChange } from "./virtualizerScrollAdjustmentPolicy";
 import {
   SESSION_MESSAGES_OVERSCAN,
-  estimateMessageGroupHeight,
 } from "./messageHeightEstimate";
+import {
+  getMessageGroupRenderRevision,
+  getMessageGroupVirtualKey,
+  safeEstimateMessageGroupHeight,
+} from "./messageGroupVirtualization";
 import {
   SESSION_MESSAGE_LAYOUT_CHANGED_EVENT,
   type SessionMessageLayoutChangedDetail,
@@ -80,16 +85,10 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
   const { settings, sessionId, projectId, projectPath, onLinkDetected, onRevert, getPromptIndexForMessage, onBranch, getBranchPromptIndexForMessage } = useSession();
 
   // 消息组的稳定身份 key：用于 useVirtualizer 的 getItemKey 与高度缓存。
-  // 关键（修复 streaming 期间对话窗口上下乱跳/一直闪）：
-  // 默认虚拟列表按「索引」缓存测量值，消息重新分组(normal↔aggregated)或重渲染时缓存易失效，
-  // 退回粗估 estimateSize → 行高在「估算值↔真实值」间反复跳变 → 整列内容平移、肉眼可见地闪。
-  // 改用基于消息身份的稳定 key，让测量缓存跨重渲染存活，从源头消除跳变。
-  const getGroupKey = (group: MessageGroup | undefined, index: number): string => {
-    if (!group) return `idx-${index}`;
-    if (group.type === 'subagent') return `sub-${group.group.id}`;
-    if (group.type === 'aggregated') return `agg-${group.index}`;
-    return `n-${group.index}`;
-  };
+  // 不再按数组 index 命名。optimistic prompt 被历史回填、技术消息重新聚合、子代理归组时，
+  // index 会整体平移；如果复用旧 index key，TanStack 的测高缓存会串到另一条消息上，
+  // 造成行距错乱、重叠，严重时可见项被推出视口形成白屏。
+  const getGroupKey = getMessageGroupVirtualKey;
 
   // 已测量行的真实高度缓存（key -> 高度）。estimateSize 优先返回缓存值，
   // 使未在窗口内的行也能用「上次测得的真实高度」占位，而非粗估，避免重测时整列跳动。
@@ -163,7 +162,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
         if (cached) return cached;
       }
 
-      return estimateMessageGroupHeight(messageGroups[index]);
+      return safeEstimateMessageGroupHeight(messageGroups[index]);
     },
     overscan: SESSION_MESSAGES_OVERSCAN,
     // 让 TanStack Virtual 把 ResizeObserver 测量合并进 rAF。
@@ -197,7 +196,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
 
       const cached = key ? measuredHeightsRef.current.get(key) : undefined;
       if (cached && cached > 0) return cached;
-      return estimateMessageGroupHeight(messageGroups[measuredIndex]);
+      return safeEstimateMessageGroupHeight(messageGroups[measuredIndex]);
     },
   });
 
@@ -473,7 +472,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
         const group = messageGroups[i];
 
         // Only check normal-type user messages
-        if (group.type === 'normal' && group.message.type === 'user') {
+        if (group.type === 'normal' && group.message?.type === 'user') {
           if (getPromptIndexForMessage) {
             const msgPromptIndex = getPromptIndexForMessage(group.index);
             if (msgPromptIndex === promptIndex) {
@@ -605,15 +604,18 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
               return null;
             }
 
-              const message = messageGroup.type === 'normal' ? messageGroup.message : null;
-              const originalIndex = messageGroup.type === 'normal' ? messageGroup.index : undefined;
+              const message = messageGroup.type === 'normal' ? (messageGroup.message ?? null) : null;
+              const originalIndex =
+                messageGroup.type === 'normal' && Number.isFinite(messageGroup.index)
+                  ? messageGroup.index
+                  : undefined;
               const promptIndex = message && message.type === 'user' && originalIndex !== undefined && getPromptIndexForMessage
                 ? getPromptIndexForMessage(originalIndex)
                 : undefined;
 
               // 分支锚点：仅对「用户消息 / 助手最终回复 / 中断消息」允许分支。
               // 聚合的工具/思考过程、子代理入口卡片不是对话节点，不显示分支按钮。
-              const branchableMessage = messageGroup.type === 'normal' ? messageGroup.message : null;
+              const branchableMessage = messageGroup.type === 'normal' ? (messageGroup.message ?? null) : null;
               const isInterruption =
                 branchableMessage?.type === 'system' &&
                 (branchableMessage?.subtype === 'execution-cancelled' ||
@@ -645,18 +647,37 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
                 >
                   {/* group 容器：hover 时在右上角显示分支按钮，不打断现有消息渲染 */}
                   <div className="relative group/msg">
-                    {/* ✅ 架构优化: StreamMessageV2 现在从 SessionContext 获取数据 */}
-                    <StreamMessageV2
-                      messageGroup={messageGroup}
-                      onLinkDetected={onLinkDetected}
-                      claudeSettings={settings}
-                      isStreaming={isStreaming}
-                      promptIndex={promptIndex}
-                      sessionId={sessionId ?? undefined}
-                      projectId={projectId ?? undefined}
-                      projectPath={projectPath}
-                      onRevert={onRevert}
-                    />
+                    {/* ✅ 防白屏：单条消息 / 单个工具渲染异常只能降级当前行，不能击穿整个会话窗口 */}
+                    <ErrorBoundary
+                      resetKeys={[
+                        getGroupKey(messageGroup, virtualItem.index),
+                        getMessageGroupRenderRevision(messageGroup, virtualItem.index),
+                        isStreaming,
+                      ]}
+                      fallback={(error) => (
+                        <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+                          <div className="font-medium">消息渲染失败，已跳过此条以防止会话白屏。</div>
+                          {error?.message && (
+                            <pre className="mt-2 max-h-24 overflow-auto whitespace-pre-wrap break-words text-[11px] opacity-80">
+                              {error.message}
+                            </pre>
+                          )}
+                        </div>
+                      )}
+                    >
+                      {/* ✅ 架构优化: StreamMessageV2 现在从 SessionContext 获取数据 */}
+                      <StreamMessageV2
+                        messageGroup={messageGroup}
+                        onLinkDetected={onLinkDetected}
+                        claudeSettings={settings}
+                        isStreaming={isStreaming}
+                        promptIndex={promptIndex}
+                        sessionId={sessionId ?? undefined}
+                        projectId={projectId ?? undefined}
+                        projectPath={projectPath}
+                        onRevert={onRevert}
+                      />
+                    </ErrorBoundary>
                     {/* 分支按钮：仅可分支节点显示，且像复制按钮一样 hover 才浮现 */}
                     {!isStreaming && branchPromptIndex >= 0 && (
                       <div className="absolute top-1 right-1 z-20 opacity-0 group-hover/msg:opacity-100 transition-opacity">

@@ -297,7 +297,8 @@
     "invalid": "無效",
     "overview": "概覽",
     "timeline": "時間軸",
-    "sessions": "對話"
+    "sessions": "對話",
+    "characters": "字元"
   },
   "extensions": {
     "title": "Claude 擴充功能管理器",
@@ -1124,7 +1125,7 @@
     "waitingForResult": "等待執行結果...",
     "performanceModeEnabled": "⚠️ 檔案變動較大，已啟用效能模式",
     "unchangedLines": "... {{count}} 未更改的行 ...",
-    "thinkingProcess": "思考過程",
+    "thinkingProcess": "思維過程",
     "executeCommand": "執行命令",
     "copyCommand": "複製命令",
     "itemsCount": "{{count}} 項",
@@ -1462,6 +1463,22 @@
     "cacheRead": "快取讀取",
     "criticalWarning": "上下文視窗接近上限，建議開始新對話",
     "highWarning": "上下文使用率較高"
+  },
+  "systemInit": {
+    "title": "系統初始化",
+    "sessionId": "對話 ID",
+    "model": "模型",
+    "workingDirectory": "工作目錄",
+    "availableTools": "可用工具",
+    "mcpServices": "MCP 服務",
+    "noTools": "無工具可用",
+    "collapse": "收起",
+    "moreTools": "+{{count}} 個"
+  },
+  "tool": {
+    "read": "讀取",
+    "fileContent": "檔案內容",
+    "lines": "行"
   },
   "cliIndicator": {
     "escToCancel": "esc 取消",

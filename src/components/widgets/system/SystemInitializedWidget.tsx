@@ -9,6 +9,7 @@ import React, { useCallback, useMemo, useState } from "react";
 import { Settings, Fingerprint, Cpu, FolderOpen } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { areToolListsEqual, ToolsList } from "./components/ToolsList";
+import { useTranslation } from "@/hooks/useTranslation";
 
 export interface SystemInitializedWidgetProps {
   /** 会话 ID */
@@ -58,6 +59,7 @@ export const SystemInitializedWidget = React.memo<SystemInitializedWidgetProps>(
   tools = EMPTY_TOOLS,
   timestamp,
 }) => {
+  const { t } = useTranslation();
   const [mcpExpanded, setMcpExpanded] = useState(false);
   const formattedTimestamp = useMemo(() => formatTimestamp(timestamp), [timestamp]);
   const handleMcpToggle = useCallback(() => {
@@ -72,7 +74,7 @@ export const SystemInitializedWidget = React.memo<SystemInitializedWidgetProps>(
           <div className="flex-1 space-y-4">
             {/* 头部 */}
             <div className="flex items-center justify-between">
-              <h4 className="font-semibold text-sm">System Initialized</h4>
+              <h4 className="font-semibold text-sm">{t('systemInit.title', '系统初始化')}</h4>
               {formattedTimestamp && (
                 <span className="text-xs text-muted-foreground font-mono">
                   {formattedTimestamp}
@@ -85,7 +87,7 @@ export const SystemInitializedWidget = React.memo<SystemInitializedWidgetProps>(
               {sessionId && (
                 <div className="flex items-center gap-2 text-xs">
                   <Fingerprint className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="text-muted-foreground">Session ID:</span>
+                  <span className="text-muted-foreground">{t('systemInit.sessionId', '会话 ID')}:</span>
                   <code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">
                     {sessionId}
                   </code>
@@ -95,7 +97,7 @@ export const SystemInitializedWidget = React.memo<SystemInitializedWidgetProps>(
               {model && (
                 <div className="flex items-center gap-2 text-xs">
                   <Cpu className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="text-muted-foreground">Model:</span>
+                  <span className="text-muted-foreground">{t('systemInit.model', '模型')}:</span>
                   <code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">
                     {model}
                   </code>
@@ -105,7 +107,7 @@ export const SystemInitializedWidget = React.memo<SystemInitializedWidgetProps>(
               {cwd && (
                 <div className="flex items-center gap-2 text-xs">
                   <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="text-muted-foreground">Working Directory:</span>
+                  <span className="text-muted-foreground">{t('systemInit.workingDirectory', '工作目录')}:</span>
                   <code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded break-all">
                     {cwd}
                   </code>

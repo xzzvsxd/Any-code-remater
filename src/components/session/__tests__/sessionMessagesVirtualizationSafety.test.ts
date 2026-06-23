@@ -32,6 +32,16 @@ const toolsListSource = readFileSync(
   'utf8',
 );
 
+const toolCallsGroupSource = readFileSync(
+  resolve(process.cwd(), 'src/components/message/ToolCallsGroup.tsx'),
+  'utf8',
+);
+
+const errorBoundarySource = readFileSync(
+  resolve(process.cwd(), 'src/components/ErrorBoundary.tsx'),
+  'utf8',
+);
+
 describe('session message virtualization safety', () => {
   test('does not layer a custom ResizeObserver on top of TanStack Virtual row measurement', () => {
     expect(sessionMessagesSource).not.toContain('new ResizeObserver');
@@ -91,6 +101,20 @@ describe('session message virtualization safety', () => {
     expect(sessionMessagesSource).not.toContain('<motion.div');
   });
 
+  test('each virtualized message row has an error boundary so one bad widget cannot white-screen the session', () => {
+    expect(sessionMessagesSource).toContain('import { ErrorBoundary }');
+    expect(sessionMessagesSource).toContain('<ErrorBoundary');
+    expect(sessionMessagesSource).toContain('resetKeys');
+    expect(sessionMessagesSource).toContain('消息渲染失败');
+    expect(sessionMessagesSource).toContain('<StreamMessageV2');
+  });
+
+  test('row error boundaries reset when virtual row identity changes after streaming/history reconciliation', () => {
+    expect(errorBoundarySource).toContain('resetKeys?: unknown[]');
+    expect(errorBoundarySource).toContain('componentDidUpdate');
+    expect(errorBoundarySource).toContain('haveResetKeysChanged');
+  });
+
   test('collapsed thinking rows invalidate stale virtual height cache and remeasure the list', () => {
     expect(thinkingBlockSource).toContain('SESSION_MESSAGE_LAYOUT_CHANGED_EVENT');
     expect(thinkingBlockSource).toContain("closest('[data-item-key]')");
@@ -124,5 +148,15 @@ describe('session message virtualization safety', () => {
     expect(sessionMessagesSource).toContain('prevIsLoadingRef');
     expect(sessionMessagesSource).toContain("reason: 'streaming-ended'");
     expect(sessionMessagesSource).toContain('scheduleVirtualizerRemeasure');
+  });
+
+  test('tool and system init expand/collapse controls notify the virtualizer about height changes', () => {
+    expect(toolsListSource).toContain('SESSION_MESSAGE_LAYOUT_CHANGED_EVENT');
+    expect(toolsListSource).toContain("notifyLayoutChanged('system-tools-toggle')");
+    expect(toolsListSource).toContain("notifyLayoutChanged('mcp-tools-toggle')");
+
+    expect(toolCallsGroupSource).toContain('SESSION_MESSAGE_LAYOUT_CHANGED_EVENT');
+    expect(toolCallsGroupSource).toContain("'tool-calls-toggle'");
+    expect(toolCallsGroupSource).toContain("'fallback-tool-toggle'");
   });
 });

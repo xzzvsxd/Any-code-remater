@@ -63,4 +63,20 @@ describe('prompt index cache', () => {
     expect(getPromptIndexForDisplayableMessage([], [replacementAnswer], 0, updated.promptIndexByMessage)).toBe(-1);
     expect(getBranchPromptIndexForDisplayableMessage([], [replacementAnswer], 0, updated.branchPromptIndexByMessage)).toBe(1);
   });
+
+  test('does not count UI-only optimistic prompts in backend prompt indexes', () => {
+    const firstPrompt = user('real prompt');
+    const optimisticPrompt: ClaudeStreamMessage = {
+      ...user('local only prompt'),
+      uiOnly: true,
+      uiOptimisticPrompt: true,
+      excludeFromAiContext: true,
+    };
+    const answer = assistant('answer after optimistic prompt');
+    const cache = updatePromptIndexMapsCache(null, [firstPrompt, optimisticPrompt, answer]);
+
+    expect(getPromptIndexForDisplayableMessage([], [firstPrompt], 0, cache.promptIndexByMessage)).toBe(0);
+    expect(getPromptIndexForDisplayableMessage([], [optimisticPrompt], 0, cache.promptIndexByMessage)).toBe(-1);
+    expect(getBranchPromptIndexForDisplayableMessage([], [answer], 0, cache.branchPromptIndexByMessage)).toBe(1);
+  });
 });

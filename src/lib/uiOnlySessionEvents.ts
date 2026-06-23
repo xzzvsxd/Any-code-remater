@@ -52,6 +52,21 @@ const getIdentityFirstText = (message: ClaudeStreamMessage): string => {
   return text.slice(0, 120);
 };
 
+const getFullFirstText = (message: ClaudeStreamMessage): string => {
+  const content = message.message?.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  const textPart = content.find((c: any) => c?.type === 'text');
+  const text = textPart && typeof (textPart as any).text === 'string'
+    ? (textPart as any).text
+    : textPart && typeof (textPart as any).content === 'string'
+      ? (textPart as any).content
+      : '';
+  return text;
+};
+
+const normalizePromptText = (value: string): string => value.trim().replace(/\s+/g, ' ');
+
 const getMessageIdentity = (message: ClaudeStreamMessage): string => {
   const explicitId = (message as any).uiEventId || (message as any).id;
   if (typeof explicitId === 'string' && explicitId.trim()) {
@@ -77,6 +92,65 @@ const getMessageTime = (message: ClaudeStreamMessage): number => {
   if (typeof raw !== 'string') return Number.NaN;
   const parsed = Date.parse(raw);
   return Number.isFinite(parsed) ? parsed : Number.NaN;
+};
+
+const isUiOnly = (message: ClaudeStreamMessage): boolean => (message as any).uiOnly === true;
+
+const isLocalSubmittedPrompt = (message: ClaudeStreamMessage): boolean => (
+  (message as any).uiOptimisticPrompt === true
+  && (message.type === 'user' || (message.type === 'system' && message.subtype === 'command-meta'))
+  && normalizePromptText(getFullFirstText(message)).length > 0
+);
+
+const getSubmittedPromptIdentity = (message: ClaudeStreamMessage): string | null => {
+  if (message.type !== 'user' && !(message.type === 'system' && message.subtype === 'command-meta')) {
+    return null;
+  }
+
+  const text = normalizePromptText(getFullFirstText(message));
+  if (!text) return null;
+
+  return [
+    message.type,
+    message.subtype || '',
+    message.engine || '',
+    text,
+  ].join('\u001f');
+};
+
+const maxNonUiOnlyMessageTime = (messages: ClaudeStreamMessage[]): number => (
+  messages.reduce((max, message) => {
+    if (isUiOnly(message)) return max;
+    const time = getMessageTime(message);
+    return Number.isFinite(time) && time > max ? time : max;
+  }, Number.NEGATIVE_INFINITY)
+);
+
+const loadedHistoryAlreadyContainsPrompt = (
+  loadedMessages: ClaudeStreamMessage[],
+  candidate: ClaudeStreamMessage,
+): boolean => {
+  const candidateIdentity = getSubmittedPromptIdentity(candidate);
+  if (!candidateIdentity) return true;
+
+  const candidateTime = getMessageTime(candidate);
+  const loadedRealCutoff = maxNonUiOnlyMessageTime(loadedMessages);
+
+  // 如果当前历史的真实消息时间线还停在本地提交之前，说明这是“历史加载晚到”
+  // 的旧快照；即使旧历史里有相同文本，也不能用纯文本去重，否则用户连续发
+  // 两次相同 prompt 时第二条会被吞。
+  if (
+    Number.isFinite(candidateTime)
+    && Number.isFinite(loadedRealCutoff)
+    && candidateTime > loadedRealCutoff + 250
+  ) {
+    return false;
+  }
+
+  return loadedMessages.some((message) => {
+    if (isUiOnly(message)) return false;
+    return getSubmittedPromptIdentity(message) === candidateIdentity;
+  });
 };
 
 export function getUiOnlySessionEventsStorageKey(params: UiOnlySessionMessageParams): string | null {
@@ -201,8 +275,6 @@ export function mergeUiOnlySessionMessages(
   const indexOf = new Map<ClaudeStreamMessage, number>();
   merged.forEach((message, index) => indexOf.set(message, index));
 
-  const isUiOnly = (m: ClaudeStreamMessage) => (m as any).uiOnly === true;
-
   return [...merged].sort((a, b) => {
     // 两条都是真实历史消息：严格按原始顺序，不比时间戳（防止重排打乱 JSONL 物理序）。
     if (!isUiOnly(a) && !isUiOnly(b)) {
@@ -216,4 +288,33 @@ export function mergeUiOnlySessionMessages(
     }
     return left - right;
   });
+}
+
+export function mergePendingLocalSubmittedPrompts(
+  loadedMessages: ClaudeStreamMessage[],
+  currentMessages: ClaudeStreamMessage[],
+): ClaudeStreamMessage[] {
+  const pendingPrompts = currentMessages.filter(isLocalSubmittedPrompt);
+  if (pendingPrompts.length === 0) return loadedMessages;
+
+  const loadedIdentities = new Set(loadedMessages.map(getMessageIdentity));
+  const promptsToKeep: ClaudeStreamMessage[] = [];
+
+  for (const prompt of pendingPrompts) {
+    const normalizedPrompt = normalizeUiOnlySessionMessage(prompt);
+    const identity = getMessageIdentity(normalizedPrompt);
+    if (loadedIdentities.has(identity)) {
+      continue;
+    }
+
+    if (loadedHistoryAlreadyContainsPrompt(loadedMessages, normalizedPrompt)) {
+      continue;
+    }
+
+    loadedIdentities.add(identity);
+    promptsToKeep.push(normalizedPrompt);
+  }
+
+  if (promptsToKeep.length === 0) return loadedMessages;
+  return mergeUiOnlySessionMessages(loadedMessages, promptsToKeep);
 }

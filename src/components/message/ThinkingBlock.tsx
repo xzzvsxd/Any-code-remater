@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { BrainCircuit, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/hooks/useTranslation";
 import {
   SESSION_MESSAGE_LAYOUT_CHANGED_EVENT,
   type SessionMessageLayoutChangedReason,
@@ -31,6 +32,7 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
   isStreaming = false,
   autoCollapseDelay = 2500,
 }) => {
+  const { t } = useTranslation();
   const rootRef = useRef<HTMLDivElement>(null);
   // 历史消息首帧就保持收起，避免先按展开态测出大行高，再折叠后留下虚拟列表旧高度空白。
   // 正在流式输出的 thinking 仍然默认展开。
@@ -183,7 +185,7 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
         className="w-full cursor-pointer px-3 py-2 text-xs text-amber-700 dark:text-amber-300 font-medium hover:bg-amber-500/10 transition-colors select-none flex items-center gap-2 outline-none text-left"
       >
         <BrainCircuit className="w-3.5 h-3.5 opacity-70" />
-        <span>Thinking Process</span>
+        <span>{t('widget.thinkingProcess', '思维过程')}</span>
 
         {showStreamingCursor && (
           <span className="inline-block w-1.5 h-3 bg-amber-500 rounded-full" />
@@ -191,7 +193,7 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
 
         <span className="ml-auto flex items-center gap-2">
           <span className="text-[10px] opacity-60">
-            {content.length} chars
+            {content.length} {t('common.characters', '字符')}
           </span>
           <ChevronDown
             className={cn(
