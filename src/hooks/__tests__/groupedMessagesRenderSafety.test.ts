@@ -14,6 +14,14 @@ const subagentGroupingSource = readFileSync(
   'utf8',
 );
 
+const rawTaggedThinking = (text: string): ClaudeStreamMessage => ({
+  type: 'assistant',
+  message: {
+    role: 'assistant',
+    content: [{ type: 'text', text: `<thinking>${text}</thinking>` }],
+  },
+});
+
 describe('grouped messages render safety', () => {
   test('uses append-only grouping cache for common streaming updates', () => {
     expect(groupedMessagesSource).toContain('GroupedMessagesCache');
@@ -59,6 +67,22 @@ describe('grouped messages render safety', () => {
       type: 'normal',
       message: replacementAnswer,
       index: 1,
+    });
+  });
+
+  test('aggregates assistant messages that only contain raw tagged thinking text', () => {
+    const firstThinking = rawTaggedThinking('check layout');
+    const secondThinking = rawTaggedThinking('continue reasoning');
+
+    const grouped = updateGroupedMessagesCache(null, [firstThinking, secondThinking], {
+      enableSubagentGrouping: true,
+    });
+
+    expect(grouped.groups).toHaveLength(1);
+    expect(grouped.groups[0]).toMatchObject({
+      type: 'aggregated',
+      messages: [firstThinking, secondThinking],
+      index: 0,
     });
   });
 });

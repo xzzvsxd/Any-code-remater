@@ -8,6 +8,7 @@
  */
 
 import type { ClaudeStreamMessage } from '../types/claude';
+import { extractTaggedThinkingFromText } from './aiMessageContent';
 
 /**
  * 子代理消息组
@@ -138,6 +139,11 @@ export function getTechnicalMessageType(message: ClaudeStreamMessage): 'tool' | 
   if (message.type !== 'assistant') return null;
   
   const content = message.message?.content;
+  if (typeof content === 'string') {
+    const extracted = extractTaggedThinkingFromText(content);
+    if (extracted.text) return null;
+    return extracted.thinkingBlocks.length > 0 ? 'thinking' : null;
+  }
   if (!Array.isArray(content)) return null;
 
   let hasThinking = false;
@@ -150,7 +156,11 @@ export function getTechnicalMessageType(message: ClaudeStreamMessage): 'tool' | 
     } else if (item.type === 'tool_use' || item.type === 'tool_result') {
       hasTool = true;
     } else if (item.type === 'text') {
-      if (item.text && item.text.trim().length > 0) {
+      const extracted = extractTaggedThinkingFromText(item.text ?? item.content);
+      if (extracted.thinkingBlocks.length > 0) {
+        hasThinking = true;
+      }
+      if (extracted.text) {
         hasText = true;
       }
     }
