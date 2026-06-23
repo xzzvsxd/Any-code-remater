@@ -296,8 +296,12 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
    * 这里把“明确会改变布局高度”的事件合并进一个 rAF：
    * - 有 itemKey/itemIndex：只处理这一行，避免大会话全量抖动；
    * - 没有定位信息：清空缓存做兜底重测；
-   * - 先 rowVirtualizer.measure() 清 TanStack 内部缓存；
-   * - 再把当前可见 DOM 的真实高度用 resizeItem(index, height) 写回内部 item cache。
+   * - 全量 revision/streaming 结束：rowVirtualizer.measure() 清 TanStack 内部缓存；
+   * - 单行折叠/展开：绝不清全表 itemSizeCache，只把目标可见行真实高度 resizeItem 回去。
+   *
+   * 关键：`rowVirtualizer.measure()` 会清空所有内部 itemSizeCache。若每次 Thinking/tool
+   * 单行折叠都全量清缓存，长会话里其它离屏行会退回估算高度，totalSize 会被反复拉扯，
+   * 表现就是“元素乱飞 / 大片空白 / 还能继续往下滚”。所以 targeted 事件只改目标行。
    */
   const scheduleVirtualizerRemeasure = useCallback((detail?: SessionMessageLayoutChangedDetail) => {
     const measurementKey = detail?.measurementKey;
@@ -359,13 +363,22 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       pendingRemeasureMeasurementKeysRef.current.clear();
       pendingRemeasureItemKeysRef.current.clear();
       pendingRemeasureItemIndexesRef.current.clear();
-      rowVirtualizer.measure();
-      measureVisibleRowsIntoVirtualizer({
-        all: shouldMeasureAllVisible,
-        measurementKeys: targetMeasurementKeys,
-        itemKeys: targetItemKeys,
-        itemIndexes: targetItemIndexes,
-      });
+      if (shouldMeasureAllVisible) {
+        rowVirtualizer.measure();
+        measureVisibleRowsIntoVirtualizer({
+          all: true,
+          measurementKeys: targetMeasurementKeys,
+          itemKeys: targetItemKeys,
+          itemIndexes: targetItemIndexes,
+        });
+      } else {
+        measureVisibleRowsIntoVirtualizer({
+          all: false,
+          measurementKeys: targetMeasurementKeys,
+          itemKeys: targetItemKeys,
+          itemIndexes: targetItemIndexes,
+        });
+      }
     });
   }, [
     deleteMeasuredHeightsForItemKey,

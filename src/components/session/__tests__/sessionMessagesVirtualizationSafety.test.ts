@@ -125,7 +125,7 @@ describe('session message virtualization safety', () => {
     expect(sessionMessagesSource).toContain('SESSION_MESSAGE_LAYOUT_CHANGED_EVENT');
     expect(sessionMessagesSource).toContain('scheduleVirtualizerRemeasure');
     expect(sessionMessagesSource).toContain('measuredHeightsRef.current.delete(measurementKey)');
-    expect(sessionMessagesSource).toContain('rowVirtualizer.measure()');
+    expect(sessionMessagesSource).toContain('measureVisibleRowsIntoVirtualizer');
   });
 
   test('streamed thinking rows schedule one delayed auto-collapse after streaming ends', () => {
@@ -156,6 +156,15 @@ describe('session message virtualization safety', () => {
     expect(sessionMessagesSource).toContain('getMessageGroupsRenderSignature');
     expect(sessionMessagesSource).toContain('messageGroupsRenderSignature');
     expect(sessionMessagesSource).toContain("reason: 'message-groups-revised'");
+    expect(sessionMessagesSource).toContain('if (shouldMeasureAllVisible) {\n        rowVirtualizer.measure();');
+  });
+
+  test('targeted layout changes resize only the changed visible row instead of clearing every item size', () => {
+    expect(sessionMessagesSource).not.toContain(`pendingRemeasureItemIndexesRef.current.clear();
+      rowVirtualizer.measure();
+      measureVisibleRowsIntoVirtualizer`);
+    expect(sessionMessagesSource).toContain('if (shouldMeasureAllVisible) {');
+    expect(sessionMessagesSource).toContain('} else {\n        measureVisibleRowsIntoVirtualizer({');
   });
 
   test('virtualizer spacing uses TanStack padding instead of CSS padding outside totalSize accounting', () => {
