@@ -8,6 +8,7 @@
 import { useMemo, useRef } from 'react';
 import type { ClaudeStreamMessage } from '@/types/claude';
 import { getRenderableAiContent } from '@/lib/aiMessageContent';
+import { getMessageContent, getMessageContentArray } from '@/lib/messageContentAccess';
 
 /**
  * 过滤选项
@@ -28,7 +29,7 @@ function isStartupWarningMessage(message: ClaudeStreamMessage): boolean {
   if (message.type !== 'system') return false;
 
   // 获取消息内容
-  const content = message.message?.content;
+  const content = getMessageContent(message);
   let text = '';
 
   if (typeof content === 'string') {
@@ -36,7 +37,7 @@ function isStartupWarningMessage(message: ClaudeStreamMessage): boolean {
   } else if (Array.isArray(content)) {
     text = content
       .filter((item: any) => item.type === 'text')
-      .map((item: any) => item.text || '')
+      .map((item: any) => item.text ?? item.content ?? '')
       .join('');
   }
 
@@ -61,7 +62,7 @@ function isStartupWarningMessage(message: ClaudeStreamMessage): boolean {
 function isWarmupMessage(message: ClaudeStreamMessage): boolean {
   if (message.type !== 'user') return false;
 
-  const content = message.message?.content;
+  const content = getMessageContent(message);
   let text = '';
 
   if (typeof content === 'string') {
@@ -69,7 +70,7 @@ function isWarmupMessage(message: ClaudeStreamMessage): boolean {
   } else if (Array.isArray(content)) {
     text = content
       .filter((item: any) => item.type === 'text')
-      .map((item: any) => item.text || '')
+      .map((item: any) => item.text ?? item.content ?? '')
       .join('');
   }
 
@@ -119,7 +120,7 @@ function shouldSkipToolResultForToolUse(toolUse: any): boolean {
 }
 
 function messageHasExtractableContent(message: ClaudeStreamMessage): boolean {
-  const content = message.message?.content ?? (message as any).content;
+  const content = getMessageContent(message);
   if (typeof content === 'string') {
     return content.trim().length > 0;
   }
@@ -190,8 +191,8 @@ function shouldRenderMessageAsNull(message: ClaudeStreamMessage): boolean {
 
 function rememberSkippableToolUses(message: ClaudeStreamMessage, skippableToolUseIds: Set<string>): void {
   if (message.type !== 'assistant') return;
-  const content = message.message?.content;
-  if (!Array.isArray(content)) return;
+  const content = getMessageContentArray(message);
+  if (!content) return;
 
   for (const item of content) {
     if (item?.type !== 'tool_use' || !item.id) continue;
@@ -240,10 +241,8 @@ export interface DisplayableMessagesCache extends DisplayableFilterState {
 }
 
 function hasVisibleUserContent(message: ClaudeStreamMessage, skippableToolUseIds: Set<string>): boolean {
-  const msg = message.message;
   void skippableToolUseIds;
-  if (!msg) return false;
-  const rawContent = msg.content as unknown;
+  const rawContent = getMessageContent(message);
 
   // 检查是否有空内容
   if (!rawContent || (Array.isArray(rawContent) && rawContent.length === 0)) {

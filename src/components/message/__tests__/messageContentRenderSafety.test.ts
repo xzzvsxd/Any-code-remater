@@ -37,6 +37,11 @@ const thinkingBlockSource = readFileSync(
   'utf8',
 );
 
+const aiMessageSource = readFileSync(
+  resolve(process.cwd(), 'src/components/message/AIMessage.tsx'),
+  'utf8',
+);
+
 const sessionMessagesSource = readFileSync(
   resolve(process.cwd(), 'src/components/session/SessionMessages.tsx'),
   'utf8',
@@ -101,6 +106,15 @@ describe('message render safety wiring', () => {
     expect(thinkingBlockSource).not.toContain('transition-all');
     expect(thinkingBlockSource).not.toContain('max-h-[500px]');
     expect(thinkingBlockSource).toContain('autoCollapseTimerRef');
+  });
+
+  test('AIMessage renders ordered content parts instead of separate text/thinking buckets', () => {
+    expect(aiMessageSource).toContain('getRenderableAiContentParts(message)');
+    expect(aiMessageSource).toContain('contentParts.map');
+    expect(aiMessageSource).toContain("part.type === 'thinking'");
+    expect(aiMessageSource).toContain("part.type === 'text'");
+    expect(aiMessageSource).not.toContain('{text && (');
+    expect(aiMessageSource).not.toContain('{hasThinking && thinkingContent && (');
   });
 
   test('message scroll container does not blanket-disable loader animations', () => {

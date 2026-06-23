@@ -50,4 +50,18 @@ describe('AI message content render safety', () => {
     expect(parts.map((part) => part.type)).toEqual(['text', 'thinking', 'text']);
     expect(parts.map((part) => part.content)).toEqual(['开头', '中间思考', '结尾']);
   });
+
+  test('reads legacy top-level assistant content so older history does not collapse to thinking-only rows', () => {
+    const parts = getRenderableAiContentParts({
+      type: 'assistant',
+      content: [
+        { type: 'thinking', thinking: '历史思考' },
+        { type: 'text', text: '历史正文' },
+        { type: 'tool_use', id: 'toolu_1', name: 'Read', input: { file_path: 'a.ts' } },
+      ],
+    } as any);
+
+    expect(parts.map((part) => part.type)).toEqual(['thinking', 'text', 'tools']);
+    expect(parts.map((part) => part.content)).toEqual(['历史思考', '历史正文', '']);
+  });
 });

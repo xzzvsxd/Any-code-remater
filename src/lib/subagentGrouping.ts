@@ -9,6 +9,7 @@
 
 import type { ClaudeStreamMessage } from '../types/claude';
 import { extractTaggedThinkingFromText } from './aiMessageContent';
+import { getMessageContent } from './messageContentAccess';
 
 /**
  * 子代理消息组
@@ -44,7 +45,7 @@ export type MessageGroup =
 export function hasTaskToolCall(message: ClaudeStreamMessage): boolean {
   if (message.type !== 'assistant') return false;
   
-  const content = message.message?.content;
+  const content = getMessageContent(message);
   if (!Array.isArray(content)) return false;
   
   return content.some((item: any) => 
@@ -59,7 +60,7 @@ export function hasTaskToolCall(message: ClaudeStreamMessage): boolean {
 export function extractTaskToolUseIds(message: ClaudeStreamMessage): string[] {
   if (!hasTaskToolCall(message)) return [];
 
-  const content = message.message?.content as any[];
+  const content = getMessageContent(message) as any[];
   return content
     .filter((item: any) => item.type === 'tool_use' && item.name?.toLowerCase() === 'task')
     .map((item: any) => item.id)
@@ -74,7 +75,7 @@ export function extractTaskToolDetails(message: ClaudeStreamMessage): Map<string
 
   if (!hasTaskToolCall(message)) return details;
 
-  const content = message.message?.content as any[];
+  const content = getMessageContent(message) as any[];
   content
     .filter((item: any) => item.type === 'tool_use' && item.name?.toLowerCase() === 'task')
     .forEach((item: any) => {
@@ -138,7 +139,7 @@ export function getTechnicalMessageType(message: ClaudeStreamMessage): 'tool' | 
   // 必须是 assistant 类型
   if (message.type !== 'assistant') return null;
   
-  const content = message.message?.content;
+  const content = getMessageContent(message);
   if (typeof content === 'string') {
     const extracted = extractTaggedThinkingFromText(content);
     if (extracted.text) return null;

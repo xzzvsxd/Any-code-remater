@@ -8,6 +8,7 @@ import { SubagentMessageGroup } from "./SubagentMessageGroup";
 import type { ClaudeStreamMessage } from '@/types/claude';
 import type { RewindMode } from '@/lib/api';
 import type { MessageGroup } from '@/lib/subagentGrouping';
+import { getMessageContent } from '@/lib/messageContentAccess';
 
 interface StreamMessageV2Props {
   message?: ClaudeStreamMessage;
@@ -100,20 +101,21 @@ const StreamMessageV2Component: React.FC<StreamMessageV2Props> = ({
       const aggregatedContent: any[] = [];
 
       messages.forEach(msg => {
+        const content = getMessageContent(msg);
         // 提取 assistant 消息的内容
-        if (msg.message?.content && Array.isArray(msg.message.content)) {
-          aggregatedContent.push(...msg.message.content);
-        } else if (typeof msg.message?.content === 'string') {
+        if (Array.isArray(content)) {
+          aggregatedContent.push(...content);
+        } else if (typeof content === 'string' && msg.type !== 'thinking') {
           aggregatedContent.push({
             type: 'text',
-            text: msg.message.content,
+            text: content,
           });
         }
         // 提取 thinking 消息的内容
         else if (msg.type === 'thinking') {
           aggregatedContent.push({
             type: 'thinking',
-            thinking: (msg as any).content || ''
+            thinking: typeof content === 'string' ? content : ''
           });
         }
       });
@@ -177,6 +179,7 @@ const StreamMessageV2Component: React.FC<StreamMessageV2Props> = ({
 
   // Handle special cases
   if (messageType === 'thinking') {
+    const content = getMessageContent(message);
     return (
       <AIMessage
         message={{
@@ -186,7 +189,7 @@ const StreamMessageV2Component: React.FC<StreamMessageV2Props> = ({
             content: [
               {
                 type: 'thinking',
-                thinking: (message as any).content || ''
+                thinking: typeof content === 'string' ? content : ''
               }
             ]
           }

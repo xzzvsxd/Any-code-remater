@@ -14,6 +14,21 @@ const assistantText = (text: string) => ({
   message: { role: 'assistant', content: [{ type: 'text', text }] },
 });
 
+const legacyTopLevelAssistantText = (text: string) => ({
+  type: 'assistant',
+  content: [{ type: 'text', text }],
+});
+
+const legacyTopLevelUserText = (text: string) => ({
+  type: 'user',
+  content: [{ type: 'text', text }],
+});
+
+const legacyTopLevelAssistantToolUse = (id: string) => ({
+  type: 'assistant',
+  content: [{ type: 'tool_use', id, name: 'Read', input: { file_path: 'src/main.ts' } }],
+});
+
 const emptyAssistant = {
   type: 'assistant',
   message: { role: 'assistant', content: [] },
@@ -116,6 +131,9 @@ describe('displayable message filtering render safety', () => {
 
   test('filters messages that render null before they enter virtualized rows', () => {
     const visible = assistantText('visible response');
+    const legacyUser = legacyTopLevelUserText('legacy prompt');
+    const legacyAssistant = legacyTopLevelAssistantText('legacy response');
+    const legacyTool = legacyTopLevelAssistantToolUse('legacy-tool');
     const messages = [
       topLevelToolUse('standalone-tool'),
       queueOperation,
@@ -131,6 +149,9 @@ describe('displayable message filtering render safety', () => {
       topLevelThinking,
       userImageOnly,
       errorResult,
+      legacyUser,
+      legacyAssistant,
+      legacyTool,
     ];
 
     expect(filterDisplayableMessages(messages as any)).toEqual([
@@ -139,6 +160,9 @@ describe('displayable message filtering render safety', () => {
       topLevelThinking,
       userImageOnly,
       errorResult,
+      legacyUser,
+      legacyAssistant,
+      legacyTool,
     ]);
   });
 

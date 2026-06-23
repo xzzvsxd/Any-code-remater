@@ -15,6 +15,7 @@ import { formatTimestamp } from "@/lib/messageUtils";
 import { api } from '@/lib/api';
 import { useTranslation } from "@/hooks/useTranslation";
 import { countLinesUpTo, shouldRenderStructuredCommandOutputAsPlainText } from "@/lib/markdownRenderSafety";
+import { getMessageContent } from "@/lib/messageContentAccess";
 
 interface UserMessageProps {
   /** 消息数据 */
@@ -226,9 +227,8 @@ const formatSkillsMessage = (text: string): React.ReactNode => {
  * 提取用户消息的纯文本内容
  */
 const extractUserText = (message: ClaudeStreamMessage): string => {
-  if (!message.message?.content) return '';
-  
-  const content = message.message.content;
+  const content = getMessageContent(message);
+  if (!content) return '';
   
   let text = '';
   
@@ -240,7 +240,7 @@ const extractUserText = (message: ClaudeStreamMessage): string => {
   else if (Array.isArray(content)) {
     text = content
       .filter((item: any) => item.type === 'text')
-      .map((item: any) => item.text || '')
+      .map((item: any) => item.text ?? item.content ?? '')
       .join('\n');
   }
   
@@ -287,7 +287,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
 
   // 🆕 从 content 数组提取图片（base64 格式）
   const contentImages = useMemo(() => {
-    const content = message.message?.content;
+    const content = getMessageContent(message);
     if (!content || !Array.isArray(content)) return [];
     return extractImagesFromContent(content);
   }, [message]);

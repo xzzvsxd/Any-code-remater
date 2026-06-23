@@ -13,6 +13,7 @@ import { toolRegistry } from '@/lib/toolRegistry';
 import { useToolResults } from '@/hooks/useToolResults';
 import { useTranslation } from '@/hooks/useTranslation';
 import { TaskListAggregateWidget } from '@/components/widgets';
+import { getMessageContentArray } from '@/lib/messageContentAccess';
 import {
   SESSION_MESSAGE_LAYOUT_CHANGED_EVENT,
   type SessionMessageLayoutChangedReason,
@@ -89,10 +90,11 @@ export const ToolCallsGroup: React.FC<ToolCallsGroupProps> = ({
   const rootRef = useRef<HTMLDivElement>(null);
   // 提取工具调用
   const toolCalls = useMemo((): ToolCall[] => {
-    if (!message.message?.content || !Array.isArray(message.message.content)) {
+    const content = getMessageContentArray(message);
+    if (!content) {
       return [];
     }
-    return message.message.content.filter((item: any) => item.type === 'tool_use') as ToolCall[];
+    return content.filter((item: any) => item.type === 'tool_use') as ToolCall[];
   }, [message]);
 
   const { getResultById, getStatusById } = useToolResults();

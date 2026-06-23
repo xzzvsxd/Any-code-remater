@@ -1,4 +1,5 @@
 import type { ClaudeStreamMessage } from '@/types/claude';
+import { getMessageContent } from './messageContentAccess';
 
 const THINKING_DIVIDER = '\n\n---divider---\n\n';
 
@@ -130,7 +131,7 @@ export function splitTaggedThinkingContent(rawText: unknown): RenderableAiConten
 }
 
 export function getRenderableAiContentParts(message: ClaudeStreamMessage): RenderableAiContentPart[] {
-  const content = message.message?.content;
+  const content = getMessageContent(message);
   const parts: RenderableAiContentPart[] = [];
   let emittedToolMarker = false;
 

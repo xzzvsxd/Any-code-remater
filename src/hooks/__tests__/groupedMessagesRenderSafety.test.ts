@@ -38,6 +38,14 @@ const assistantText = (text: string): ClaudeStreamMessage => ({
   },
 });
 
+const assistantToolUse = (id: string): ClaudeStreamMessage => ({
+  type: 'assistant',
+  message: {
+    role: 'assistant',
+    content: [{ type: 'tool_use', id, name: 'Read', input: { file_path: 'src/main.ts' } }],
+  },
+});
+
 describe('grouped messages render safety', () => {
   test('uses append-only grouping cache for common streaming updates', () => {
     expect(groupedMessagesSource).toContain('GroupedMessagesCache');
@@ -114,6 +122,57 @@ describe('grouped messages render safety', () => {
     expect(grouped.groups[0]).toMatchObject({
       type: 'aggregated',
       messages: [thinking, answer],
+      index: 0,
+    });
+  });
+
+  test('incrementally attaches pending thinking when the assistant answer streams in later', () => {
+    const thinking = standardThinking('流式先到的思考');
+    const answer = assistantText('稍后到达的正文');
+
+    const initial = updateGroupedMessagesCache(null, [thinking], {
+      enableSubagentGrouping: true,
+    });
+    expect(initial.groups).toMatchObject([
+      {
+        type: 'aggregated',
+        messages: [thinking],
+        index: 0,
+      },
+    ]);
+
+    const updated = updateGroupedMessagesCache(initial, [thinking, answer], {
+      enableSubagentGrouping: true,
+    });
+
+    expect(updated).toBe(initial);
+    expect(updated.groups).toHaveLength(1);
+    expect(updated.groups[0]).toMatchObject({
+      type: 'aggregated',
+      messages: [thinking, answer],
+      index: 0,
+    });
+  });
+
+  test('keeps thinking attached to following tool-use rows in append fast path', () => {
+    const thinking = standardThinking('调用工具前的思考');
+    const firstTool = assistantToolUse('toolu_1');
+    const secondTool = assistantToolUse('toolu_2');
+
+    const initial = updateGroupedMessagesCache(null, [thinking], {
+      enableSubagentGrouping: true,
+    });
+    const withFirstTool = updateGroupedMessagesCache(initial, [thinking, firstTool], {
+      enableSubagentGrouping: true,
+    });
+    const withSecondTool = updateGroupedMessagesCache(withFirstTool, [thinking, firstTool, secondTool], {
+      enableSubagentGrouping: true,
+    });
+
+    expect(withSecondTool.groups).toHaveLength(1);
+    expect(withSecondTool.groups[0]).toMatchObject({
+      type: 'aggregated',
+      messages: [thinking, firstTool, secondTool],
       index: 0,
     });
   });
