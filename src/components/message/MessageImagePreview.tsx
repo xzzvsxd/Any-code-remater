@@ -488,6 +488,9 @@ export const extractImagesFromContent = (content: any[]): MessageImage[] => {
  * 图片文件扩展名列表
  */
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'];
+const IMAGE_EXTENSION_HINT_PATTERN = /\.(?:png|jpe?g|gif|webp|bmp|svg)(?=$|[\s"'`,)\]}:;!?])/i;
+
+const mightContainImagePath = (text: string): boolean => IMAGE_EXTENSION_HINT_PATTERN.test(text);
 
 /**
  * 检查路径是否是图片文件
@@ -510,6 +513,10 @@ const isImagePath = (path: string): boolean => {
  */
 export const extractImagePathsFromText = (text: string): { images: MessageImage[]; cleanText: string } => {
   if (!text) return { images: [], cleanText: text };
+
+  if (!mightContainImagePath(text)) {
+    return { images: [], cleanText: text };
+  }
 
   const images: MessageImage[] = [];
   let cleanText = text;
@@ -591,7 +598,12 @@ export const extractImagePathsFromText = (text: string): { images: MessageImage[
     }
   }
 
-  // 清理多余的空格（保留换行符）
+  if (images.length === 0) {
+    return { images, cleanText: text };
+  }
+
+  // 只有真的移除了图片路径时才清理多余空格（保留换行符）。
+  // 顶部首条 prompt 大多没有图片，不能在每次虚拟行 mount 时做无意义的全量字符串分配。
   cleanText = cleanText
     .replace(/[^\S\n]+/g, ' ')  // 只替换非换行的空白字符为单个空格
     .replace(/ *\n */g, '\n')   // 清理换行符两边的空格

@@ -11,6 +11,7 @@ const DEFAULT_ESTIMATE = 220;
 const MAX_NORMAL_MESSAGE_ESTIMATE = 1_200;
 const MAX_AGGREGATED_ESTIMATE = 1_000;
 const MAX_SUBAGENT_ESTIMATE = 900;
+const SYSTEM_INIT_TOOL_PREVIEW_COUNT = 8;
 const TEXT_SCAN_CHARS = 20_000;
 const TEXT_LINE_CAP = 80;
 const CHARS_PER_VISUAL_LINE = 96;
@@ -205,7 +206,11 @@ const estimateSystemInitHeight = (message: ClaudeStreamMessage): number => {
     (sessionId ? 1 : 0)
     + (model ? 1 : 0)
     + (cwd ? 1 : 0);
-  const toolRows = tools.length > 0 ? Math.ceil(tools.length / 6) : 0;
+  // 与 SystemInitializedWidget -> ToolsList 的首屏预览数量保持一致：
+  // 顶部虚拟行初次 mount 时只渲染少量 regular badges，估高也按首屏态算，
+  // 避免估得过高后 WebKitGTK 再做一次大幅回收/校正。
+  const visibleToolCount = Math.min(tools.length, SYSTEM_INIT_TOOL_PREVIEW_COUNT);
+  const toolRows = visibleToolCount > 0 ? Math.ceil(visibleToolCount / 6) : 0;
   const cwdWrapExtra = cwd.length > 60 ? 24 : 0;
 
   return clamp(120 + infoRows * 28 + toolRows * 28 + cwdWrapExtra, 180, 420);

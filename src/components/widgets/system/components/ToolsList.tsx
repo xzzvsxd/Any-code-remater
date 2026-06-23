@@ -4,7 +4,7 @@
  * 从 SystemInitializedWidget 中提取，用于展示可用工具列表
  */
 
-import React, { useMemo } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { Wrench, Package, Package2, ChevronDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -68,6 +68,8 @@ interface SplitToolsForDisplay {
   mcpToolCount: number;
 }
 
+const REGULAR_TOOL_PREVIEW_COUNT = 8;
+
 const splitToolsForDisplay = (tools: string[]): SplitToolsForDisplay => {
   const regularTools: string[] = [];
   const mcpToolsByProvider: Record<string, McpToolDisplay[]> = {};
@@ -111,6 +113,19 @@ export const ToolsList = React.memo<ToolsListProps>(({
     [splitTools]
   );
   const mcpToolCount = splitTools.mcpToolCount;
+  const [regularExpanded, setRegularExpanded] = useState(false);
+  const displayedRegularTools = useMemo(
+    () => regularExpanded
+      ? regularTools
+      : regularTools.slice(0, REGULAR_TOOL_PREVIEW_COUNT),
+    [regularExpanded, regularTools]
+  );
+  const hiddenRegularToolCount = regularExpanded
+    ? 0
+    : Math.max(0, regularTools.length - displayedRegularTools.length);
+  const handleRegularToggle = useCallback(() => {
+    setRegularExpanded((expanded) => !expanded);
+  }, []);
 
   if (tools.length === 0) {
     return (
@@ -132,7 +147,7 @@ export const ToolsList = React.memo<ToolsListProps>(({
             </span>
           </div>
           <div className="flex flex-wrap gap-1.5">
-            {regularTools.map((tool, idx) => (
+            {displayedRegularTools.map((tool, idx) => (
               <Badge
                 key={`${tool}-${idx}`}
                 variant="secondary"
@@ -141,6 +156,15 @@ export const ToolsList = React.memo<ToolsListProps>(({
                 {tool}
               </Badge>
             ))}
+            {(hiddenRegularToolCount > 0 || regularExpanded) && (
+              <button
+                type="button"
+                onClick={handleRegularToggle}
+                className="rounded-md border border-border/60 px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+              >
+                {regularExpanded ? '收起' : `+${hiddenRegularToolCount} more`}
+              </button>
+            )}
           </div>
         </div>
       )}

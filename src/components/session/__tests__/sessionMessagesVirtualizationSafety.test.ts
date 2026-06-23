@@ -74,6 +74,12 @@ describe('session message virtualization safety', () => {
     expect(toolsListSource).not.toContain('getToolIcon(tool)');
   });
 
+  test('system init tools list keeps regular tools bounded on initial top-row mount', () => {
+    expect(toolsListSource).toContain('REGULAR_TOOL_PREVIEW_COUNT');
+    expect(toolsListSource).toContain('displayedRegularTools');
+    expect(toolsListSource).toContain('hiddenRegularToolCount');
+  });
+
   test('top and prompt scroll follow-up timers are cancellable on unmount or session change', () => {
     expect(sessionMessagesSource).toContain('topScrollTimeoutsRef');
     expect(sessionMessagesSource).toContain('cancelTopScrollFollowUps');
