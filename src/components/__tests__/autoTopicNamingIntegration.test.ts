@@ -43,6 +43,8 @@ describe('auto topic naming integration', () => {
 
   test('auto naming retries transient startup races instead of burning the only attempt', () => {
     expect(claudeCodeSession).toContain('AUTO_TITLE_RETRY_DELAYS_MS');
+    expect(claudeCodeSession).toContain('60_000');
+    expect(claudeCodeSession).toContain('120_000');
     expect(claudeCodeSession).toContain('autoTitleRetryTick');
     expect(claudeCodeSession).toContain('autoTitleInFlightSessionIdsRef');
     expect(claudeCodeSession).toContain('scheduleAutoTitleRetry');

@@ -2,12 +2,24 @@ import type { ClaudeSettings } from './api';
 
 export const AUTO_TOPIC_NAMING_MODEL = 'claude-haiku-4-5-20251001';
 export const AUTO_TITLE_HAIKU_TIMEOUT_MS = 4_000;
+export const AUTO_TITLE_HAIKU_MAX_ATTEMPTS = 2;
+export const AUTO_TITLE_PERSIST_MAX_ATTEMPTS = 3;
 
-const AUTO_TITLE_MAX_LENGTH = 48;
+const AUTO_TITLE_MAX_LENGTH = 20;
 const FALLBACK_TITLE_MAX_SOURCE_CHARS = 160;
+const AUTO_TITLE_PERSIST_RETRY_DELAYS_MS = [0, 300] as const;
 
 export function isAutoTopicNamingEnabled(settings: ClaudeSettings | null | undefined): boolean {
   return settings?.autoTopicNaming !== false;
+}
+
+function truncateTitle(title: string): string {
+  const chars = Array.from(title);
+  if (chars.length <= AUTO_TITLE_MAX_LENGTH) {
+    return title;
+  }
+
+  return `${chars.slice(0, AUTO_TITLE_MAX_LENGTH - 1).join('').trimEnd()}…`;
 }
 
 export function sanitizeGeneratedSessionTitle(raw: string | undefined | null): string {
@@ -27,11 +39,7 @@ export function sanitizeGeneratedSessionTitle(raw: string | undefined | null): s
     .replace(/\s+/g, ' ')
     .trim();
 
-  if (title.length > AUTO_TITLE_MAX_LENGTH) {
-    title = `${title.slice(0, AUTO_TITLE_MAX_LENGTH - 1).trimEnd()}…`;
-  }
-
-  return title;
+  return truncateTitle(title);
 }
 
 export function generateFallbackSessionTitleFromPrompt(prompt: string): string {
@@ -56,6 +64,13 @@ function rejectAfterTimeout(ms: number): Promise<never> {
   });
 }
 
+function wait(ms: number): Promise<void> {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function withAutoTitleTimeout<T>(promise: Promise<T>): Promise<T> {
   return Promise.race([
     promise,
@@ -70,25 +85,62 @@ export async function generateSessionTitleFromPrompt(prompt: string): Promise<st
   }
 
   const { claudeSDK } = await import('./claudeSDK');
-  const response = await withAutoTitleTimeout(
-    claudeSDK.sendMessage(
-      [
-        {
-          role: 'user',
-          content: trimmedPrompt,
-        },
-      ],
-      {
-        model: AUTO_TOPIC_NAMING_MODEL,
-        maxTokens: 32,
-        temperature: 0.2,
-        systemPrompt:
-          '请根据用户首条 prompt 生成一个简短的会话标题。要求：4-16 个汉字或 3-8 个英文词；只输出标题本身；不要引号、不要编号、不要解释。',
-      }
-    )
-  );
+  let lastError: unknown;
 
-  return sanitizeGeneratedSessionTitle(response.content);
+  for (let attempt = 0; attempt < AUTO_TITLE_HAIKU_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await withAutoTitleTimeout(
+        claudeSDK.sendMessage(
+          [
+            {
+              role: 'user',
+              content: trimmedPrompt,
+            },
+          ],
+          {
+            model: AUTO_TOPIC_NAMING_MODEL,
+            maxTokens: 24,
+            temperature: 0.2,
+            systemPrompt:
+              '请根据用户首条 prompt 生成一个简短的会话标题。要求：不超过 20 个字，优先 4-16 个汉字或 3-8 个英文词；只输出标题本身；不要引号、不要编号、不要解释。',
+          }
+        )
+      );
+
+      const title = sanitizeGeneratedSessionTitle(response.content);
+      if (title) {
+        return title;
+      }
+      lastError = new Error('Haiku returned an empty topic title');
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Haiku topic naming failed');
+}
+
+async function setSessionTitleWithRetry(
+  api: { setSessionTitle: (sessionId: string, title: string) => Promise<void> },
+  sessionId: string,
+  title: string,
+): Promise<void> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < AUTO_TITLE_PERSIST_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      await api.setSessionTitle(sessionId, title);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= AUTO_TITLE_PERSIST_MAX_ATTEMPTS - 1) {
+        break;
+      }
+      await wait(AUTO_TITLE_PERSIST_RETRY_DELAYS_MS[attempt] ?? 0);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Persisting auto topic title failed');
 }
 
 export async function autoNameSessionFromPrompt({
@@ -140,7 +192,7 @@ export async function autoNameSessionFromPrompt({
       return null;
     }
 
-    await api.setSessionTitle(sessionId, title);
+    await setSessionTitleWithRetry(api, sessionId, title);
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('session-title-changed', {
         detail: { sessionId, title },

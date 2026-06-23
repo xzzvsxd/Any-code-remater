@@ -25,6 +25,9 @@ vi.mock('../claudeSDK', () => ({
 
 describe('session auto topic naming helpers', () => {
   beforeEach(() => {
+    vi.mocked(api.getClaudeSettings).mockReset();
+    vi.mocked(api.getSessionMeta).mockReset();
+    vi.mocked(api.setSessionTitle).mockReset();
     vi.mocked(api.getClaudeSettings).mockResolvedValue({});
     vi.mocked(api.getSessionMeta).mockResolvedValue({ titles: {}, order: {} });
     vi.mocked(api.setSessionTitle).mockResolvedValue(undefined);
@@ -49,12 +52,64 @@ describe('session auto topic naming helpers', () => {
 
   test('bounds generated titles for session-list stability', () => {
     const longTitle = '这是一个非常非常非常非常非常非常非常非常非常非常长的自动标题';
-    expect(sanitizeGeneratedSessionTitle(longTitle).length).toBeLessThanOrEqual(48);
+    const title = sanitizeGeneratedSessionTitle(longTitle);
+    expect(Array.from(title).length).toBeLessThanOrEqual(20);
+    expect(title.endsWith('…')).toBe(true);
   });
 
   test('derives a bounded local fallback title when Haiku is unavailable', () => {
-    expect(generateFallbackSessionTitleFromPrompt('请彻底修复 Linux 卡顿和自动命名问题\n附加说明')).toBe('请彻底修复 Linux 卡顿和自动命名问题');
+    const title = generateFallbackSessionTitleFromPrompt('请彻底修复 Linux 卡顿和自动命名问题，保证每次成功\n附加说明');
+    expect(Array.from(title).length).toBeLessThanOrEqual(20);
+    expect(title).toBe('请彻底修复 Linux 卡顿和自动命名…');
     expect(generateFallbackSessionTitleFromPrompt('```ts\nconst x = 1\n```')).toBe('const x = 1');
+  });
+
+  test('asks Haiku for a title that is no longer than 20 characters', async () => {
+    vi.mocked(claudeSDK.sendMessage).mockResolvedValue({ content: '短标题' } as any);
+
+    await autoNameSessionFromPrompt({
+      sessionId: 'session-prompt',
+      prompt: '这里是一个很长的复杂需求',
+    });
+
+    expect(claudeSDK.sendMessage).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({
+        maxTokens: 24,
+        systemPrompt: expect.stringContaining('不超过 20 个字'),
+      }),
+    );
+  });
+
+  test('retries Haiku once before falling back so transient model failures still use generated names', async () => {
+    vi.mocked(claudeSDK.sendMessage)
+      .mockRejectedValueOnce(new Error('temporary network error'))
+      .mockResolvedValueOnce({ content: '重试后标题' } as any);
+
+    const title = await autoNameSessionFromPrompt({
+      sessionId: 'session-retry-haiku',
+      prompt: '帮我修复自动命名偶发失败',
+    });
+
+    expect(title).toBe('重试后标题');
+    expect(claudeSDK.sendMessage).toHaveBeenCalledTimes(2);
+    expect(api.setSessionTitle).toHaveBeenCalledWith('session-retry-haiku', '重试后标题');
+  });
+
+  test('retries persisting the title so a transient metadata write does not lose auto naming', async () => {
+    vi.mocked(claudeSDK.sendMessage).mockResolvedValue({ content: '持久化重试' } as any);
+    vi.mocked(api.setSessionTitle)
+      .mockRejectedValueOnce(new Error('metadata busy'))
+      .mockResolvedValueOnce(undefined);
+
+    const title = await autoNameSessionFromPrompt({
+      sessionId: 'session-write-retry',
+      prompt: '帮我保证自动命名每次都写入成功',
+    });
+
+    expect(title).toBe('持久化重试');
+    expect(api.setSessionTitle).toHaveBeenCalledTimes(2);
+    expect(api.setSessionTitle).toHaveBeenLastCalledWith('session-write-retry', '持久化重试');
   });
 
   test('still persists an automatic title when the Haiku request fails', async () => {
@@ -67,6 +122,7 @@ describe('session auto topic naming helpers', () => {
     });
 
     expect(title).toBe('帮我修复工作区自动话题命名');
+    expect(Array.from(title ?? '').length).toBeLessThanOrEqual(20);
     expect(api.setSessionTitle).toHaveBeenCalledWith('session-1', '帮我修复工作区自动话题命名');
     expect(warnSpy).toHaveBeenCalledWith(
       '[SessionAutoTitle] Haiku topic naming failed, using local fallback:',
@@ -87,7 +143,7 @@ describe('session auto topic naming helpers', () => {
 
     const outcome = await Promise.race([
       naming.then((title) => ({ kind: 'resolved' as const, title })),
-      vi.advanceTimersByTimeAsync(4_100).then(() => ({ kind: 'pending' as const })),
+      vi.advanceTimersByTimeAsync(8_100).then(() => ({ kind: 'pending' as const })),
     ]);
 
     expect(outcome).toEqual({

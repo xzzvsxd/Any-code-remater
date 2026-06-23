@@ -126,7 +126,7 @@ const engineDisplayNames: Record<'claude' | 'codex' | 'gemini', string> = {
   gemini: 'Gemini',
 };
 const EMPTY_VISIBLE_MESSAGES: ClaudeStreamMessage[] = [];
-const AUTO_TITLE_RETRY_DELAYS_MS = [1_000, 3_000, 7_000, 15_000] as const;
+const AUTO_TITLE_RETRY_DELAYS_MS = [1_000, 3_000, 7_000, 15_000, 30_000, 60_000, 120_000] as const;
 
 const getProjectLabel = (path: string) => {
   if (!path) return '';
