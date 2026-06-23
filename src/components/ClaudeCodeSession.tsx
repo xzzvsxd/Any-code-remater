@@ -126,6 +126,7 @@ const engineDisplayNames: Record<'claude' | 'codex' | 'gemini', string> = {
   gemini: 'Gemini',
 };
 const EMPTY_VISIBLE_MESSAGES: ClaudeStreamMessage[] = [];
+const AUTO_TITLE_RETRY_DELAYS_MS = [1_000, 3_000, 7_000, 15_000] as const;
 
 const getProjectLabel = (path: string) => {
   if (!path) return '';
@@ -341,6 +342,10 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   const firstPromptNotifiedRef = useRef(!!session);
   const firstSubmittedPromptRef = useRef<string | null>(null);
   const autoTitleSessionIdsRef = useRef<Set<string>>(new Set());
+  const autoTitleInFlightSessionIdsRef = useRef<Set<string>>(new Set());
+  const autoTitleRetryCountsRef = useRef<Map<string, number>>(new Map());
+  const autoTitleRetryTimersRef = useRef<Map<string, number>>(new Map());
+  const [autoTitleRetryTick, setAutoTitleRetryTick] = useState(0);
   const hasUserAuthoredMessage = useCallback(() => (
     messagesRef.current.some((message) => message.type === 'user')
   ), []);
@@ -409,24 +414,61 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   // 自动话题命名是“会话”行为，不能只绑在 TabSessionWrapper 上：
   // 独立窗口 / 旧 direct ClaudeCodeSession 入口不经过 TabSessionWrapper，也必须在拿到真实
   // sessionId 后写入 session_meta，否则工作区列表只会继续显示首条 prompt 或短 id。
+  const scheduleAutoTitleRetry = useCallback((sessionId: string) => {
+    if (!sessionId || autoTitleSessionIdsRef.current.has(sessionId)) return;
+    if (autoTitleRetryTimersRef.current.has(sessionId)) return;
+
+    const retryCount = autoTitleRetryCountsRef.current.get(sessionId) ?? 0;
+    if (retryCount >= AUTO_TITLE_RETRY_DELAYS_MS.length) {
+      autoTitleSessionIdsRef.current.add(sessionId);
+      console.warn('[ClaudeCodeSession] Auto session title gave up after retries:', { sessionId });
+      return;
+    }
+
+    const timerId = window.setTimeout(() => {
+      autoTitleRetryTimersRef.current.delete(sessionId);
+      setAutoTitleRetryTick((tick) => tick + 1);
+    }, AUTO_TITLE_RETRY_DELAYS_MS[retryCount]);
+
+    autoTitleRetryCountsRef.current.set(sessionId, retryCount + 1);
+    autoTitleRetryTimersRef.current.set(sessionId, timerId);
+  }, []);
+
+  useEffect(() => () => {
+    autoTitleRetryTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+    autoTitleRetryTimersRef.current.clear();
+  }, []);
+
   useEffect(() => {
     const sessionId = extractedSessionInfo?.sessionId;
     if (!wasCreatedAsNewSessionRef.current || !sessionId) return;
     if (autoTitleSessionIdsRef.current.has(sessionId)) return;
+    if (autoTitleInFlightSessionIdsRef.current.has(sessionId)) return;
 
     const firstPrompt = firstSubmittedPromptRef.current ?? getFirstUserAuthoredPrompt();
-    if (!firstPrompt?.trim()) return;
+    if (!firstPrompt?.trim()) {
+      scheduleAutoTitleRetry(sessionId);
+      return;
+    }
 
-    autoTitleSessionIdsRef.current.add(sessionId);
+    autoTitleInFlightSessionIdsRef.current.add(sessionId);
     autoNameSessionFromPrompt({
       sessionId,
       prompt: firstPrompt,
     }).then((title) => {
       if (title) {
+        autoTitleSessionIdsRef.current.add(sessionId);
         onAutoSessionTitle?.(title, sessionId);
+      } else {
+        scheduleAutoTitleRetry(sessionId);
       }
+    }).catch((error) => {
+      console.warn('[ClaudeCodeSession] Auto session title failed, will retry:', error);
+      scheduleAutoTitleRetry(sessionId);
+    }).finally(() => {
+      autoTitleInFlightSessionIdsRef.current.delete(sessionId);
     });
-  }, [extractedSessionInfo?.sessionId, getFirstUserAuthoredPrompt, onAutoSessionTitle]);
+  }, [autoTitleRetryTick, extractedSessionInfo?.sessionId, getFirstUserAuthoredPrompt, onAutoSessionTitle, scheduleAutoTitleRetry]);
 
   const displayableMessages = useDisplayableMessages(visibleMessages, {
     hideWarmupMessages: filterConfig.hideWarmupMessages

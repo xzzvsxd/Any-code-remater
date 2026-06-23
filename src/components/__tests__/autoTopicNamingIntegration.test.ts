@@ -41,6 +41,16 @@ describe('auto topic naming integration', () => {
     expect(claudeCodeSession).toContain('onAutoSessionTitle?.');
   });
 
+  test('auto naming retries transient startup races instead of burning the only attempt', () => {
+    expect(claudeCodeSession).toContain('AUTO_TITLE_RETRY_DELAYS_MS');
+    expect(claudeCodeSession).toContain('autoTitleRetryTick');
+    expect(claudeCodeSession).toContain('autoTitleInFlightSessionIdsRef');
+    expect(claudeCodeSession).toContain('scheduleAutoTitleRetry');
+    expect(claudeCodeSession).toContain('setAutoTitleRetryTick');
+    expect(claudeCodeSession).toContain('if (title)');
+    expect(claudeCodeSession).toContain('scheduleAutoTitleRetry(sessionId)');
+  });
+
   test('general settings exposes default-on auto topic naming toggle in all locales', () => {
     expect(generalSettings).toContain('autoTopicNaming');
     expect(generalSettings).toContain('settings?.autoTopicNaming !== false');
