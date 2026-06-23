@@ -290,18 +290,15 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
 
   /**
    * 子组件折叠/展开（尤其 ThinkingBlock）会让行高从几百 px 变成几十 px。
-   * TanStack Virtual 的 `measure()` 只会清空内部 itemSizeCache 并 notify，
-   * 不会立刻读 DOM；如果 ResizeObserver 没再触发，就会继续按估算高度撑出空白。
+   * 这里不能把常见布局变化直接升级成 `rowVirtualizer.measure()`：
+   * TanStack Virtual 的 `measure()` 会清空全表 itemSizeCache；长会话里离屏行没有 DOM，
+   * 清掉后只能回退估算高度，totalSize/start 会大幅漂移，表现为大块空白和 Thinking 错位。
    *
    * 这里把“明确会改变布局高度”的事件合并进一个 rAF：
-   * - 有 itemKey/itemIndex：只处理这一行，避免大会话全量抖动；
-   * - 没有定位信息：清空缓存做兜底重测；
-   * - 全量 revision/streaming 结束：rowVirtualizer.measure() 清 TanStack 内部缓存；
-   * - 单行折叠/展开：绝不清全表 itemSizeCache，只把目标可见行真实高度 resizeItem 回去。
-   *
-   * 关键：`rowVirtualizer.measure()` 会清空所有内部 itemSizeCache。若每次 Thinking/tool
-   * 单行折叠都全量清缓存，长会话里其它离屏行会退回估算高度，totalSize 会被反复拉扯，
-   * 表现就是“元素乱飞 / 大片空白 / 还能继续往下滚”。所以 targeted 事件只改目标行。
+   * 策略：
+   * - 有 measurementKey/itemKey/itemIndex：只处理这一行；
+   * - streaming-ended / message-groups-revised：只裁剪外部 stale 高度缓存，并刷新当前可见 DOM 行；
+   * - 真正没有任何定位、也不是上述常规事件的未知兜底，才允许全量 reset。
    */
   const scheduleVirtualizerRemeasure = useCallback((detail?: SessionMessageLayoutChangedDetail) => {
     const measurementKey = detail?.measurementKey;
@@ -310,6 +307,9 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       typeof detail?.itemIndex === 'number' && Number.isFinite(detail.itemIndex)
         ? detail.itemIndex
         : undefined;
+    const isNonTargetedLayoutChange =
+      detail?.reason === 'message-groups-revised' ||
+      detail?.reason === 'streaming-ended';
 
     if (measurementKey) {
       pendingRemeasureMeasurementKeysRef.current.add(measurementKey);
@@ -320,10 +320,10 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
     if (itemIndex !== undefined) {
       pendingRemeasureItemIndexesRef.current.add(itemIndex);
     }
-    if (detail?.reason === 'message-groups-revised' || detail?.reason === 'streaming-ended') {
+    if (isNonTargetedLayoutChange) {
       pendingPruneStaleMeasurementsRef.current = true;
     }
-    if (!measurementKey && !itemKey && itemIndex === undefined) {
+    if (!measurementKey && !itemKey && itemIndex === undefined && !isNonTargetedLayoutChange) {
       pendingFullRemeasureRef.current = true;
     }
 
@@ -331,16 +331,20 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
 
     virtualizerRemeasureRafRef.current = requestAnimationFrame(() => {
       virtualizerRemeasureRafRef.current = 0;
-      const shouldMeasureAllVisible = pendingFullRemeasureRef.current;
+      const shouldResetVirtualizerMeasurements = pendingFullRemeasureRef.current;
       const shouldPruneStaleMeasurements = pendingPruneStaleMeasurementsRef.current;
+      const shouldRefreshAllVisibleRows =
+        shouldResetVirtualizerMeasurements || shouldPruneStaleMeasurements;
       const targetMeasurementKeys = new Set(pendingRemeasureMeasurementKeysRef.current);
       const targetItemKeys = new Set(pendingRemeasureItemKeysRef.current);
       const targetItemIndexes = new Set(pendingRemeasureItemIndexesRef.current);
 
-      if (shouldMeasureAllVisible) {
-        if (shouldPruneStaleMeasurements) {
-          pruneMeasuredHeightsToCurrentRevisions();
-        } else {
+      if (shouldPruneStaleMeasurements) {
+        pruneMeasuredHeightsToCurrentRevisions();
+      }
+
+      if (shouldResetVirtualizerMeasurements) {
+        if (!shouldPruneStaleMeasurements) {
           measuredHeightsRef.current.clear();
         }
       } else {
@@ -363,22 +367,15 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       pendingRemeasureMeasurementKeysRef.current.clear();
       pendingRemeasureItemKeysRef.current.clear();
       pendingRemeasureItemIndexesRef.current.clear();
-      if (shouldMeasureAllVisible) {
+      if (shouldResetVirtualizerMeasurements) {
         rowVirtualizer.measure();
-        measureVisibleRowsIntoVirtualizer({
-          all: true,
-          measurementKeys: targetMeasurementKeys,
-          itemKeys: targetItemKeys,
-          itemIndexes: targetItemIndexes,
-        });
-      } else {
-        measureVisibleRowsIntoVirtualizer({
-          all: false,
-          measurementKeys: targetMeasurementKeys,
-          itemKeys: targetItemKeys,
-          itemIndexes: targetItemIndexes,
-        });
       }
+      measureVisibleRowsIntoVirtualizer({
+        all: shouldRefreshAllVisibleRows,
+        measurementKeys: targetMeasurementKeys,
+        itemKeys: targetItemKeys,
+        itemIndexes: targetItemIndexes,
+      });
     });
   }, [
     deleteMeasuredHeightsForItemKey,

@@ -157,19 +157,29 @@ describe('session message virtualization safety', () => {
     expect(sessionMessagesSource).not.toContain('measuredHeightsRef.current.set(itemKey, rawHeight)');
   });
 
-  test('message render-revision changes clear TanStack item sizes before stale starts create overlap or blank space', () => {
+  test('message render-revision changes refresh visible rows without clearing every TanStack item size', () => {
     expect(sessionMessagesSource).toContain('getMessageGroupsRenderSignature');
     expect(sessionMessagesSource).toContain('messageGroupsRenderSignature');
     expect(sessionMessagesSource).toContain("reason: 'message-groups-revised'");
-    expect(sessionMessagesSource).toContain('if (shouldMeasureAllVisible) {\n        rowVirtualizer.measure();');
+    expect(sessionMessagesSource).toContain('const shouldRefreshAllVisibleRows');
+    expect(sessionMessagesSource).toContain('pruneMeasuredHeightsToCurrentRevisions();');
+    expect(sessionMessagesSource).not.toContain('if (shouldMeasureAllVisible) {\n        rowVirtualizer.measure();');
+  });
+
+  test('streaming and message revision events do not promote missing row identity to a full virtualizer reset', () => {
+    expect(sessionMessagesSource).toContain('const isNonTargetedLayoutChange');
+    expect(sessionMessagesSource).toContain("detail?.reason === 'message-groups-revised'");
+    expect(sessionMessagesSource).toContain("detail?.reason === 'streaming-ended'");
+    expect(sessionMessagesSource).toContain('!isNonTargetedLayoutChange');
+    expect(sessionMessagesSource).toContain('if (shouldResetVirtualizerMeasurements) {\n        rowVirtualizer.measure();\n      }\n      measureVisibleRowsIntoVirtualizer({\n        all: shouldRefreshAllVisibleRows,');
   });
 
   test('targeted layout changes resize only the changed visible row instead of clearing every item size', () => {
     expect(sessionMessagesSource).not.toContain(`pendingRemeasureItemIndexesRef.current.clear();
       rowVirtualizer.measure();
       measureVisibleRowsIntoVirtualizer`);
-    expect(sessionMessagesSource).toContain('if (shouldMeasureAllVisible) {');
-    expect(sessionMessagesSource).toContain('} else {\n        measureVisibleRowsIntoVirtualizer({');
+    expect(sessionMessagesSource).toContain('if (shouldResetVirtualizerMeasurements) {');
+    expect(sessionMessagesSource).toContain('measureVisibleRowsIntoVirtualizer({\n        all: shouldRefreshAllVisibleRows,');
   });
 
   test('virtualizer spacing uses TanStack padding instead of CSS padding outside totalSize accounting', () => {
