@@ -549,26 +549,46 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     loadProjects();
   }, [loadProjects]);
 
+  const contextValue = React.useMemo<ProjectContextType>(() => ({
+    projects,
+    selectedProject,
+    sessions,
+    sessionsByProject,
+    loading,
+    projectsLoading,
+    sessionsLoading,
+    sessionsLoadProgress,
+    error,
+    loadProjects,
+    selectProject,
+    registerProjectByPath,
+    refreshSessions,
+    loadProjectSessions,
+    scheduleProjectRefresh,
+    deleteProject,
+    clearSelection,
+  }), [
+    projects,
+    selectedProject,
+    sessions,
+    sessionsByProject,
+    loading,
+    projectsLoading,
+    sessionsLoading,
+    sessionsLoadProgress,
+    error,
+    loadProjects,
+    selectProject,
+    registerProjectByPath,
+    refreshSessions,
+    loadProjectSessions,
+    scheduleProjectRefresh,
+    deleteProject,
+    clearSelection,
+  ]);
+
   return (
-    <ProjectContext.Provider value={{
-      projects,
-      selectedProject,
-      sessions,
-      sessionsByProject,
-      loading,
-      projectsLoading,
-      sessionsLoading,
-      sessionsLoadProgress,
-      error,
-      loadProjects,
-      selectProject,
-      registerProjectByPath,
-      refreshSessions,
-      loadProjectSessions,
-      scheduleProjectRefresh,
-      deleteProject,
-      clearSelection
-    }}>
+    <ProjectContext.Provider value={contextValue}>
       {children}
     </ProjectContext.Provider>
   );

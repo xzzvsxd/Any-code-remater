@@ -465,9 +465,9 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
   useEffect(() => {
     try { localStorage.setItem(COLLAPSED_KEY, String(collapsed)); } catch { /* ignore */ }
   }, [collapsed]);
-  useEffect(() => {
-    try { localStorage.setItem(WIDTH_KEY, String(width)); } catch { /* ignore */ }
-  }, [width]);
+  const persistSidebarWidth = useCallback((nextWidth: number) => {
+    try { localStorage.setItem(WIDTH_KEY, String(nextWidth)); } catch { /* ignore */ }
+  }, []);
 
   // 项目显示顺序：① 有手动顺序(projectOrder 非空) → 按它排，未列入的按活跃时间补末尾、锁定不被置顶打乱；
   // ② 无手动顺序 → 按活跃时间降序(取项目自身活跃时间与 projectActivityTs 的较大值)，触发新请求的项目自动置顶。
@@ -573,19 +573,22 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     draggingRef.current = true;
     const startX = e.clientX;
     const startW = width;
+    let latestWidth = startW;
     const onMove = (ev: MouseEvent) => {
       if (!draggingRef.current) return;
       const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startW + (ev.clientX - startX)));
+      latestWidth = next;
       setWidth(next);
     };
     const onUp = () => {
       draggingRef.current = false;
+      persistSidebarWidth(latestWidth);
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
-  }, [width]);
+  }, [persistSidebarWidth, width]);
 
   const toggleProject = useCallback(async (project: Project) => {
     const willExpand = !expandedProjects.has(project.id);

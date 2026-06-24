@@ -33,4 +33,10 @@ describe('WorkbenchSidebar large-list render safety', () => {
     expect(sidebarSource).toContain('项目行操作菜单：懒挂载');
     expect(sidebarSource).toMatch(/menuFor === `proj:\$\{project\.id\}` \? \(\s*<DropdownMenu open/);
   });
+
+  test('persists resized sidebar width only at drag end instead of every width render', () => {
+    expect(sidebarSource).toContain('persistSidebarWidth');
+    expect(sidebarSource).toContain('persistSidebarWidth(latestWidth)');
+    expect(sidebarSource).not.toContain('localStorage.setItem(WIDTH_KEY, String(width))');
+  });
 });

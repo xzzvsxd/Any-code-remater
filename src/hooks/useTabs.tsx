@@ -1,7 +1,8 @@
-import { useState, useCallback, useRef, useContext, createContext, ReactNode, useEffect } from 'react';
+import { useState, useCallback, useRef, useContext, createContext, ReactNode, useEffect, useMemo } from 'react';
 import type { Session } from '@/lib/api';
 import { createSessionWindow, emitWindowSyncEvent, onWindowSyncEvent, isSessionWindow } from '@/lib/windowManager';
 import { normalizePersistedWorkbenchTab } from '@/lib/tabPersistence';
+import { createIdlePersistScheduler, type IdlePersistScheduler } from '@/lib/tabPersistenceScheduler';
 
 /**
  * ✨ REFACTORED: Simplified Tab interface (Phase 1 optimization)
@@ -79,6 +80,11 @@ interface TabContextValue {
 
 const TabContext = createContext<TabContextValue | null>(null);
 
+interface PersistedTabsState {
+  tabs: Tab[];
+  activeTabId: string | null;
+}
+
 interface TabProviderProps {
   children: ReactNode;
 }
@@ -96,8 +102,19 @@ export const TabProvider: React.FC<TabProviderProps> = ({ children }) => {
   
   // Cleanup callbacks stored separately (not in state)
   const cleanupCallbacksRef = useRef<Map<string, () => Promise<void> | void>>(new Map());
+  const persistTabsSchedulerRef = useRef<IdlePersistScheduler<PersistedTabsState> | null>(null);
 
   const STORAGE_KEY = 'claude-workbench-tabs-state';
+
+  if (!persistTabsSchedulerRef.current) {
+    persistTabsSchedulerRef.current = createIdlePersistScheduler<PersistedTabsState>((state) => {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      } catch (error) {
+        console.error('[useTabs] Failed to persist tabs:', error);
+      }
+    });
+  }
 
   // ✨ REFACTORED: Load persisted state on mount (simplified)
   useEffect(() => {
@@ -131,20 +148,30 @@ export const TabProvider: React.FC<TabProviderProps> = ({ children }) => {
     }
   }, []);
 
-  // ✨ REFACTORED: Persist state when it changes (simplified)
+  // Persist state when it changes, but keep synchronous localStorage writes out
+  // of the render/effect hot path.  New sessions update tab metadata in short
+  // bursts (project path → session id → auto title); the idle scheduler keeps
+  // only the latest snapshot and flushes on unmount so the final state is not lost.
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ tabs, activeTabId }));
-    } catch (error) {
-      console.error('[useTabs] Failed to persist tabs:', error);
-    }
+    persistTabsSchedulerRef.current?.schedule({ tabs, activeTabId });
   }, [tabs, activeTabId]);
 
+  useEffect(() => {
+    return () => {
+      persistTabsSchedulerRef.current?.flush();
+      persistTabsSchedulerRef.current?.dispose();
+      persistTabsSchedulerRef.current = null;
+    };
+  }, []);
+
   // ✨ REFACTORED: Compute TabSession with isActive (simplified)
-  const tabsWithActive: TabSession[] = tabs.map(tab => ({
-    ...tab,
-    isActive: tab.id === activeTabId,
-  }));
+  const tabsWithActive: TabSession[] = useMemo(
+    () => tabs.map(tab => ({
+      ...tab,
+      isActive: tab.id === activeTabId,
+    })),
+    [tabs, activeTabId],
+  );
 
   // Generate unique tab ID
   const generateTabId = useCallback(() => {
@@ -590,7 +617,7 @@ export const TabProvider: React.FC<TabProviderProps> = ({ children }) => {
     updateTabState(tabId, 'idle');
   }, [updateTabState]);
 
-  const contextValue: TabContextValue = {
+  const contextValue: TabContextValue = useMemo(() => ({
     tabs: tabsWithActive,
     activeTabId,
     createNewTab,
@@ -618,7 +645,33 @@ export const TabProvider: React.FC<TabProviderProps> = ({ children }) => {
     // Backward compatibility
     updateTabStreamingStatus,
     clearTabError,
-  };
+  }), [
+    tabsWithActive,
+    activeTabId,
+    createNewTab,
+    switchToTab,
+    closeTab,
+    updateTabState,
+    updateTabChanges,
+    updateTabTitle,
+    updateTabEngine,
+    updateTabProjectPath,
+    updateTabSession,
+    getTabById,
+    getActiveTab,
+    openSessionInBackground,
+    getTabStats,
+    registerTabCleanup,
+    canCloseTab,
+    forceCloseTab,
+    reorderTabs,
+    detachTab,
+    isTabDetached,
+    getDetachedTabs,
+    createNewTabAsWindow,
+    updateTabStreamingStatus,
+    clearTabError,
+  ]);
 
   return (
     <TabContext.Provider value={contextValue}>
