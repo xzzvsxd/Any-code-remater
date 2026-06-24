@@ -185,26 +185,17 @@ pub fn extract_session_model<P: AsRef<Path>>(jsonl_path: P) -> Option<String> {
     last_model
 }
 
-fn sort_messages_chronologically_preserving_missing_timestamps(messages: Vec<Value>) -> Vec<Value> {
-    let mut last_timestamp: Option<String> = None;
-    let mut indexed: Vec<(usize, String, Value)> = Vec::with_capacity(messages.len());
-
-    for (index, message) in messages.into_iter().enumerate() {
-        let timestamp = message
-            .get("timestamp")
-            .and_then(|t| t.as_str())
-            .filter(|t| !t.is_empty())
-            .map(|t| {
-                last_timestamp = Some(t.to_string());
-                t.to_string()
-            })
-            .or_else(|| last_timestamp.clone())
-            .unwrap_or_default();
-        indexed.push((index, timestamp, message));
-    }
-
-    indexed.sort_by(|(ia, tsa, _), (ib, tsb, _)| tsa.cmp(tsb).then_with(|| ia.cmp(ib)));
-    indexed.into_iter().map(|(_, _, message)| message).collect()
+fn preserve_messages_in_physical_order(messages: Vec<Value>) -> Vec<Value> {
+    // Claude Code JSONL line order is the authoritative conversation order.
+    //
+    // Do not reorder the main timeline by timestamp: reasoning/thinking blocks,
+    // tool messages, and user echoes can carry timestamps that are equal,
+    // delayed, or slightly regressive relative to their persisted line order.
+    // Sorting by timestamp turns those clock quirks into broken turn boundaries:
+    // assistant thinking may jump before the user prompt, duplicated-looking
+    // thinking blocks get split around a user row, and the UI then renders an
+    // impossible conversation. Keep physical order; timestamps are display data.
+    messages
 }
 
 /// 为历史消息补充“展示/排序时间戳”（user 写 sentAt、assistant/system/result 写 receivedAt）。
@@ -374,13 +365,14 @@ pub fn load_session_history(session_id: &str, project_id: &str) -> Result<Vec<Va
         }
     }
 
-    // Step 3: Sort messages by timestamp to maintain chronological order.
+    // Step 3: Keep main JSONL physical order.
     //
-    // jsonl 的物理行序本身是正确写入顺序；子代理消息（Step 2）append 到末尾后
-    // 需要按 timestamp 插回主时间线。但缺失 timestamp 的历史消息不能用空串排序，
-    // 否则会被整体甩到顶部。这里给缺失 timestamp 的消息继承“前一条有时间消息”
-    // 的排序键，并用原始行号兜底，既保持总排序稳定，也避免旧消息错位。
-    let mut messages = sort_messages_chronologically_preserving_missing_timestamps(messages);
+    // 主对话的 turn 边界必须来自 JSONL 物理行序，而不是 timestamp。
+    // Claude 的 thinking/tool/user 事件时间戳可能轻微乱序；全局按 timestamp 排序会把
+    // thinking 插到 user 前面，造成历史会话里“思维过程堆到前面/用户消息被夹住/重复错位”。
+    // 子代理消息即使 append 在末尾，也会在前端按 parent_tool_use_id 收进对应 Task 组，
+    // 不需要破坏主线顺序来把它们插回主时间线。
+    let mut messages = preserve_messages_in_physical_order(messages);
 
     // Step 4: 为缺失展示时间戳的历史消息补充 sentAt/receivedAt。
     // 必须优先采用消息自带的真实 timestamp，确保 user 与 assistant 落在同一时钟，
@@ -398,7 +390,7 @@ pub fn load_session_history(session_id: &str, project_id: &str) -> Result<Vec<Va
 mod tests {
     use super::{
         apply_display_timestamps_preferring_real, is_auto_compaction_instruction,
-        is_slash_command_message, sort_messages_chronologically_preserving_missing_timestamps,
+        is_slash_command_message, preserve_messages_in_physical_order,
     };
     use serde_json::{json, Value};
     use std::time::SystemTime;
@@ -433,7 +425,7 @@ mod tests {
     }
 
     #[test]
-    fn history_sort_preserves_missing_timestamp_order() {
+    fn history_preserves_missing_timestamp_physical_order() {
         let messages = vec![
             json!({ "id": "user-1", "type": "user", "timestamp": "2026-01-01T00:00:00Z" }),
             json!({ "id": "assistant-1", "type": "assistant" }),
@@ -441,7 +433,7 @@ mod tests {
             json!({ "id": "assistant-2", "type": "assistant", "timestamp": "2026-01-01T00:01:00Z" }),
         ];
 
-        let sorted = sort_messages_chronologically_preserving_missing_timestamps(messages);
+        let sorted = preserve_messages_in_physical_order(messages);
 
         assert_eq!(
             ids(&sorted),
@@ -450,16 +442,33 @@ mod tests {
     }
 
     #[test]
-    fn history_sort_inserts_late_loaded_subagent_by_timestamp() {
+    fn history_keeps_appended_subagent_after_main_timeline() {
         let messages = vec![
             json!({ "id": "user-1", "type": "user", "timestamp": "2026-01-01T00:00:00Z" }),
             json!({ "id": "assistant-1", "type": "assistant", "timestamp": "2026-01-01T00:02:00Z" }),
             json!({ "id": "subagent", "type": "assistant", "timestamp": "2026-01-01T00:01:00Z" }),
         ];
 
-        let sorted = sort_messages_chronologically_preserving_missing_timestamps(messages);
+        let sorted = preserve_messages_in_physical_order(messages);
 
-        assert_eq!(ids(&sorted), vec!["user-1", "subagent", "assistant-1"]);
+        assert_eq!(ids(&sorted), vec!["user-1", "assistant-1", "subagent"]);
+    }
+
+    #[test]
+    fn history_sort_preserves_main_jsonl_order_even_when_timestamps_regress() {
+        let messages = vec![
+            json!({ "id": "user-1", "type": "user", "timestamp": "2026-01-01T00:00:10Z" }),
+            json!({ "id": "assistant-thinking", "type": "assistant", "timestamp": "2026-01-01T00:00:05Z" }),
+            json!({ "id": "assistant-answer", "type": "assistant", "timestamp": "2026-01-01T00:00:11Z" }),
+        ];
+
+        let sorted = preserve_messages_in_physical_order(messages);
+
+        assert_eq!(
+            ids(&sorted),
+            vec!["user-1", "assistant-thinking", "assistant-answer"],
+            "main JSONL line order is the authoritative conversation order; timestamps are not safe turn boundaries"
+        );
     }
 
     // 回归测试：真实会话每条消息都自带 timestamp。补充展示时间戳时必须直接采用真实
