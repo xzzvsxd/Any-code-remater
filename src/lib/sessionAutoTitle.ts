@@ -8,6 +8,7 @@ export const AUTO_TITLE_PERSIST_MAX_ATTEMPTS = 3;
 const AUTO_TITLE_MAX_LENGTH = 20;
 const FALLBACK_TITLE_MAX_SOURCE_CHARS = 160;
 const AUTO_TITLE_PERSIST_RETRY_DELAYS_MS = [0, 300] as const;
+const inFlightAutoTitleBySessionId = new Map<string, Promise<string | null>>();
 
 export function isAutoTopicNamingEnabled(settings: ClaudeSettings | null | undefined): boolean {
   return settings?.autoTopicNaming !== false;
@@ -143,7 +144,7 @@ async function setSessionTitleWithRetry(
   throw lastError instanceof Error ? lastError : new Error('Persisting auto topic title failed');
 }
 
-export async function autoNameSessionFromPrompt({
+async function autoNameSessionFromPromptOnce({
   sessionId,
   prompt,
 }: {
@@ -204,4 +205,35 @@ export async function autoNameSessionFromPrompt({
     console.warn('[SessionAutoTitle] Auto topic naming skipped:', error);
     return null;
   }
+}
+
+export async function autoNameSessionFromPrompt({
+  sessionId,
+  prompt,
+}: {
+  sessionId: string;
+  prompt: string;
+}): Promise<string | null> {
+  const trimmedSessionId = sessionId.trim();
+  const trimmedPrompt = prompt.trim();
+  if (!trimmedSessionId || !trimmedPrompt) {
+    return null;
+  }
+
+  const existing = inFlightAutoTitleBySessionId.get(trimmedSessionId);
+  if (existing) {
+    return existing;
+  }
+
+  const naming = autoNameSessionFromPromptOnce({
+    sessionId: trimmedSessionId,
+    prompt: trimmedPrompt,
+  }).finally(() => {
+    if (inFlightAutoTitleBySessionId.get(trimmedSessionId) === naming) {
+      inFlightAutoTitleBySessionId.delete(trimmedSessionId);
+    }
+  });
+
+  inFlightAutoTitleBySessionId.set(trimmedSessionId, naming);
+  return naming;
 }

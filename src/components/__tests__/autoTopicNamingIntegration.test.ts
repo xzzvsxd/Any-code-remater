@@ -15,7 +15,19 @@ describe('auto topic naming integration', () => {
     expect(claudeCodeSession).toContain('autoTitleSessionIdsRef');
     expect(claudeCodeSession).toContain('onAutoSessionTitle');
     expect(tabWrapper).toContain('onAutoSessionTitle');
-    expect(tabWrapper).not.toContain("import { autoNameSessionFromPrompt }");
+  });
+
+  test('session promotion keeps a wrapper-level auto-title fallback for lifecycle races', () => {
+    expect(tabWrapper).toContain("import { autoNameSessionFromPrompt }");
+    expect(tabWrapper).toContain('autoTitleBackupSessionIdsRef');
+    expect(tabWrapper).toContain('autoNameSessionFromPrompt({');
+    expect(tabWrapper).toContain('firstPromptForAutoTitleRef.current ?? info.firstUserPrompt');
+  });
+
+  test('selected project path is promoted to tab state before a real session id exists', () => {
+    expect(tabWrapper).toContain('updateProjectPath');
+    expect(tabWrapper).toContain('handleProjectPathChange');
+    expect(tabWrapper).toContain('onProjectPathChange={handleProjectPathChange}');
   });
 
   test('first prompt capture is not blocked by system/init messages', () => {

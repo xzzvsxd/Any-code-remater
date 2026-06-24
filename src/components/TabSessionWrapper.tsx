@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useCallback, useMemo } from 'react';
 import { ClaudeCodeSession } from './ClaudeCodeSession';
 import { useTabSession } from '@/hooks/useTabs';
 import { api } from '@/lib/api';
+import { autoNameSessionFromPrompt } from '@/lib/sessionAutoTitle';
 import type { Session } from '@/lib/api';
 import { buildQueueStorageKey } from '@/lib/queuedPromptsStore';
 
@@ -26,12 +27,13 @@ const TabSessionWrapperComponent: React.FC<TabSessionWrapperProps> = ({
   isActive,
 }) => {
   // ✅ FIXED: Removed unused 'tab' variable to fix TS6133
-  const { updateStreaming, setCleanup, updateTitle, updateEngine, updateSession } = useTabSession(tabId);
+  const { updateStreaming, setCleanup, updateTitle, updateEngine, updateProjectPath, updateSession } = useTabSession(tabId);
   const sessionRef = useRef<{ hasChanges: boolean; sessionId: string | null }>({
     hasChanges: false,
     sessionId: null,
   });
   const firstPromptForAutoTitleRef = useRef<string | null>(null);
+  const autoTitleBackupSessionIdsRef = useRef<Set<string>>(new Set());
 
   // 🔧 FIX: Cache the initial session prop value. When a tab is created as "new" (session=undefined),
   // we must always pass undefined to ClaudeCodeSession, even if the session prop later becomes
@@ -109,6 +111,10 @@ const TabSessionWrapperComponent: React.FC<TabSessionWrapperProps> = ({
     updateTitle(title);
   }, [updateTitle]);
 
+  const handleProjectPathChange = useCallback((projectPath: string) => {
+    updateProjectPath(projectPath);
+  }, [updateProjectPath]);
+
   // 🆕 Handle engine change - 更新标签页显示的引擎类型
   const handleEngineChange = useCallback((engine: 'claude' | 'codex' | 'gemini') => {
     updateEngine(engine);
@@ -125,7 +131,23 @@ const TabSessionWrapperComponent: React.FC<TabSessionWrapperProps> = ({
     if (firstPrompt && !firstPromptForAutoTitleRef.current) {
       firstPromptForAutoTitleRef.current = firstPrompt;
     }
-  }, [deletePromotedDraftCarrier, tabId, updateSession]);
+
+    if (firstPrompt && !autoTitleBackupSessionIdsRef.current.has(info.sessionId)) {
+      autoTitleBackupSessionIdsRef.current.add(info.sessionId);
+      autoNameSessionFromPrompt({
+        sessionId: info.sessionId,
+        prompt: firstPrompt,
+      }).then((title) => {
+        const trimmedTitle = title?.trim();
+        if (trimmedTitle) {
+          updateTitle(trimmedTitle);
+        }
+      }).catch((error) => {
+        console.warn('[TabSessionWrapper] Backup auto session title failed:', { sessionId: info.sessionId, error });
+        autoTitleBackupSessionIdsRef.current.delete(info.sessionId);
+      });
+    }
+  }, [deletePromotedDraftCarrier, tabId, updateSession, updateTitle]);
 
   const handleAutoSessionTitle = useCallback((title: string) => {
     const trimmedTitle = title.trim();
@@ -167,6 +189,7 @@ const TabSessionWrapperComponent: React.FC<TabSessionWrapperProps> = ({
         onStreamingChange={handleStreamingChange}
         onEngineChange={handleEngineChange}
         onSessionInfoChange={handleSessionInfoChange}
+        onProjectPathChange={handleProjectPathChange}
         onFirstUserPrompt={handleFirstUserPrompt}
         onAutoSessionTitle={handleAutoSessionTitle}
         isActive={isActive}

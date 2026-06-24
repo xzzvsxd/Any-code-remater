@@ -112,6 +112,27 @@ describe('session auto topic naming helpers', () => {
     expect(api.setSessionTitle).toHaveBeenLastCalledWith('session-write-retry', '持久化重试');
   });
 
+  test('deduplicates concurrent auto naming attempts for the same session', async () => {
+    vi.mocked(claudeSDK.sendMessage).mockResolvedValue({ content: '单次命名' } as any);
+
+    const [first, second] = await Promise.all([
+      autoNameSessionFromPrompt({
+        sessionId: 'session-concurrent',
+        prompt: '帮我稳定自动命名',
+      }),
+      autoNameSessionFromPrompt({
+        sessionId: 'session-concurrent',
+        prompt: '帮我稳定自动命名',
+      }),
+    ]);
+
+    expect(first).toBe('单次命名');
+    expect(second).toBe('单次命名');
+    expect(claudeSDK.sendMessage).toHaveBeenCalledTimes(1);
+    expect(api.setSessionTitle).toHaveBeenCalledTimes(1);
+    expect(api.setSessionTitle).toHaveBeenCalledWith('session-concurrent', '单次命名');
+  });
+
   test('still persists an automatic title when the Haiku request fails', async () => {
     vi.mocked(claudeSDK.sendMessage).mockRejectedValue(new Error('No API key available'));
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});

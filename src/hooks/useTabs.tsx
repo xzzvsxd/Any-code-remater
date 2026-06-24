@@ -51,6 +51,8 @@ interface TabContextValue {
   updateTabChanges: (tabId: string, hasChanges: boolean) => void;
   updateTabTitle: (tabId: string, title: string) => void;
   updateTabEngine: (tabId: string, engine: 'claude' | 'codex' | 'gemini') => void;
+  /** 更新未落盘新会话的项目路径，用于发送前侧栏归类和运行中指示 */
+  updateTabProjectPath: (tabId: string, projectPath: string) => void;
   /** 🔧 FIX: 更新标签页的 session 信息（用于新建会话获取到 sessionId 后持久化） */
   updateTabSession: (tabId: string, sessionInfo: { sessionId: string; projectId: string; projectPath: string; engine?: 'claude' | 'codex' | 'gemini' }) => void;
   getTabById: (tabId: string) => TabSession | undefined;
@@ -297,6 +299,32 @@ export const TabProvider: React.FC<TabProviderProps> = ({ children }) => {
         return { ...tab, engine, session: updatedSession };
       })
     );
+  }, []);
+
+  const updateTabProjectPath = useCallback((tabId: string, projectPath: string) => {
+    const trimmedPath = projectPath.trim();
+    if (!trimmedPath) return;
+
+    setTabs(prev => {
+      let changed = false;
+      const next = prev.map(tab => {
+        if (tab.id !== tabId) return tab;
+        if (tab.projectPath === trimmedPath) return tab;
+
+        changed = true;
+        const updatedSession = tab.session
+          ? { ...tab.session, project_path: trimmedPath }
+          : tab.session;
+        return {
+          ...tab,
+          projectPath: trimmedPath,
+          session: updatedSession,
+          lastActiveAt: Date.now(),
+        };
+      });
+
+      return changed ? next : prev;
+    });
   }, []);
 
   // 🔧 FIX: Update tab session - 更新标签页的会话信息
@@ -572,6 +600,7 @@ export const TabProvider: React.FC<TabProviderProps> = ({ children }) => {
     updateTabChanges,
     updateTabTitle,
     updateTabEngine,
+    updateTabProjectPath,
     updateTabSession,
     getTabById,
     getActiveTab,
@@ -621,7 +650,7 @@ export const useActiveTab = (): TabSession | undefined => {
  * useTabSession - 获取特定标签页的会话管理钩子
  */
 export const useTabSession = (tabId: string) => {
-  const { getTabById, updateTabChanges, updateTabStreamingStatus, updateTabTitle, updateTabEngine, updateTabSession, registerTabCleanup } = useTabs();
+  const { getTabById, updateTabChanges, updateTabStreamingStatus, updateTabTitle, updateTabEngine, updateTabProjectPath, updateTabSession, registerTabCleanup } = useTabs();
 
   const tab = getTabById(tabId);
 
@@ -646,6 +675,10 @@ export const useTabSession = (tabId: string) => {
     updateTabEngine(tabId, engine);
   }, [tabId, updateTabEngine]);
 
+  const updateProjectPath = useCallback((projectPath: string) => {
+    updateTabProjectPath(tabId, projectPath);
+  }, [tabId, updateTabProjectPath]);
+
   // 🔧 FIX: Update session - 更新会话信息（用于新建会话持久化）
   const updateSession = useCallback((sessionInfo: { sessionId: string; projectId: string; projectPath: string; engine?: 'claude' | 'codex' | 'gemini' }) => {
     updateTabSession(tabId, sessionInfo);
@@ -663,6 +696,7 @@ export const useTabSession = (tabId: string) => {
     updateTitle,
     updateStreaming,
     updateEngine,
+    updateProjectPath,
     updateSession,
     setCleanup,
   };
