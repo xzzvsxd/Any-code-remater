@@ -7,6 +7,7 @@ import {
   type TailUpdateResult,
 } from "@/lib/stream/batchedStateUpdater";
 import { normalizeMessageContentShape, normalizeMessagesContentShape } from '@/lib/messageContentAccess';
+import { preserveAssistantThinkingOnTailReplace } from '@/lib/assistantThinkingPreservation';
 
 export interface ToolResultEntry {
   toolUseId: string;
@@ -497,9 +498,12 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({
       if (!result || result.type === 'none') {
         return { type: 'none' };
       }
+      const normalizedItem = normalizeMessageContentShape(result.item);
       return {
         ...result,
-        item: normalizeMessageContentShape(result.item),
+        item: result.type === 'replace'
+          ? preserveAssistantThinkingOnTailReplace(lastMessage, normalizedItem)
+          : normalizedItem,
       };
     });
   }, []);

@@ -163,6 +163,31 @@ describe('message group virtualization identity and safety', () => {
     );
   });
 
+  test('messages with identical timestamp and identical content still include row position to avoid virtual DOM reuse', () => {
+    const first: MessageGroup = {
+      type: 'normal',
+      index: 2,
+      message: {
+        type: 'assistant',
+        timestamp: '2026-06-23T00:00:03.000Z',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'same repeated answer' }] },
+      } as ClaudeStreamMessage,
+    };
+    const second: MessageGroup = {
+      type: 'normal',
+      index: 9,
+      message: {
+        type: 'assistant',
+        timestamp: '2026-06-23T00:00:03.000Z',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'same repeated answer' }] },
+      } as ClaudeStreamMessage,
+    };
+
+    expect(getMessageGroupVirtualKey(first, 2)).not.toBe(
+      getMessageGroupVirtualKey(second, 9),
+    );
+  });
+
   test('aggregated technical rows include real message identities so cache is not reused for a different aggregate', () => {
     const first: MessageGroup = {
       type: 'aggregated',

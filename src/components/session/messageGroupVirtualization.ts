@@ -130,7 +130,7 @@ export const getMessageVirtualIdentity = (
   for (const timestampCandidate of [raw.timestamp, raw.receivedAt, raw.sentAt]) {
     const part = keyPart(timestampCandidate);
     if (part) {
-      return `${message.type}:time:${part}:sig:${getContentSignature(message)}`;
+      return `${message.type}:time:${part}:sig:${getContentSignature(message)}:pos:${fallbackIndex}`;
     }
   }
 

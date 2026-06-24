@@ -42,6 +42,11 @@ const aiMessageSource = readFileSync(
   'utf8',
 );
 
+const streamMessageSource = readFileSync(
+  resolve(process.cwd(), 'src/components/message/StreamMessageV2.tsx'),
+  'utf8',
+);
+
 const sessionMessagesSource = readFileSync(
   resolve(process.cwd(), 'src/components/session/SessionMessages.tsx'),
   'utf8',
@@ -115,6 +120,12 @@ describe('message render safety wiring', () => {
     expect(aiMessageSource).toContain("part.type === 'text'");
     expect(aiMessageSource).not.toContain('{text && (');
     expect(aiMessageSource).not.toContain('{hasThinking && thinkingContent && (');
+  });
+
+  test('StreamMessage memo comparison treats thinking content as render-relevant', () => {
+    expect(streamMessageSource).toContain('getMessageContent(prev)');
+    expect(streamMessageSource).toContain("prevItem?.type === 'thinking'");
+    expect(streamMessageSource).toContain('prevItem?.thinking ?? prevItem?.content');
   });
 
   test('message scroll container does not blanket-disable loader animations', () => {

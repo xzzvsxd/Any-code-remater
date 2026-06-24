@@ -266,8 +266,8 @@ const isMessageEqual = (prev: ClaudeStreamMessage | undefined, next: ClaudeStrea
   if (prevTimestamp !== nextTimestamp) return false;
 
   // 比较内容数组长度
-  const prevContent = prev.message?.content;
-  const nextContent = next.message?.content;
+  const prevContent = getMessageContent(prev);
+  const nextContent = getMessageContent(next);
 
   if (Array.isArray(prevContent) && Array.isArray(nextContent)) {
     if (prevContent.length !== nextContent.length) return false;
@@ -280,7 +280,16 @@ const isMessageEqual = (prev: ClaudeStreamMessage | undefined, next: ClaudeStrea
       if (prevItem?.type !== nextItem?.type) return false;
 
       // 对于文本内容，比较文本
-      if (prevItem?.type === 'text' && prevItem?.text !== nextItem?.text) return false;
+      if (
+        prevItem?.type === 'text' &&
+        ((prevItem?.text ?? prevItem?.content ?? '') !== (nextItem?.text ?? nextItem?.content ?? ''))
+      ) return false;
+
+      // 对于思维过程，必须比较 thinking/content；否则同长度流式更新会被 memo 吞掉。
+      if (
+        prevItem?.type === 'thinking' &&
+        ((prevItem?.thinking ?? prevItem?.content ?? '') !== (nextItem?.thinking ?? nextItem?.content ?? ''))
+      ) return false;
 
       // 对于工具调用，比较 ID 和名称
       if (prevItem?.type === 'tool_use') {
