@@ -7,6 +7,7 @@
 
 import { Info, Lightbulb, Command } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/hooks/useTranslation";
 import {
   Tooltip,
   TooltipContent,
@@ -34,6 +35,8 @@ export const PlanModeStatusBar: React.FC<PlanModeStatusBarProps> = ({
   isPlanMode,
   className,
 }) => {
+  const { t } = useTranslation();
+
   if (!isPlanMode) return null;
 
   return (
@@ -49,7 +52,7 @@ export const PlanModeStatusBar: React.FC<PlanModeStatusBarProps> = ({
           <div className="flex items-center gap-2">
             <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
             <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
-              Plan 模式已激活
+              {t('planMode.statusBarActive', 'Plan 模式已激活')}
             </span>
           </div>
 
@@ -60,23 +63,23 @@ export const PlanModeStatusBar: React.FC<PlanModeStatusBarProps> = ({
                 <button className="flex items-center gap-1 px-2 py-1 rounded-md bg-blue-500/20 hover:bg-blue-500/30 transition-colors">
                   <Info className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
                   <span className="text-xs text-blue-700 dark:text-blue-300">
-                    只读模式
+                    {t('widget.readOnlyMode', '只读模式')}
                   </span>
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom" className="max-w-xs">
                 <div className="space-y-2">
-                  <p className="font-medium text-sm">Plan 模式工具限制</p>
+                  <p className="font-medium text-sm">{t('planMode.toolRestrictions', 'Plan 模式工具限制')}</p>
                   <div className="text-xs space-y-1">
                     <p className="text-green-600 dark:text-green-400">
-                      ✓ 允许使用：Read, Grep, Glob, WebFetch, WebSearch
+                      ✓ {t('widget.allowedTools')}
                     </p>
                     <p className="text-red-600 dark:text-red-400">
-                      ✗ 禁止使用：Write, Edit, Bash执行、Git操作
+                      ✗ {t('widget.forbiddenTools')}
                     </p>
                   </div>
                   <p className="text-xs text-muted-foreground mt-2">
-                    AI 将只能分析代码库和制定计划，不会修改任何文件
+                    {t('planMode.readOnlyHint', 'AI 将只能分析代码库和制定计划，不会修改任何文件')}
                   </p>
                 </div>
               </TooltipContent>
@@ -96,7 +99,7 @@ export const PlanModeStatusBar: React.FC<PlanModeStatusBarProps> = ({
               </TooltipTrigger>
               <TooltipContent side="bottom" className="max-w-xs">
                 <div className="space-y-2">
-                  <p className="font-medium text-sm">Plan 模式最佳实践</p>
+                  <p className="font-medium text-sm">{t('widget.planModeBestPractices', 'Plan 模式最佳实践')}</p>
                   <ul className="text-xs space-y-1 list-disc list-inside">
                     <li>保持计划范围小（30分钟内可完成）</li>
                     <li>先探索代码库，理解现有架构</li>

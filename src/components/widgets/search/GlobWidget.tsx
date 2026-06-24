@@ -100,7 +100,7 @@ export const GlobWidget: React.FC<GlobWidgetProps> = ({ pattern, result, default
           <div className="flex items-center gap-2 min-w-0">
             <Search className="h-4 w-4 text-blue-500 flex-shrink-0" />
             <div className="flex items-center gap-1.5 min-w-0 text-sm">
-              <span className="text-sm font-medium text-muted-foreground">Glob</span>
+              <span className="text-sm font-medium text-muted-foreground">{t('tool.names.glob', 'Glob')}</span>
               <span className="text-muted-foreground/30">|</span>
               <code className="font-mono text-foreground/90 font-medium truncate" title={pattern}>
                 {pattern}

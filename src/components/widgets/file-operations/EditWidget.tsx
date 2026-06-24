@@ -12,6 +12,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { getClaudeSyntaxTheme } from "@/lib/claudeSyntaxTheme";
 import { useTheme } from "@/contexts/ThemeContext";
 import { getLanguage } from "../common/languageDetector";
+import { useTranslation } from "@/hooks/useTranslation";
 
 export interface EditWidgetProps {
   /** 文件路径 */
@@ -107,6 +108,7 @@ export const EditWidget: React.FC<EditWidgetProps> = ({
   result,
 }) => {
   const { theme } = useTheme();
+  const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(false);
 
   // 性能优化：使用 useMemo 缓存 Diff 计算结果
@@ -152,7 +154,7 @@ export const EditWidget: React.FC<EditWidgetProps> = ({
           <div className="flex items-center gap-3 flex-1 min-w-0">
             <div className="flex items-center gap-2 min-w-0">
               <FileEdit className="h-4 w-4 text-blue-500 flex-shrink-0" />
-              <span className="text-sm font-medium text-muted-foreground">Edit</span>
+              <span className="text-sm font-medium text-muted-foreground">{t('tool.names.edit', 'Edit')}</span>
               <span className="text-muted-foreground/30">|</span>
               <code className="text-sm font-mono text-foreground/90 truncate font-medium" title={file_path}>
                 {file_path.split(/[/\\]/).pop()}

@@ -9,6 +9,7 @@ import { Wrench, Package, Package2, ChevronDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/hooks/useTranslation";
+import { getLocalizedToolName } from "@/lib/toolDisplayNames";
 import {
   SESSION_MESSAGE_LAYOUT_CHANGED_EVENT,
   type SessionMessageLayoutChangedReason,
@@ -189,9 +190,10 @@ export const ToolsList = React.memo<ToolsListProps>(({
               <Badge
                 key={`${tool}-${idx}`}
                 variant="secondary"
-                className="text-xs py-0.5 px-2 font-mono font-normal"
+                className="text-xs py-0.5 px-2 font-normal"
+                title={tool}
               >
-                {tool}
+                {getLocalizedToolName(tool, t)}
               </Badge>
             ))}
             {(hiddenRegularToolCount > 0 || regularExpanded) && (

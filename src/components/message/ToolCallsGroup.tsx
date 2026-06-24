@@ -14,6 +14,7 @@ import { useToolResults } from '@/hooks/useToolResults';
 import { useTranslation } from '@/hooks/useTranslation';
 import { TaskListAggregateWidget } from '@/components/widgets';
 import { getMessageContentArray } from '@/lib/messageContentAccess';
+import { getLocalizedToolName } from '@/lib/toolDisplayNames';
 import {
   SESSION_MESSAGE_LAYOUT_CHANGED_EVENT,
   type SessionMessageLayoutChangedReason,
@@ -133,13 +134,13 @@ export const ToolCallsGroup: React.FC<ToolCallsGroupProps> = ({
 
   // 获取工具类型摘要
   const toolTypesSummary = useMemo(() => {
-    const types = new Set(toolCalls.map(t => t.name));
+    const types = new Set(toolCalls.map((tool) => getLocalizedToolName(tool.name, t)));
     const typeArray = Array.from(types);
     if (typeArray.length <= 3) {
       return typeArray.join(', ');
     }
     return `${typeArray.slice(0, 3).join(', ')} +${typeArray.length - 3}`;
-  }, [toolCalls]);
+  }, [t, toolCalls]);
 
   if (toolCalls.length === 0) return null;
 
@@ -285,7 +286,7 @@ const CollapsedSummary: React.FC<CollapsedSummaryProps> = ({ toolCalls, getStatu
         return (
           <div key={idx} className="flex items-center gap-2 text-xs">
             <StatusIcon className={cn('w-3 h-3', statusColor, !hasResult && 'animate-spin')} />
-            <span className="font-mono font-medium">{tool.name}</span>
+            <span className="font-medium" title={tool.name}>{getLocalizedToolName(tool.name, t)}</span>
             {tool.input?.path && <span className="text-muted-foreground truncate">: {tool.input.path}</span>}
           </div>
         );
@@ -364,7 +365,7 @@ const SingleToolCallComponent: React.FC<SingleToolCallProps> = ({ tool, result, 
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <StatusIcon className={cn('w-4 h-4', statusColor, !hasResult && 'animate-spin')} />
-            <span className="font-mono text-sm font-medium">{tool.name}</span>
+            <span className="text-sm font-medium" title={tool.name}>{getLocalizedToolName(tool.name, t)}</span>
             {index && total && (
               <span className="text-xs text-muted-foreground">
                 ({index}/{total})

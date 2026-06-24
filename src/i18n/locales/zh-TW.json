@@ -770,6 +770,9 @@
     "unnamedSession": "未命名對話"
   },
   "planMode": {
+    "statusBarActive": "Plan 模式已啟用",
+    "toolRestrictions": "Plan 模式工具限制",
+    "readOnlyHint": "AI 只能分析程式碼庫並制定計劃，不會修改任何檔案",
     "selectRevertMode": "選擇撤回模式",
     "revertToPrompt": "將撤回到提示詞 #{{index}}，請選擇撤回方式",
     "checkingCapabilities": "檢測撤回能力中...",
@@ -1092,8 +1095,8 @@
     "executed": "已執行",
     "rejected": "已拒絕",
     "readOnlyMode": "唯讀模式 - 工具限制",
-    "allowedTools": "允許：Read, Grep, Glob, WebFetch, WebSearch",
-    "forbiddenTools": "禁止：Write, Edit, Bash執行、Git操作",
+    "allowedTools": "允許：讀取、內容搜尋、檔案匹配、擷取網頁、網路搜尋",
+    "forbiddenTools": "禁止：寫入、編輯、終端執行、Git 操作",
     "planModeBestPractices": "Plan 模式最佳實踐",
     "keepPlanSmall": "保持計畫範圍小（30分鐘內可完成）",
     "exploreCodebase": "先探索程式碼庫，理解現有架構",
@@ -1480,7 +1483,35 @@
   "tool": {
     "read": "讀取",
     "fileContent": "檔案內容",
-    "lines": "行"
+    "lines": "行",
+    "usingTool": "使用工具：{{tool}}",
+    "names": {
+      "askuserquestion": "詢問使用者",
+      "bash": "終端",
+      "bashoutput": "終端輸出",
+      "command": "命令",
+      "commandoutput": "命令輸出",
+      "edit": "編輯",
+      "enterplanmode": "進入計劃模式",
+      "enterworktree": "進入工作樹",
+      "exitplanmode": "退出計劃模式",
+      "glob": "檔案匹配",
+      "grep": "內容搜尋",
+      "ls": "列目錄",
+      "multiedit": "批次編輯",
+      "notebookedit": "編輯筆記本",
+      "read": "讀取",
+      "skill": "技能",
+      "task": "任務",
+      "taskoutput": "任務輸出",
+      "taskstop": "停止任務",
+      "todoread": "讀取待辦",
+      "todowrite": "更新待辦",
+      "toolsearch": "工具搜尋",
+      "webfetch": "擷取網頁",
+      "websearch": "網路搜尋",
+      "write": "寫入"
+    }
   },
   "cliIndicator": {
     "escToCancel": "esc 取消",

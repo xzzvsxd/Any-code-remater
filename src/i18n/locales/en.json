@@ -773,6 +773,9 @@
     "unnamedSession": "Unnamed Session"
   },
   "planMode": {
+    "statusBarActive": "Plan Mode Active",
+    "toolRestrictions": "Plan Mode Tool Restrictions",
+    "readOnlyHint": "AI can only inspect the codebase and create plans; it will not modify files.",
     "selectRevertMode": "Select Revert Mode",
     "revertToPrompt": "Revert to prompt #{{index}}, please select revert method",
     "checkingCapabilities": "Checking revert capabilities...",
@@ -1506,7 +1509,35 @@
   "tool": {
     "read": "Read",
     "fileContent": "File content",
-    "lines": "lines"
+    "lines": "lines",
+    "usingTool": "Using tool: {{tool}}",
+    "names": {
+      "askuserquestion": "Ask User",
+      "bash": "Terminal",
+      "bashoutput": "Terminal Output",
+      "command": "Command",
+      "commandoutput": "Command Output",
+      "edit": "Edit",
+      "enterplanmode": "Enter Plan Mode",
+      "enterworktree": "Enter Worktree",
+      "exitplanmode": "Exit Plan Mode",
+      "glob": "Glob",
+      "grep": "Grep",
+      "ls": "List Directory",
+      "multiedit": "MultiEdit",
+      "notebookedit": "Notebook Edit",
+      "read": "Read",
+      "skill": "Skill",
+      "task": "Task",
+      "taskoutput": "Task Output",
+      "taskstop": "Stop Task",
+      "todoread": "Read Todos",
+      "todowrite": "Update Todos",
+      "toolsearch": "Tool Search",
+      "webfetch": "Web Fetch",
+      "websearch": "Web Search",
+      "write": "Write"
+    }
   },
   "cliIndicator": {
     "escToCancel": "esc to cancel",

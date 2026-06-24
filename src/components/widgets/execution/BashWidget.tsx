@@ -73,7 +73,7 @@ export const BashWidget: React.FC<BashWidgetProps> = ({
           {/* Terminal 标签 - 不允许换行和收缩 */}
           <div className="flex items-center gap-2 flex-shrink-0">
             <Terminal className="h-4 w-4 text-blue-500" />
-            <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">Terminal</span>
+            <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">{t('tool.names.bash', 'Terminal')}</span>
             <span className="text-muted-foreground/30">|</span>
           </div>
           {/* 命令内容 - 允许截断 */}

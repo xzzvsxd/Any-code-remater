@@ -13,6 +13,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { getClaudeSyntaxTheme } from "@/lib/claudeSyntaxTheme";
 import { useTheme } from "@/contexts/ThemeContext";
 import { getLanguage } from "../common/languageDetector";
+import { useTranslation } from "@/hooks/useTranslation";
 
 export interface MultiEditWidgetProps {
   /** 文件路径 */
@@ -34,6 +35,7 @@ export const MultiEditWidget: React.FC<MultiEditWidgetProps> = ({
   result: _result,
 }) => {
   const { theme } = useTheme();
+  const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(false);
   const language = getLanguage(file_path);
 
@@ -42,7 +44,7 @@ export const MultiEditWidget: React.FC<MultiEditWidgetProps> = ({
       {/* 头部 */}
       <div className="flex items-center gap-2 mb-2">
         <FileEdit className="h-4 w-4 text-muted-foreground" />
-        <span className="text-sm font-medium">使用工具： MultiEdit</span>
+        <span className="text-sm font-medium">{t('tool.usingTool', '使用工具：{{tool}}', { tool: t('tool.names.multiedit', 'MultiEdit') })}</span>
       </div>
 
       <div className="ml-6 space-y-2">

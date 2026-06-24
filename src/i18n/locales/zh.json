@@ -773,6 +773,9 @@
     "unnamedSession": "未命名会话"
   },
   "planMode": {
+    "statusBarActive": "Plan 模式已激活",
+    "toolRestrictions": "Plan 模式工具限制",
+    "readOnlyHint": "AI 将只能分析代码库和制定计划，不会修改任何文件",
     "selectRevertMode": "选择撤回模式",
     "revertToPrompt": "将撤回到提示词 #{{index}}，请选择撤回方式",
     "checkingCapabilities": "检测撤回能力中...",
@@ -1099,8 +1102,8 @@
     "executed": "已执行",
     "rejected": "已拒绝",
     "readOnlyMode": "只读模式 - 工具限制",
-    "allowedTools": "允许：Read, Grep, Glob, WebFetch, WebSearch",
-    "forbiddenTools": "禁止：Write, Edit, Bash执行、Git操作",
+    "allowedTools": "允许：读取、内容搜索、文件匹配、获取网页、网络搜索",
+    "forbiddenTools": "禁止：写入、编辑、终端执行、Git 操作",
     "planModeBestPractices": "Plan 模式最佳实践",
     "keepPlanSmall": "保持计划范围小（30分钟内可完成）",
     "exploreCodebase": "先探索代码库，理解现有架构",
@@ -1500,7 +1503,35 @@
   "tool": {
     "read": "读取",
     "fileContent": "文件内容",
-    "lines": "行"
+    "lines": "行",
+    "usingTool": "使用工具：{{tool}}",
+    "names": {
+      "askuserquestion": "询问用户",
+      "bash": "终端",
+      "bashoutput": "终端输出",
+      "command": "命令",
+      "commandoutput": "命令输出",
+      "edit": "编辑",
+      "enterplanmode": "进入计划模式",
+      "enterworktree": "进入工作树",
+      "exitplanmode": "退出计划模式",
+      "glob": "文件匹配",
+      "grep": "内容搜索",
+      "ls": "列目录",
+      "multiedit": "批量编辑",
+      "notebookedit": "编辑笔记本",
+      "read": "读取",
+      "skill": "技能",
+      "task": "任务",
+      "taskoutput": "任务输出",
+      "taskstop": "停止任务",
+      "todoread": "读取待办",
+      "todowrite": "更新待办",
+      "toolsearch": "工具搜索",
+      "webfetch": "获取网页",
+      "websearch": "网络搜索",
+      "write": "写入"
+    }
   },
   "cliIndicator": {
     "escToCancel": "esc 取消",

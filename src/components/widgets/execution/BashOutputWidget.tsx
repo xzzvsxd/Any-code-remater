@@ -65,7 +65,7 @@ export const BashOutputWidget: React.FC<BashOutputWidgetProps> = ({
       >
         <div className="flex items-center gap-2 min-w-0">
           <Terminal className="h-4 w-4 text-blue-500 flex-shrink-0" />
-          <span className="text-sm font-medium text-muted-foreground">Bash Output</span>
+          <span className="text-sm font-medium text-muted-foreground">{t('tool.names.bashoutput', 'Terminal Output')}</span>
           <span className="text-muted-foreground/30">|</span>
           <code className="text-xs font-mono text-foreground/80 bg-muted/50 px-1.5 py-0.5 rounded">ID: {bash_id}</code>
         </div>
