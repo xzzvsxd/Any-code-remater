@@ -758,6 +758,8 @@
     "createdAt": "创建时间:",
     "newSession": "新建会话",
     "newSessionWindow": "新建会话（独立窗口）",
+    "renameSession": "重命名会话",
+    "renameSessionDescription": "修改当前会话在工作区和会话列表中显示的名称。",
     "closeTab": "关闭标签页",
     "closeAllTabs": "关闭所有标签页",
     "closeOtherTabs": "关闭其他标签页",

@@ -755,6 +755,8 @@
     "createdAt": "建立時間:",
     "newSession": "新建對話",
     "newSessionWindow": "新建對話（獨立視窗）",
+    "renameSession": "重新命名會話",
+    "renameSessionDescription": "修改目前會話在工作區和會話列表中顯示的名稱。",
     "closeTab": "關閉分頁",
     "closeAllTabs": "關閉所有分頁",
     "closeOtherTabs": "關閉其他分頁",

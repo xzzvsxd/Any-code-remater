@@ -758,6 +758,8 @@
     "createdAt": "Created at:",
     "newSession": "New Session",
     "newSessionWindow": "New Session (Separate Window)",
+    "renameSession": "Rename Session",
+    "renameSessionDescription": "Change the display name shown for the current session in the workspace and session list.",
     "closeTab": "Close Tab",
     "closeAllTabs": "Close All Tabs",
     "closeOtherTabs": "Close Other Tabs",

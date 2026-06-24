@@ -71,6 +71,9 @@ export const TabManager: React.FC<TabManagerProps> = ({
   useSessionSync();
 
   const [tabToClose, setTabToClose] = useState<string | null>(null); // 待关闭的标签页ID（需要确认）
+  const [renameTargetTabId, setRenameTargetTabId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const activeTabForMenu = tabs.find((tb) => tb.isActive);
 
   // ✨ Phase 3: Simple initialization flag (no complex state machine)
   const initializedRef = useRef(false);
@@ -95,6 +98,45 @@ export const TabManager: React.FC<TabManagerProps> = ({
       console.error('[TabManager] Failed to create new session window:', error);
     }
   }, [createNewTabAsWindow]);
+
+  const renameTabTitle = useCallback((tabId: string, title: string) => {
+    const tab = tabs.find((tb) => tb.id === tabId);
+    const trimmed = title.trim();
+    if (!tab || !trimmed || trimmed === tab.title) return;
+
+    updateTabTitle(tab.id, trimmed);
+    if (tab.session?.id) {
+      api.setSessionTitle(tab.session.id, trimmed)
+        .then(() => {
+          window.dispatchEvent(new CustomEvent('session-title-changed', {
+            detail: { sessionId: tab.session!.id, title: trimmed },
+          }));
+        })
+        .catch((err) => {
+          console.error('[TabManager] failed to persist session title:', err);
+        });
+    }
+  }, [tabs, updateTabTitle]);
+
+  const startRenameActiveSessionFromMenu = useCallback(() => {
+    if (!activeTabForMenu) return;
+    setRenameTargetTabId(activeTabForMenu.id);
+    setRenameDraft(activeTabForMenu.title);
+  }, [activeTabForMenu]);
+
+  const cancelRenameSession = useCallback(() => {
+    setRenameTargetTabId(null);
+    setRenameDraft('');
+  }, []);
+
+  const confirmRenameSession = useCallback(() => {
+    if (!renameTargetTabId) return;
+    const title = renameDraft.trim();
+    if (!title) return;
+
+    renameTabTitle(renameTargetTabId, title);
+    cancelRenameSession();
+  }, [cancelRenameSession, renameDraft, renameTabTitle, renameTargetTabId]);
 
   // ✨ Phase 3: Simplified initialization (single responsibility, no race conditions)
   // 🔧 FIX: 使用 initialSession/initialProjectPath 的引用作为依赖，避免重复创建标签页
@@ -188,20 +230,9 @@ export const TabManager: React.FC<TabManagerProps> = ({
                   switchToTab(r.tabId);
                 }}
                 onRenameActiveTab={(title) => {
-                  const active = tabs.find((tb) => tb.isActive);
+                  const active = activeTabForMenu;
                   if (!active) return;
-                  updateTabTitle(active.id, title);
-                  if (active.session?.id) {
-                    api.setSessionTitle(active.session.id, title)
-                      .then(() => {
-                        window.dispatchEvent(new CustomEvent('session-title-changed', {
-                          detail: { sessionId: active.session!.id, title: title.trim() },
-                        }));
-                      })
-                      .catch((err) => {
-                        console.error('[TabManager] failed to persist session title:', err);
-                      });
-                  }
+                  renameTabTitle(active.id, title);
                 }}
                 onNewSession={() => createNewTab()}
               />
@@ -232,6 +263,10 @@ export const TabManager: React.FC<TabManagerProps> = ({
                 <DropdownMenuItem onClick={handleCreateNewTabAsWindow}>
                   <ExternalLink className="h-4 w-4 mr-2" />
                   {t('tabs.newSessionWindow')}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={startRenameActiveSessionFromMenu} disabled={!activeTabForMenu}>
+                  <Pencil className="h-4 w-4 mr-2" />
+                  {t('tabs.renameSession')}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
@@ -363,6 +398,36 @@ export const TabManager: React.FC<TabManagerProps> = ({
               </Button>
               <Button variant="destructive" onClick={confirmCloseTab}>
                 {t('tabs.confirmClose')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={renameTargetTabId !== null} onOpenChange={(open) => !open && cancelRenameSession()}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{t('tabs.renameSession')}</DialogTitle>
+              <DialogDescription>
+                {t('tabs.renameSessionDescription')}
+              </DialogDescription>
+            </DialogHeader>
+            <input
+              autoFocus
+              value={renameDraft}
+              aria-label={t('tabs.renameSession')}
+              onChange={(e) => setRenameDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') confirmRenameSession();
+                else if (e.key === 'Escape') cancelRenameSession();
+              }}
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+            />
+            <DialogFooter>
+              <Button variant="outline" onClick={cancelRenameSession}>
+                {t('buttons.cancel')}
+              </Button>
+              <Button onClick={confirmRenameSession} disabled={!renameDraft.trim()}>
+                {t('buttons.save')}
               </Button>
             </DialogFooter>
           </DialogContent>
