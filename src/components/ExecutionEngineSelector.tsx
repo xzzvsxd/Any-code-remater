@@ -6,8 +6,12 @@
  */
 
 import React, { useState } from 'react';
-import { Settings, Zap, Check, Monitor, Terminal, Sparkles } from 'lucide-react';
+import { Check, Monitor, Terminal, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { ClaudeIcon } from '@/components/icons/ClaudeIcon';
+import { CodexIcon } from '@/components/icons/CodexIcon';
+import { GeminiIcon } from '@/components/icons/GeminiIcon';
+import { cn } from '@/lib/utils';
 import {
   Select,
   SelectContent,
@@ -388,6 +392,29 @@ export const ExecutionEngineSelector: React.FC<ExecutionEngineSelectorProps> = (
     }
   };
 
+  // Render the brand icon for an engine
+  const renderEngineIcon = (engine: ExecutionEngine, iconClassName?: string) => {
+    switch (engine) {
+      case 'claude':
+        return <ClaudeIcon className={cn('h-4 w-4', iconClassName)} />;
+      case 'codex':
+        return <CodexIcon className={cn('h-4 w-4', iconClassName)} />;
+      case 'gemini':
+        return <GeminiIcon className={cn('h-4 w-4', iconClassName)} />;
+    }
+  };
+
+  // Engine option metadata for the selection grid
+  const engineOptions: Array<{
+    id: ExecutionEngine;
+    label: string;
+    available: boolean;
+  }> = [
+    { id: 'claude', label: 'Claude', available: true },
+    { id: 'codex', label: 'Codex', available: codexAvailable },
+    { id: 'gemini', label: 'Gemini', available: geminiAvailable },
+  ];
+
   return (
     <Popover
       open={showSettings}
@@ -398,61 +425,60 @@ export const ExecutionEngineSelector: React.FC<ExecutionEngineSelectorProps> = (
           size="sm"
           role="combobox"
           aria-expanded={showSettings}
-          className={`h-8 justify-between border-border/50 bg-background/50 hover:bg-accent/50 ${className}`}
+          className={`h-8 justify-between gap-2 border-border/50 bg-background/50 hover:bg-accent/50 ${className}`}
         >
           <div className="flex items-center gap-2">
-            {value.engine === 'gemini' ? (
-              <Sparkles className="h-4 w-4" />
-            ) : (
-              <Zap className="h-4 w-4" />
-            )}
-            <span>{getEngineDisplayName()}</span>
+            {renderEngineIcon(value.engine)}
+            <span className="font-medium">{getEngineDisplayName()}</span>
             {value.engine === 'codex' && value.codexMode && (
-              <span className="text-xs text-muted-foreground">
-                ({value.codexMode === 'read-only' ? '只读' : value.codexMode === 'full-auto' ? '编辑' : '完全访问'})
+              <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                {value.codexMode === 'read-only' ? '只读' : value.codexMode === 'full-auto' ? '编辑' : '完全访问'}
               </span>
             )}
             {value.engine === 'gemini' && value.geminiApprovalMode && (
-              <span className="text-xs text-muted-foreground">
-                ({value.geminiApprovalMode === 'yolo' ? 'YOLO' : value.geminiApprovalMode === 'auto_edit' ? '自动编辑' : '默认'})
+              <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                {value.geminiApprovalMode === 'yolo' ? 'YOLO' : value.geminiApprovalMode === 'auto_edit' ? '自动编辑' : '默认'}
               </span>
             )}
           </div>
-          <Settings className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
         </Button>
       }
       content={
-        <div className="space-y-4 p-4">
+        <div className="space-y-4">
           {/* Engine Selection */}
           <div className="space-y-2">
-            <Label className="text-sm font-medium">执行引擎</Label>
+            <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">执行引擎</Label>
             <div className="grid grid-cols-3 gap-2">
-              <Button
-                variant={value.engine === 'claude' ? 'default' : 'outline'}
-                className="justify-start"
-                onClick={() => handleEngineChange('claude')}
-              >
-                <Check className={`mr-2 h-4 w-4 ${value.engine === 'claude' ? 'opacity-100' : 'opacity-0'}`} />
-                Claude
-              </Button>
-              <Button
-                variant={value.engine === 'codex' ? 'default' : 'outline'}
-                className="justify-start"
-                onClick={() => handleEngineChange('codex')}
-                disabled={!codexAvailable}
-              >
-                <Check className={`mr-2 h-4 w-4 ${value.engine === 'codex' ? 'opacity-100' : 'opacity-0'}`} />
-                Codex
-              </Button>
-              <Button
-                variant={value.engine === 'gemini' ? 'default' : 'outline'}
-                className="justify-start"
-                onClick={() => handleEngineChange('gemini')}
-                disabled={!geminiAvailable}
-              >
-                <Check className={`mr-2 h-4 w-4 ${value.engine === 'gemini' ? 'opacity-100' : 'opacity-0'}`} />
-                Gemini
-              </Button>
+              {engineOptions.map((opt) => {
+                const selected = value.engine === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => handleEngineChange(opt.id)}
+                    disabled={!opt.available}
+                    className={cn(
+                      'group relative flex flex-col items-center gap-1.5 rounded-lg border p-3 transition-all',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                      selected
+                        ? 'border-primary bg-primary/5 shadow-sm'
+                        : 'border-border bg-background hover:border-border hover:bg-accent/50',
+                      !opt.available && 'cursor-not-allowed opacity-40 hover:bg-background'
+                    )}
+                  >
+                    {selected && (
+                      <span className="absolute right-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                        <Check className="h-2.5 w-2.5" strokeWidth={3} />
+                      </span>
+                    )}
+                    {renderEngineIcon(opt.id, cn('h-5 w-5 transition-transform', selected && 'scale-110'))}
+                    <span className={cn('text-xs', selected ? 'font-semibold text-foreground' : 'text-muted-foreground')}>
+                      {opt.label}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -463,7 +489,7 @@ export const ExecutionEngineSelector: React.FC<ExecutionEngineSelectorProps> = (
 
               {/* Execution Mode */}
               <div className="space-y-2">
-                <Label className="text-sm font-medium">执行模式</Label>
+                <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">执行模式</Label>
                 <Select
                   value={value.codexMode || 'read-only'}
                   onValueChange={(v) => handleCodexModeChange(v as CodexExecutionMode)}
@@ -495,12 +521,11 @@ export const ExecutionEngineSelector: React.FC<ExecutionEngineSelectorProps> = (
               </div>
 
               {/* Status */}
-              <div className="rounded-md border p-2 bg-muted/50">
-                <div className="flex items-center gap-2 text-xs">
-                  <div className={`h-2 w-2 rounded-full ${codexAvailable ? 'bg-green-500' : 'bg-red-500'}`} />
-                  <span>{codexAvailable ? '已安装' : '未安装'}</span>
-                  {codexVersion && <span className="text-muted-foreground">• {codexVersion}</span>}
-                </div>
+              <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-xs">
+                <CodexIcon className="h-4 w-4 shrink-0" />
+                <span className={cn('h-1.5 w-1.5 rounded-full', codexAvailable ? 'bg-green-500' : 'bg-red-500')} />
+                <span className="font-medium">{codexAvailable ? '已安装' : '未安装'}</span>
+                {codexVersion && <span className="ml-auto text-muted-foreground">{codexVersion}</span>}
               </div>
 
               {/* WSL Mode Configuration (Windows only) */}
@@ -509,8 +534,8 @@ export const ExecutionEngineSelector: React.FC<ExecutionEngineSelectorProps> = (
                   <div className="h-px bg-border" />
 
                   <div className="space-y-2">
-                    <Label className="text-sm font-medium flex items-center gap-2">
-                      <Terminal className="h-4 w-4" />
+                    <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+                      <Terminal className="h-3.5 w-3.5" />
                       运行环境
                     </Label>
                     <Select
@@ -561,7 +586,7 @@ export const ExecutionEngineSelector: React.FC<ExecutionEngineSelectorProps> = (
                   {/* WSL Distro Selection (Windows only) */}
                   {codexModeConfig.isWindows && codexModeConfig.mode === 'wsl' && codexModeConfig.availableDistros.length > 0 && (
                     <div className="space-y-2">
-                      <Label className="text-sm font-medium">WSL 发行版</Label>
+                      <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">WSL 发行版</Label>
                       <Select
                         value={codexModeConfig.wslDistro || '__default__'}
                         onValueChange={handleWslDistroChange}
@@ -585,10 +610,9 @@ export const ExecutionEngineSelector: React.FC<ExecutionEngineSelectorProps> = (
                   )}
 
                   {/* Current Runtime Status */}
-                  <div className="rounded-md border p-2 bg-muted/30 text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="text-muted-foreground">当前运行环境:</span>
-                      <span className="font-medium">
+                  <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-xs">
+                    <span className="text-muted-foreground">当前运行环境</span>
+                    <span className="ml-auto font-medium">
                         {codexModeConfig.actualMode === 'wsl' ? (
                           <span className="flex items-center gap-1">
                             <Terminal className="h-3 w-3" />
@@ -601,7 +625,6 @@ export const ExecutionEngineSelector: React.FC<ExecutionEngineSelectorProps> = (
                           </span>
                         )}
                       </span>
-                    </div>
                   </div>
                 </>
               )}
@@ -615,7 +638,7 @@ export const ExecutionEngineSelector: React.FC<ExecutionEngineSelectorProps> = (
 
               {/* Approval Mode */}
               <div className="space-y-2">
-                <Label className="text-sm font-medium">审批模式</Label>
+                <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">审批模式</Label>
                 <Select
                   value={value.geminiApprovalMode || 'auto_edit'}
                   onValueChange={(v) => handleGeminiApprovalModeChange(v as 'auto_edit' | 'yolo' | 'default')}
@@ -647,13 +670,11 @@ export const ExecutionEngineSelector: React.FC<ExecutionEngineSelectorProps> = (
               </div>
 
               {/* Status */}
-              <div className="rounded-md border p-2 bg-muted/50">
-                <div className="flex items-center gap-2 text-xs">
-                  <Sparkles className="h-3 w-3" />
-                  <div className={`h-2 w-2 rounded-full ${geminiAvailable ? 'bg-green-500' : 'bg-red-500'}`} />
-                  <span>{geminiAvailable ? '已安装' : '未安装'}</span>
-                  {geminiVersion && <span className="text-muted-foreground">• {geminiVersion}</span>}
-                </div>
+              <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-xs">
+                <GeminiIcon className="h-4 w-4 shrink-0" />
+                <span className={cn('h-1.5 w-1.5 rounded-full', geminiAvailable ? 'bg-green-500' : 'bg-red-500')} />
+                <span className="font-medium">{geminiAvailable ? '已安装' : '未安装'}</span>
+                {geminiVersion && <span className="ml-auto text-muted-foreground">{geminiVersion}</span>}
               </div>
 
               {/* WSL Mode Configuration (Windows only) */}
@@ -662,8 +683,8 @@ export const ExecutionEngineSelector: React.FC<ExecutionEngineSelectorProps> = (
                   <div className="h-px bg-border" />
 
                   <div className="space-y-2">
-                    <Label className="text-sm font-medium flex items-center gap-2">
-                      <Terminal className="h-4 w-4" />
+                    <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+                      <Terminal className="h-3.5 w-3.5" />
                       运行环境
                     </Label>
                     <Select
@@ -714,7 +735,7 @@ export const ExecutionEngineSelector: React.FC<ExecutionEngineSelectorProps> = (
                   {/* WSL Distro Selection (Windows only) */}
                   {geminiWslModeConfig.isWindows && geminiWslModeConfig.mode === 'wsl' && geminiWslModeConfig.availableDistros.length > 0 && (
                     <div className="space-y-2">
-                      <Label className="text-sm font-medium">WSL 发行版</Label>
+                      <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">WSL 发行版</Label>
                       <Select
                         value={geminiWslModeConfig.wslDistro || '__default__'}
                         onValueChange={handleGeminiWslDistroChange}
@@ -738,10 +759,9 @@ export const ExecutionEngineSelector: React.FC<ExecutionEngineSelectorProps> = (
                   )}
 
                   {/* Current Runtime Status */}
-                  <div className="rounded-md border p-2 bg-muted/30 text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="text-muted-foreground">当前运行环境:</span>
-                      <span className="font-medium">
+                  <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-xs">
+                    <span className="text-muted-foreground">当前运行环境</span>
+                    <span className="ml-auto font-medium">
                         {geminiWslModeConfig.wslEnabled ? (
                           <span className="flex items-center gap-1">
                             <Terminal className="h-3 w-3" />
@@ -757,7 +777,6 @@ export const ExecutionEngineSelector: React.FC<ExecutionEngineSelectorProps> = (
                           </span>
                         )}
                       </span>
-                    </div>
                   </div>
                 </>
               )}
@@ -767,14 +786,14 @@ export const ExecutionEngineSelector: React.FC<ExecutionEngineSelectorProps> = (
           {/* Claude-specific settings */}
           {value.engine === 'claude' && (
             <>
+              <div className="h-px bg-border" />
+
               {/* Status */}
-              <div className="rounded-md border p-2 bg-muted/50">
-                <div className="flex items-center gap-2 text-xs">
-                  <Zap className="h-3 w-3" />
-                  <div className={`h-2 w-2 rounded-full ${claudeInstalled ? 'bg-green-500' : 'bg-red-500'}`} />
-                  <span>{claudeInstalled ? '已安装' : '未安装'}</span>
-                  {claudeVersion && <span className="text-muted-foreground">• {claudeVersion}</span>}
-                </div>
+              <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-xs">
+                <ClaudeIcon className="h-4 w-4 shrink-0" />
+                <span className={cn('h-1.5 w-1.5 rounded-full', claudeInstalled ? 'bg-green-500' : 'bg-red-500')} />
+                <span className="font-medium">{claudeInstalled ? '已安装' : '未安装'}</span>
+                {claudeVersion && <span className="ml-auto text-muted-foreground">{claudeVersion}</span>}
               </div>
 
               {/* WSL Mode Configuration (Windows only) */}
@@ -783,8 +802,8 @@ export const ExecutionEngineSelector: React.FC<ExecutionEngineSelectorProps> = (
                   <div className="h-px bg-border" />
 
                   <div className="space-y-2">
-                    <Label className="text-sm font-medium flex items-center gap-2">
-                      <Terminal className="h-4 w-4" />
+                    <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+                      <Terminal className="h-3.5 w-3.5" />
                       运行环境
                     </Label>
                     <Select
@@ -835,7 +854,7 @@ export const ExecutionEngineSelector: React.FC<ExecutionEngineSelectorProps> = (
                   {/* WSL Distro Selection (Windows only) */}
                   {claudeWslModeConfig.isWindows && claudeWslModeConfig.mode === 'wsl' && claudeWslModeConfig.availableDistros.length > 0 && (
                     <div className="space-y-2">
-                      <Label className="text-sm font-medium">WSL 发行版</Label>
+                      <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">WSL 发行版</Label>
                       <Select
                         value={claudeWslModeConfig.wslDistro || '__default__'}
                         onValueChange={handleClaudeWslDistroChange}
@@ -859,10 +878,9 @@ export const ExecutionEngineSelector: React.FC<ExecutionEngineSelectorProps> = (
                   )}
 
                   {/* Current Runtime Status */}
-                  <div className="rounded-md border p-2 bg-muted/30 text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="text-muted-foreground">当前运行环境:</span>
-                      <span className="font-medium">
+                  <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-xs">
+                    <span className="text-muted-foreground">当前运行环境</span>
+                    <span className="ml-auto font-medium">
                         {claudeWslModeConfig.actualMode === 'wsl' ? (
                           <span className="flex items-center gap-1">
                             <Terminal className="h-3 w-3" />
@@ -878,15 +896,14 @@ export const ExecutionEngineSelector: React.FC<ExecutionEngineSelectorProps> = (
                           </span>
                         )}
                       </span>
-                    </div>
                   </div>
                 </>
               )}
 
               {/* Link to settings page */}
-              <div className="text-xs text-muted-foreground">
-                <p>更多 Claude Code 配置请前往设置页面。</p>
-              </div>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                更多 Claude Code 配置请前往设置页面。
+              </p>
             </>
           )}
         </div>
