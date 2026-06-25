@@ -22,6 +22,11 @@ interface UseMessageTranslationConfig {
   lastTranslationResult?: TranslationResult;
   onMessagesUpdate: (updater: (prev: ClaudeStreamMessage[]) => ClaudeStreamMessage[]) => void;
   onMessageAppend?: (message: ClaudeStreamMessage) => void;
+  /**
+   * 真实 user 消息回显的专用入口：与发送时插入的乐观用户消息对账（替换而非重复 append）。
+   * 缺省时回退到普通 append。
+   */
+  onUserEcho?: (message: ClaudeStreamMessage) => void;
 }
 
 interface UseMessageTranslationReturn {
@@ -37,7 +42,7 @@ interface UseMessageTranslationReturn {
 }
 
 export function useMessageTranslation(config: UseMessageTranslationConfig): UseMessageTranslationReturn {
-  const { isMountedRef, onMessagesUpdate, onMessageAppend } = config;
+  const { isMountedRef, onMessagesUpdate, onMessageAppend, onUserEcho } = config;
 
   // Translation states
   const [translationEnabled, setTranslationEnabled] = useState(false);
@@ -152,6 +157,7 @@ export function useMessageTranslation(config: UseMessageTranslationConfig): UseM
             onMessagesUpdate((prev) => [...prev, processedMessage]);
           }
         },
+        appendUserEcho: onUserEcho,
         updateMessages: onMessagesUpdate,
         translateMessage: async (processedMessage) => {
           const isEnabled = await translationMiddleware.isEnabled();
@@ -173,7 +179,7 @@ export function useMessageTranslation(config: UseMessageTranslationConfig): UseM
     } catch (err) {
       console.error('[useMessageTranslation] Failed to parse message:', err, payload);
     }
-  }, [isMountedRef, onMessagesUpdate, onMessageAppend, applyTranslationToMessage]);
+  }, [isMountedRef, onMessagesUpdate, onMessageAppend, onUserEcho, applyTranslationToMessage]);
 
   /**
    * 初始化渐进式翻译（后台翻译历史消息）

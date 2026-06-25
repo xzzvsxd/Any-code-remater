@@ -8,6 +8,7 @@ import {
 } from "@/lib/stream/batchedStateUpdater";
 import { normalizeMessageContentShape, normalizeMessagesContentShape } from '@/lib/messageContentAccess';
 import { preserveAssistantThinkingOnTailReplace } from '@/lib/assistantThinkingPreservation';
+import { reconcileEchoedUserMessage } from '@/lib/stream/userMessageReconcile';
 
 export interface ToolResultEntry {
   toolUseId: string;
@@ -36,6 +37,11 @@ interface MessagesActionsContextValue {
   appendMessage: (message: ClaudeStreamMessage) => void;
   appendMessageImmediate: (message: ClaudeStreamMessage) => void;
   appendMessages: (messages: ClaudeStreamMessage[]) => void;
+  /**
+   * 追加“后端回显的真实 user 消息”，但先与尾部的乐观用户消息(uiOptimisticPrompt)对账：
+   * 命中则就地替换（消除重复，不改长度/顺序），未命中则追加。
+   */
+  appendOrReconcileUserMessage: (message: ClaudeStreamMessage) => void;
   replaceLastMessage: (
     updater: (lastMessage: ClaudeStreamMessage | undefined) => TailUpdateResult<ClaudeStreamMessage>
   ) => void;
@@ -486,6 +492,13 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({
     appendBatchedRef.current!.enqueueAll(normalizedMessages);
   }, []);
 
+  const appendOrReconcileUserMessage = React.useCallback((message: ClaudeStreamMessage) => {
+    const normalizedMessage = normalizeMessageContentShape(message);
+    // 走通用函数式更新：batchedSetMessages 会先 flush append/tail 队列，
+    // 确保 reconcile 看到的 prev 已包含此前插入的乐观用户消息，才能正确命中替换。
+    batchedSetMessages((prev) => reconcileEchoedUserMessage(prev, normalizedMessage));
+  }, [batchedSetMessages]);
+
   const replaceLastMessage = React.useCallback((
     updater: (lastMessage: ClaudeStreamMessage | undefined) => TailUpdateResult<ClaudeStreamMessage>,
   ) => {
@@ -515,11 +528,12 @@ export const MessagesProvider: React.FC<MessagesProviderProps> = ({
       appendMessage,
       appendMessageImmediate,
       appendMessages,
+      appendOrReconcileUserMessage,
       replaceLastMessage,
       setIsStreaming,
       setFilterConfig,
     }),
-    [batchedSetMessages, appendMessage, appendMessageImmediate, appendMessages, replaceLastMessage, setIsStreaming, setFilterConfig]
+    [batchedSetMessages, appendMessage, appendMessageImmediate, appendMessages, appendOrReconcileUserMessage, replaceLastMessage, setIsStreaming, setFilterConfig]
   );
 
   // ✅ 性能优化: 数据独立缓存

@@ -197,6 +197,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     setMessages,
     appendMessage,
     appendMessageImmediate,
+    appendOrReconcileUserMessage,
     replaceLastMessage,
     isStreaming,
     setIsStreaming,
@@ -595,7 +596,8 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     isMountedRef,
     lastTranslationResult: lastTranslationResult || undefined,
     onMessagesUpdate: setMessages,
-    onMessageAppend: appendMessage
+    onMessageAppend: appendMessage,
+    onUserEcho: appendOrReconcileUserMessage
   });
 
   // 🔧 FIX: 处理会话历史不存在的情况，重置到初始状态
