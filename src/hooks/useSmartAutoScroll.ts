@@ -204,18 +204,31 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
       }
     };
 
+    // ResizeObserver 追底循环的取消句柄。提前声明以供 releaseOnUserIntent 使用。
+    let resizeSettledFrames = 0;
+    const cancelResizeFollow = () => {
+      if (resizeFollowFrameRef.current) {
+        cancelAnimationFrame(resizeFollowFrameRef.current);
+        resizeFollowFrameRef.current = 0;
+      }
+    };
+
     /**
-     * 用户主动输入（滚轮 / 触摸 / 键盘）是“离开底部”的最可靠信号。
-     * 一旦检测到向上意图，立即解除粘底——向上滚动本身就是明确的“查看历史”意图，
-     * 不再要求“离底部超过阈值”，否则用户在底部附近小幅上滑会被流式自动滚动立刻拉回（“吸铁石”）。
-     * 仅排除已经精确贴底（≤1px）时的边界噪声。
+     * 用户主动输入（滚轮 / 触摸 / 键盘）是”离开底部”的最可靠信号。
+     * 一旦检测到向上意图，立即解除粘底——向上滚动本身就是明确的”查看历史”意图。
+     *
+     * 旧逻辑在 distance ≤ 1 时不解除，试图过滤”边界噪声”。但这制造了核心 bug：
+     * performAutoScroll / ResizeObserver 持续把 scrollTop 钉到底 → wheel 向上时 distance
+     * 永远 ≤ 1 → 永远不解除 → 用户看到”想往上滚但被反复拉回”。
+     * 修复：不再用 distance 门槛过滤向上意图。用户明确 wheel/touch/key 向上 = 立刻解除。
+     * 同时取消正在排队的 resizeFollow rAF，防止本帧内残余的追底写入。
      */
     const releaseOnUserIntent = (movingUp: boolean) => {
       if (!movingUp) return;
-      if (getDistanceFromBottom(scrollElement) <= 1) return;
       cancelResumeConfirmation();
+      cancelResizeFollow();
       userIntentReleasedRef.current = true;
-      userIntentDownwardRef.current = false; // 上滑意图清除任何残留的向下意图
+      userIntentDownwardRef.current = false;
       syncAutoScrollState(false);
     };
 

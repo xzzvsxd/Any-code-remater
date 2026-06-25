@@ -80,6 +80,7 @@ import {
   workbenchTabKey,
   workbenchTemporaryOpenTabSessionId,
 } from './workbenchSessionOrdering';
+import { getDraftStorageKey } from '@/components/FloatingPromptInput/hooks/useDraftPersistence';
 
 interface WorkbenchSidebarProps {
   /** 打开"关于"对话框 */
@@ -615,6 +616,16 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     const prev = tabs.find((tb) => tb.isActive);
     if (!prev || prev.id === keepTabId) return;
     if (prev.state === 'streaming') return; // 运行中：保留，后台继续跑
+    // 承载「未发送草稿」的新建 tab 必须保留：草稿身份 = tab id，关掉它会让草稿失去载体，
+    // 切回时只能新建 tab(新 id)并回填，旧草稿残留 → 凭空多一份草稿。草稿正文以 tab id
+    // 为 key 存在 localStorage，用统一规则探测，避免与持久化 hook 的 key 规则漂移。
+    const isNewTab = prev.type === 'new' || !prev.session?.id;
+    if (isNewTab) {
+      try {
+        const draft = localStorage.getItem(getDraftStorageKey({ draftId: prev.id }));
+        if (draft && draft.trim()) return; // 有未发送草稿：保留载体 tab
+      } catch { /* localStorage 不可用时按可关闭处理 */ }
+    }
     // 延后关闭，确保已先切到目标 tab（activeTabId 已更新），避免 forceCloseTab 的自动切换分支干扰。
     const prevId = prev.id;
     setTimeout(() => { closeTab(prevId, true).catch(() => { /* ignore */ }); }, 0);
@@ -635,17 +646,19 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     }
 
     // 草稿条目：session.id 即承载它的 tab id。若该 tab 仍存在则切回去（输入框文本由
-    // useDraftPersistence 按 draftId 从 localStorage 恢复）；若 tab 已关闭，则新建一个
-    // 该项目下的新会话 tab 并把草稿正文回填到输入框。
+    // useDraftPersistence 按 draftId 从 localStorage 恢复）；若 tab 已关闭，则复用草稿原 id
+    // 新建 tab，使草稿载体身份连续——继续编辑落到同一份草稿，而非凭空生成新草稿。
     if ((session as any).is_draft === true) {
       const existing = tabs.find((tb) => tb.id === session.id);
       if (existing) {
         switchToTab(existing.id);
         closePrevIfIdle(existing.id);
       } else {
-        const newTabId = createNewTab(undefined, session.project_path);
+        // 复用草稿原 id（session.id）作为新 tab id：draftId 随之等于原草稿 id，
+        // useDraftPersistence 会按该 id 恢复 localStorage 草稿，编辑也写回同一份。
+        const newTabId = createNewTab(undefined, session.project_path, true, session.id);
         closePrevIfIdle(newTabId);
-        // 等输入框挂载后回填草稿正文
+        // localStorage 可能已被清（如重启/清理），用后端草稿正文兜底回填，确保正文不丢。
         const text = session.first_message || '';
         if (text) {
           setTimeout(() => {

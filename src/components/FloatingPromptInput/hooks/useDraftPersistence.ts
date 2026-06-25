@@ -1,8 +1,19 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api';
 
-const DRAFT_KEY_PREFIX = 'prompt_draft_';
+export const DRAFT_KEY_PREFIX = 'prompt_draft_';
 const DRAFT_DEBOUNCE_MS = 300;
+
+/**
+ * 计算草稿在 localStorage 的存储 key。规则：已有会话用 sessionId 隔离；新会话用 draftId(tab id)
+ * 隔离多草稿；都没有则回退 global。提取为纯函数供外部（如侧栏判断 tab 是否承载未发送草稿）复用，
+ * 避免 key 规则在多处各写一遍而漂移。
+ */
+export function getDraftStorageKey(opts: { sessionId?: string; draftId?: string }): string {
+  if (opts.sessionId) return `${DRAFT_KEY_PREFIX}${opts.sessionId}`;
+  if (opts.draftId) return `${DRAFT_KEY_PREFIX}${opts.draftId}`;
+  return `${DRAFT_KEY_PREFIX}global`;
+}
 
 interface UseDraftPersistenceOptions {
   sessionId?: string;
@@ -48,11 +59,10 @@ export function useDraftPersistence({
   const useBackendDraft = !sessionId && !!draftId && !!projectPath;
 
   // 生成存储 key：新会话用 draftId 隔离（多草稿互不覆盖），回退 global；已有会话用 sessionId。
-  const getStorageKey = useCallback(() => {
-    if (sessionId) return `${DRAFT_KEY_PREFIX}${sessionId}`;
-    if (draftId) return `${DRAFT_KEY_PREFIX}${draftId}`;
-    return `${DRAFT_KEY_PREFIX}global`;
-  }, [sessionId, draftId]);
+  const getStorageKey = useCallback(
+    () => getDraftStorageKey({ sessionId, draftId }),
+    [sessionId, draftId],
+  );
 
   // 通知侧栏草稿列表刷新
   const notifyDraftsChanged = useCallback(() => {

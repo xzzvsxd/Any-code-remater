@@ -799,13 +799,19 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   const handleJumpToLatest = useCallback(() => {
     setUserScrolled(false);
     setShouldAutoScroll(true);
-    // streaming 期间只由 useSmartAutoScroll 跟随底部；不要再启动
-    // SessionMessages.scrollToBottom 的长 settle 循环，否则两个 rAF/ResizeObserver
-    // 同时写 scrollTop，底部附近会反复抽动/抖动。
     if (!isLoadingRef.current) {
+      // 非 streaming：启动带 settle 的置底循环（对抗虚拟列表渐进测高）。
       sessionMessagesRef.current?.scrollToBottom();
+    } else {
+      // streaming 期间不启动长 settle 循环（会和 useSmartAutoScroll rAF 抢 scrollTop 抽搐）。
+      // 但必须立即执行一次瞬时滚底，否则用户点按钮后要等下一次 lastMessageHash 变化
+      // 才能触发粘底循环重启——在 AI 思考中（无新输出）可能长时间不动。
+      const el = parentRef.current;
+      if (el) {
+        el.scrollTop = el.scrollHeight - el.clientHeight;
+      }
     }
-  }, [setShouldAutoScroll, setUserScrolled]);
+  }, [parentRef, setShouldAutoScroll, setUserScrolled]);
 
   // 会话切换/进入时稳定置底：每个会话在历史加载完成后强制置底一次。
   // 仅靠 useSmartAutoScroll 的单次 performAutoScroll 无法对抗虚拟列表的渐进高度重测，

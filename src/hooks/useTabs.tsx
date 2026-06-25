@@ -194,8 +194,10 @@ export const TabProvider: React.FC<TabProviderProps> = ({ children }) => {
   }, []);
 
   // ✨ REFACTORED: Create new tab (simplified)
-  const createNewTab = useCallback((session?: Session, projectPath?: string, activate: boolean = true): string => {
-    const newTabId = generateTabId();
+  // forcedTabId：指定新 tab 的 id 而非自动生成。用于「从侧栏草稿恢复」——草稿身份=tab id，
+  // 复用原 id 才能让草稿载体连续（继续编辑落到同一份草稿，而非凭空新建一份）。
+  const createNewTab = useCallback((session?: Session, projectPath?: string, activate: boolean = true, forcedTabId?: string): string => {
+    const newTabId = forcedTabId || generateTabId();
     const newTab: Tab = {
       id: newTabId,
       title: generateTabTitle(session, projectPath),
@@ -209,8 +211,9 @@ export const TabProvider: React.FC<TabProviderProps> = ({ children }) => {
       lastActiveAt: Date.now(),
     };
 
-    setTabs(prev => [...prev, newTab]);
-    
+    // 指定 id 且该 tab 已存在：直接复用，不重复插入（幂等），避免同一草稿被打开成两个 tab。
+    setTabs(prev => (prev.some(t => t.id === newTabId) ? prev : [...prev, newTab]));
+
     if (activate) {
       setActiveTabId(newTabId);
     }

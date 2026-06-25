@@ -675,12 +675,25 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
     remeasureViewport: () => {
       // 标签页从 display:none 切回可见：隐藏期间 clientHeight=0，虚拟列表窗口塌缩，
       // 可能只渲染顶部 overscan 行，甚至 translateY 错位造成行重叠/重复 + 下方空白。
-      // 等一帧让浏览器在可见态下完成布局（拿到真实 clientHeight），再 measure() 重算窗口。
+      // 必须等到滚动容器在可见态下拿到真实 clientHeight 再 measure()，否则在 0 视口下
+      // 重算窗口反而会算出错误区间、加重重叠。最多重试若干帧等待布局稳定。
       cancelVirtualizerRemeasure();
-      virtualizerRemeasureRafRef.current = requestAnimationFrame(() => {
+      let attempts = 0;
+      const MAX_ATTEMPTS = 8;
+      const runRemeasure = () => {
         virtualizerRemeasureRafRef.current = 0;
-        if (!parentRef.current) return;
-        // 重算虚拟窗口：measure() 会按当前真实视口尺寸重新计算可见区间。
+        const scrollElement = parentRef.current;
+        if (!scrollElement) return;
+
+        // 视口仍未恢复（display:none 摘除后布局未稳）：再等一帧，避免 0 高度下重算窗口。
+        if (scrollElement.clientHeight <= 0 && attempts < MAX_ATTEMPTS) {
+          attempts += 1;
+          virtualizerRemeasureRafRef.current = requestAnimationFrame(runRemeasure);
+          return;
+        }
+
+        // 重算虚拟窗口：measure() 会按当前真实视口尺寸重新计算可见区间，
+        // 修正隐藏期间塌缩出的重叠/重复虚拟项。
         rowVirtualizer.measure();
         // 用可见 DOM 行的真实高度回填 itemSizeCache，消除塌缩期间的估算误差。
         measureVisibleRowsIntoVirtualizer({
@@ -689,7 +702,8 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
           itemKeys: new Set(),
           itemIndexes: new Set(),
         });
-      });
+      };
+      virtualizerRemeasureRafRef.current = requestAnimationFrame(runRemeasure);
     }
   }));
 
