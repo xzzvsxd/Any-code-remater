@@ -23,6 +23,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import ReactMarkdown from 'react-markdown';
 import { useEffect, useMemo, useState } from 'react';
 import { formatInteractionCountdown, getInteractionRemainingMs } from "@/lib/interactionDeadline";
+import { useRetainedWhileClosing } from "@/lib/retainWhileClosing";
 
 export interface PlanApprovalDialogProps {
   /** 是否显示对话框 */
@@ -52,18 +53,25 @@ export interface PlanApprovalDialogProps {
  */
 export function PlanApprovalDialog({
   open,
-  plan,
+  plan: planProp,
   onClose,
   onApprove,
   onReject,
-  continuesAsNewTurn = false,
-  canDefer = true,
-  sessionTitle,
-  expiresAtMs,
+  continuesAsNewTurn: continuesAsNewTurnProp = false,
+  canDefer: canDeferProp = true,
+  sessionTitle: sessionTitleProp,
+  expiresAtMs: expiresAtMsProp,
   onDeferDecision,
 }: PlanApprovalDialogProps) {
   const [feedback, setFeedback] = useState('');
   const [remainingMs, setRemainingMs] = useState(0);
+  // 退场动画期间（open 已 false 但 Content 仍在淡出）保留最后一次可见数据，
+  // 避免父级同步清空 pendingApproval 导致对话框塌缩成「只剩标题的空壳鬼影」。
+  const plan = useRetainedWhileClosing(open, planProp);
+  const continuesAsNewTurn = useRetainedWhileClosing(open, continuesAsNewTurnProp);
+  const canDefer = useRetainedWhileClosing(open, canDeferProp);
+  const sessionTitle = useRetainedWhileClosing(open, sessionTitleProp);
+  const expiresAtMs = useRetainedWhileClosing(open, expiresAtMsProp);
   const trimmedSessionTitle = sessionTitle?.trim() ?? "";
 
   useEffect(() => {
@@ -73,8 +81,12 @@ export function PlanApprovalDialog({
   }, [open, plan]);
 
   useEffect(() => {
-    if (!open || !expiresAtMs) {
+    if (!expiresAtMs) {
       setRemainingMs(0);
+      return;
+    }
+    // 关闭时只停表、保留最后读数，避免退场动画期间倒计时闪成「剩余 0秒」。
+    if (!open) {
       return;
     }
 

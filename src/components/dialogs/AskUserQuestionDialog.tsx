@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 import type { Question, UserAnswers } from "@/contexts/UserQuestionContext";
 import { getQuestionKey, normalizeQuestions } from "@/lib/askUserQuestionUtils";
 import { formatInteractionCountdown, getInteractionRemainingMs } from "@/lib/interactionDeadline";
+import { useRetainedWhileClosing } from "@/lib/retainWhileClosing";
 
 export interface AskUserQuestionDialogProps {
   /** 是否显示对话框 */
@@ -53,16 +54,23 @@ export interface AskUserQuestionDialogProps {
  */
 export function AskUserQuestionDialog({
   open,
-  questions,
+  questions: questionsProp,
   onClose,
   onSubmit,
-  continuesAsNewTurn = false,
+  continuesAsNewTurn: continuesAsNewTurnProp = false,
   resetKey,
-  canDefer = true,
-  sessionTitle,
-  expiresAtMs,
+  canDefer: canDeferProp = true,
+  sessionTitle: sessionTitleProp,
+  expiresAtMs: expiresAtMsProp,
   onDeferResponse,
 }: AskUserQuestionDialogProps) {
+  // 退场动画期间（open 已 false 但 Content 仍在淡出）保留最后一次可见数据，
+  // 避免父级同步清空 pendingQuestion 导致对话框塌缩成「只剩标题的空壳鬼影」。
+  const questions = useRetainedWhileClosing(open, questionsProp);
+  const continuesAsNewTurn = useRetainedWhileClosing(open, continuesAsNewTurnProp);
+  const canDefer = useRetainedWhileClosing(open, canDeferProp);
+  const sessionTitle = useRetainedWhileClosing(open, sessionTitleProp);
+  const expiresAtMs = useRetainedWhileClosing(open, expiresAtMsProp);
   // 用户选择的答案
   const [selectedAnswers, setSelectedAnswers] = useState<UserAnswers>({});
   // 自由输入：每个问题可选"其他"并手写答案
@@ -87,8 +95,12 @@ export function AskUserQuestionDialog({
   }, [open, resetKey]);
 
   useEffect(() => {
-    if (!open || !expiresAtMs) {
+    if (!expiresAtMs) {
       setRemainingMs(0);
+      return;
+    }
+    // 关闭时只停表、保留最后读数，避免退场动画期间倒计时闪成「剩余 0秒」。
+    if (!open) {
       return;
     }
 

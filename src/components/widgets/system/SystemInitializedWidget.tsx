@@ -66,8 +66,11 @@ export const SystemInitializedWidget = React.memo<SystemInitializedWidgetProps>(
     setMcpExpanded((expanded) => !expanded);
   }, []);
 
+  // transition-none：覆盖 Card 基类的 transition-all。该卡片是静态信息且常驻虚拟列表，
+  // streaming 期间会被反复重测/重排，transition-all 会让 WebKitGTK 每次布局都对所有可过渡
+  // 属性(含 box-shadow/半透明背景)重新求值+重绘，造成"此行在视口内即持续卡顿、滚走即恢复"。
   return (
-    <Card className="border-blue-500/20 bg-blue-500/5">
+    <Card className="border-blue-500/20 bg-blue-500/5 transition-none">
       <CardContent className="p-4">
         <div className="flex items-start gap-3">
           <Settings className="h-5 w-5 text-blue-500 mt-0.5" />
