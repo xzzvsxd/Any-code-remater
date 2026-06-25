@@ -139,11 +139,17 @@ export const AIMessage: React.FC<AIMessageProps> = ({
                 }
 
                 if (part.type === 'thinking') {
+                  // 思维块的"流式中"必须收紧为「整条消息流式 && 该 thinking 是最后一个 part」。
+                  // contentParts 有序：若此 thinking 后面已出现 text/tools part，说明思考阶段早已结束、
+                  // 模型已进入输出正文 / 调用工具。但整条 assistant 消息只要工具还在跑，enableTypewriter
+                  // 就一直为 true —— 若直接透传，ThinkingBlock 依赖 isStreaming 变 false 的自动收起永不触发，
+                  // 表现为"思维过程明明结束了却一直展开"。这里只在它仍是末尾 part 时才视为流式。
+                  const isLastPart = index === contentParts.length - 1;
                   return (
                     <ThinkingBlock
                       key={`thinking-${index}`}
                       content={part.content}
-                      isStreaming={enableTypewriter}
+                      isStreaming={enableTypewriter && isLastPart}
                       autoCollapseDelay={2500}
                     />
                   );

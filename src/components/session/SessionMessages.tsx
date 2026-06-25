@@ -53,6 +53,13 @@ export interface SessionMessagesRef {
   scrollToBottom: () => void;
   /** 滚动到顶部（虚拟列表感知 + followUp 校正，避免高度重测把滚动位置顶飞/中断） */
   scrollToTop: () => void;
+  /**
+   * 重新测量视口并重算虚拟窗口。
+   * 用于标签页从 display:none 切回可见：隐藏期间滚动容器 clientHeight=0，
+   * 虚拟列表只渲染顶部 overscan 行；切回后 WebKitGTK 的 ResizeObserver 不一定可靠地
+   * 感知尺寸恢复，导致长会话停在顶部、下方留白。这里主动 measure() 触发重算。
+   */
+  remeasureViewport: () => void;
 }
 
 /**
