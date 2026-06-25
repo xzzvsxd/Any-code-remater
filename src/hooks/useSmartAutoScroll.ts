@@ -368,13 +368,6 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
     // performAutoScroll 自带死区 + 用户上滑解除保护，故与用户滚动、与 rAF 循环均不冲突
     //（scrollTop 调整不改内容尺寸，不会反过来触发本 observer，无循环）。
     let contentObserver: ResizeObserver | null = null;
-    let resizeSettledFrames = 0;
-    const cancelResizeFollow = () => {
-      if (resizeFollowFrameRef.current) {
-        cancelAnimationFrame(resizeFollowFrameRef.current);
-        resizeFollowFrameRef.current = 0;
-      }
-    };
     const runResizeFollow = () => {
       resizeFollowFrameRef.current = 0;
       if (!shouldFollowResizeToBottom({

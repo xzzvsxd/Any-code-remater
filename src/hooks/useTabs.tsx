@@ -45,7 +45,7 @@ export type TabSession = Tab & { isActive: boolean };
 interface TabContextValue {
   tabs: TabSession[];
   activeTabId: string | null;
-  createNewTab: (session?: Session, projectPath?: string, activate?: boolean) => string;
+  createNewTab: (session?: Session, projectPath?: string, activate?: boolean, forcedTabId?: string) => string;
   switchToTab: (tabId: string) => void;
   closeTab: (tabId: string, force?: boolean) => Promise<{ needsConfirmation?: boolean; tabId?: string } | void>;
   updateTabState: (tabId: string, state: Tab['state'], errorMessage?: string) => void;
