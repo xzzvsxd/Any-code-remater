@@ -671,6 +671,25 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
           tryFindAndHighlight();
         });
       });
+    },
+    remeasureViewport: () => {
+      // 标签页从 display:none 切回可见：隐藏期间 clientHeight=0，虚拟列表窗口塌缩，
+      // 可能只渲染顶部 overscan 行，甚至 translateY 错位造成行重叠/重复 + 下方空白。
+      // 等一帧让浏览器在可见态下完成布局（拿到真实 clientHeight），再 measure() 重算窗口。
+      cancelVirtualizerRemeasure();
+      virtualizerRemeasureRafRef.current = requestAnimationFrame(() => {
+        virtualizerRemeasureRafRef.current = 0;
+        if (!parentRef.current) return;
+        // 重算虚拟窗口：measure() 会按当前真实视口尺寸重新计算可见区间。
+        rowVirtualizer.measure();
+        // 用可见 DOM 行的真实高度回填 itemSizeCache，消除塌缩期间的估算误差。
+        measureVisibleRowsIntoVirtualizer({
+          all: true,
+          measurementKeys: new Set(),
+          itemKeys: new Set(),
+          itemIndexes: new Set(),
+        });
+      });
     }
   }));
 

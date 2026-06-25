@@ -1087,6 +1087,13 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       // parent tab manager did not receive the update.
       onStreamingChange?.(isLoading, claudeSessionId);
 
+      // 标签页从后台(display:none)切回可见：隐藏期间滚动容器 clientHeight=0，
+      // 虚拟列表窗口塌缩，可能只渲染顶部几行、甚至行重叠/重复 + 下方留白。
+      // 已结束会话切回会走 scrollToBottom 的 rAF 救援被动重算窗口，但 streaming 会话
+      // 因 isLoading 跳过该救援（置底交给 useSmartAutoScroll，它不重算虚拟窗口），
+      // 故唯独 streaming 会话复现。这里主动让虚拟列表按真实视口尺寸重算一次。
+      sessionMessagesRef.current?.remeasureViewport();
+
       // If we are not already listening to session events, re-check whether the
       // session is still actively running. This reconnects listeners if the session
       // is alive but we lost our connection (e.g., after app restart or missed events).
