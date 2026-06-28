@@ -219,6 +219,80 @@ describe('message group virtualization identity and safety', () => {
     );
   });
 
+  test('assistant rows sharing one message.id but different uuids must get distinct virtual keys', () => {
+    // 复现真实 bug：Claude 流式同一回合的多条 JSONL 行（正文/thinking/多个 tool_use）
+    // 共享同一个 message.id，但每行 uuid 唯一。虚拟行 key 必须按 uuid 区分，否则多条
+    // 物理消息碰撞成同一行 → 重复渲染 + 行错位。
+    const sharedMessageId = 'msg_0ce240c8-5eab-4164-8062-29a2c2779cb2';
+    const first: MessageGroup = {
+      type: 'normal',
+      index: 4,
+      message: {
+        type: 'assistant',
+        uuid: 'row-uuid-1',
+        timestamp: '2026-06-25T00:00:01.000Z',
+        message: { id: sharedMessageId, role: 'assistant', content: [{ type: 'text', text: '回合第一块' }] },
+      } as ClaudeStreamMessage,
+    };
+    const second: MessageGroup = {
+      type: 'normal',
+      index: 5,
+      message: {
+        type: 'assistant',
+        uuid: 'row-uuid-2',
+        timestamp: '2026-06-25T00:00:01.500Z',
+        message: { id: sharedMessageId, role: 'assistant', content: [{ type: 'text', text: '回合第二块' }] },
+      } as ClaudeStreamMessage,
+    };
+
+    expect(getMessageGroupVirtualKey(first, 4)).not.toBe(
+      getMessageGroupVirtualKey(second, 5),
+    );
+    // 应当采用行级唯一的 uuid，而非共享的 message.id
+    expect(getMessageGroupVirtualKey(first, 4)).toContain('row-uuid-1');
+    expect(getMessageGroupVirtualKey(second, 5)).toContain('row-uuid-2');
+  });
+
+  test('prefers row-level uuid over turn-level message.id for strong identity', () => {
+    const group: MessageGroup = {
+      type: 'normal',
+      index: 2,
+      message: {
+        type: 'assistant',
+        uuid: 'unique-row-uuid',
+        message: { id: 'msg_shared_turn_id', role: 'assistant', content: [{ type: 'text', text: 'answer' }] },
+      } as ClaudeStreamMessage,
+    };
+
+    const key = getMessageGroupVirtualKey(group, 2);
+    expect(key).toContain('unique-row-uuid');
+    expect(key).not.toContain('msg_shared_turn_id');
+  });
+
+  test('messages that only have a shared message.id (no uuid) still get position-suffixed distinct keys', () => {
+    const sharedId = 'msg_only_shared';
+    const first: MessageGroup = {
+      type: 'normal',
+      index: 3,
+      message: {
+        type: 'assistant',
+        message: { id: sharedId, role: 'assistant', content: [{ type: 'text', text: 'a' }] },
+      } as ClaudeStreamMessage,
+    };
+    const second: MessageGroup = {
+      type: 'normal',
+      index: 6,
+      message: {
+        type: 'assistant',
+        message: { id: sharedId, role: 'assistant', content: [{ type: 'text', text: 'b' }] },
+      } as ClaudeStreamMessage,
+    };
+
+    expect(getMessageGroupVirtualKey(first, 3)).not.toBe(
+      getMessageGroupVirtualKey(second, 6),
+    );
+  });
+
   test('virtualizer helpers never throw on malformed group data before row error boundary can render', () => {
     const malformedSubagent = {
       type: 'subagent',

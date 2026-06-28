@@ -105,25 +105,43 @@ export const getMessageVirtualIdentity = (
     ? content.find((item: any) => item?.type === 'tool_result' && typeof item.tool_use_id === 'string')?.tool_use_id
     : undefined;
 
-  const strongIdentityCandidates = [
+  // 强 identity 候选分两类：
+  // - 行级唯一标识（uuid/leafUuid/uiEventId/工具调用 id）：每条 JSONL 行各不相同，
+  //   作为虚拟行 key 跨 index 平移时仍稳定，不加位置后缀。
+  // - 回合级/会话级标识（message.id/id/session_id/parent_tool_use_id）：同一 assistant 回合的
+  //   多条行（正文块、thinking、多个 tool_use）**共享同一个 message.id**，整会话共享同一 session_id。
+  //   直接用它们做 key 会让多条物理消息碰撞成同一行 → 虚拟列表重复渲染 + 行错位（本 bug 根因）。
+  //   因此这类候选必须追加 `:pos:${fallbackIndex}` 位置后缀，保证行级唯一。
+  const uniqueIdentityCandidates = [
     raw.uiEventId,
-    nested?.id,
-    raw.id,
     raw.uuid,
     raw.leafUuid,
     raw.leaf_uuid,
-    raw.session_id,
-    raw.sessionId,
-    raw.parent_tool_use_id,
-    raw.parentToolUseId,
     firstToolUseId ? `tool:${firstToolUseId}` : undefined,
     firstToolResultId ? `tool-result:${firstToolResultId}` : undefined,
   ];
 
-  for (const candidate of strongIdentityCandidates) {
+  for (const candidate of uniqueIdentityCandidates) {
     const part = keyPart(candidate);
     if (part) {
       return `${message.type}:${part}`;
+    }
+  }
+
+  // 回合级/会话级标识：可能跨行重复，附加位置后缀避免虚拟行 key 碰撞。
+  const sharedIdentityCandidates = [
+    nested?.id,
+    raw.id,
+    raw.session_id,
+    raw.sessionId,
+    raw.parent_tool_use_id,
+    raw.parentToolUseId,
+  ];
+
+  for (const candidate of sharedIdentityCandidates) {
+    const part = keyPart(candidate);
+    if (part) {
+      return `${message.type}:shared:${part}:pos:${fallbackIndex}`;
     }
   }
 
