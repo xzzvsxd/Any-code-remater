@@ -1,16 +1,20 @@
 import type { ClaudeStreamMessage } from '../types/claude';
+import { getMessageContent } from './messageContentAccess';
 
 type PromptContentItem = {
   type?: string;
   text?: string;
+  content?: unknown;
 };
 
 export type PromptIndexByMessage = WeakMap<object, number>;
 export type BranchPromptIndexByMessage = WeakMap<object, number>;
+export type PromptNavigationIndexByMessage = WeakMap<object, number>;
 
 export interface PromptIndexMaps {
   promptIndexByMessage: PromptIndexByMessage;
   branchPromptIndexByMessage: BranchPromptIndexByMessage;
+  navigationPromptIndexByMessage: PromptNavigationIndexByMessage;
 }
 
 export interface PromptIndexMapsCache extends PromptIndexMaps {
@@ -23,6 +27,15 @@ export interface PromptIndexMapsCache extends PromptIndexMaps {
   hasSeenTrackedPrompt: boolean;
   nextPromptIndexBeforeLast: number;
   hasSeenTrackedPromptBeforeLast: boolean;
+  nextNavigationPromptIndex: number;
+  nextNavigationPromptIndexBeforeLast: number;
+}
+
+function getUserRoleLike(message: ClaudeStreamMessage | unknown): string | undefined {
+  const candidate = message as any;
+  if (!candidate || typeof candidate !== 'object') return undefined;
+  if (candidate.type && candidate.type !== 'user') return undefined;
+  return candidate.type === 'user' ? 'user' : candidate.message?.role ?? candidate.role;
 }
 
 /**
@@ -36,7 +49,7 @@ export function extractTrackedPromptText(message: ClaudeStreamMessage | unknown)
   hasTextContent: boolean;
   hasToolResult: boolean;
 } {
-  const content = (message as ClaudeStreamMessage | undefined)?.message?.content;
+  const content = getMessageContent(message as ClaudeStreamMessage | undefined);
   let text = '';
   let hasTextContent = false;
   let hasToolResult = false;
@@ -46,9 +59,12 @@ export function extractTrackedPromptText(message: ClaudeStreamMessage | unknown)
     hasTextContent = text.trim().length > 0;
   } else if (Array.isArray(content)) {
     const textItems = content.filter(
-      (item: PromptContentItem) => item?.type === 'text',
+      (item: PromptContentItem) => item?.type === 'text' || item?.type === 'input_text',
     );
-    text = textItems.map((item: PromptContentItem) => item.text || '').join('');
+    text = textItems.map((item: PromptContentItem) => {
+      if (typeof item.text === 'string') return item.text;
+      return typeof item.content === 'string' ? item.content : '';
+    }).join('');
     hasTextContent = textItems.length > 0 && text.trim().length > 0;
     hasToolResult = content.some(
       (item: PromptContentItem) => item?.type === 'tool_result',
@@ -59,16 +75,15 @@ export function extractTrackedPromptText(message: ClaudeStreamMessage | unknown)
 }
 
 /**
- * 判断一条 user 消息是否是真正会参与撤回编号的用户提示词。
- * 必须和 Rust 侧 prompt extraction/truncation 的过滤意图保持一致。
+ * 判断一条 user/role=user 消息是否是 UI 中可导航的真实用户提示词。
+ *
+ * 注意：导航索引是 UI 锚点索引，必须包含已提交但尚未后端对账的 optimistic prompt；
+ * 后端撤回/分支索引用 isTrackedUserPrompt，不能混用。
  */
-export function isTrackedUserPrompt(message: ClaudeStreamMessage | unknown): boolean {
+export function isNavigableUserPrompt(message: ClaudeStreamMessage | unknown): boolean {
   const candidate = message as ClaudeStreamMessage | undefined;
-  if (candidate?.type !== 'user') return false;
+  if (getUserRoleLike(candidate) !== 'user') return false;
 
-  // 前端本地 optimistic prompt 只用于 UI 兜底显示，后端 JSONL / prompt_tracker
-  // 尚未包含它时不能参与 promptIndex 计数；否则撤回/分支索引会比后端多 1，导致错位。
-  if ((candidate as any).uiOnly === true || (candidate as any).excludeFromAiContext === true) return false;
   if ((candidate as any).isSidechain === true) return false;
   if ((candidate as any).parent_tool_use_id != null) return false;
 
@@ -83,6 +98,21 @@ export function isTrackedUserPrompt(message: ClaudeStreamMessage | unknown): boo
     || text.includes('skill is running');
 
   return !isWarmupMessage && !isSkillMessage;
+}
+
+/**
+ * 判断一条 user 消息是否是真正会参与撤回/分支编号的用户提示词。
+ * 必须和 Rust 侧 prompt extraction/truncation 的过滤意图保持一致。
+ */
+export function isTrackedUserPrompt(message: ClaudeStreamMessage | unknown): boolean {
+  const candidate = message as ClaudeStreamMessage | undefined;
+  if (!isNavigableUserPrompt(candidate)) return false;
+
+  // 前端本地 optimistic prompt 只用于 UI 兜底显示，后端 JSONL / prompt_tracker
+  // 尚未包含它时不能参与 promptIndex 计数；否则撤回/分支索引会比后端多 1，导致错位。
+  if ((candidate as any).uiOnly === true || (candidate as any).excludeFromAiContext === true) return false;
+
+  return true;
 }
 
 /**
@@ -114,9 +144,15 @@ function addMessageToPromptIndexMaps(
   state: {
     nextPromptIndex: number;
     hasSeenTrackedPrompt: boolean;
+    nextNavigationPromptIndex: number;
   },
 ): void {
   if (typeof message !== 'object' || message === null) return;
+
+  if (isNavigableUserPrompt(message)) {
+    maps.navigationPromptIndexByMessage.set(message, state.nextNavigationPromptIndex);
+    state.nextNavigationPromptIndex += 1;
+  }
 
   if (isTrackedUserPrompt(message)) {
     // 撤回：只有真实 user prompt 才有 promptIndex。
@@ -140,18 +176,22 @@ export function buildPromptIndexMaps(
   const maps: PromptIndexMaps = {
     promptIndexByMessage: new WeakMap(),
     branchPromptIndexByMessage: new WeakMap(),
+    navigationPromptIndexByMessage: new WeakMap(),
   };
   const state = {
     nextPromptIndex: 0,
     hasSeenTrackedPrompt: false,
+    nextNavigationPromptIndex: 0,
   };
   let nextPromptIndexBeforeLast = state.nextPromptIndex;
   let hasSeenTrackedPromptBeforeLast = state.hasSeenTrackedPrompt;
+  let nextNavigationPromptIndexBeforeLast = state.nextNavigationPromptIndex;
 
   for (let index = 0; index < messages.length; index++) {
     if (index === messages.length - 1) {
       nextPromptIndexBeforeLast = state.nextPromptIndex;
       hasSeenTrackedPromptBeforeLast = state.hasSeenTrackedPrompt;
+      nextNavigationPromptIndexBeforeLast = state.nextNavigationPromptIndex;
     }
     const message = messages[index];
     addMessageToPromptIndexMaps(message, maps, state);
@@ -168,6 +208,8 @@ export function buildPromptIndexMaps(
     hasSeenTrackedPrompt: state.hasSeenTrackedPrompt,
     nextPromptIndexBeforeLast,
     hasSeenTrackedPromptBeforeLast,
+    nextNavigationPromptIndex: state.nextNavigationPromptIndex,
+    nextNavigationPromptIndexBeforeLast,
   };
 }
 
@@ -187,10 +229,12 @@ export function updatePromptIndexMapsCache(
     const state = {
       nextPromptIndex: cache.nextPromptIndexBeforeLast,
       hasSeenTrackedPrompt: cache.hasSeenTrackedPromptBeforeLast,
+      nextNavigationPromptIndex: cache.nextNavigationPromptIndexBeforeLast,
     };
     const maps: PromptIndexMaps = {
       promptIndexByMessage: cache.promptIndexByMessage,
       branchPromptIndexByMessage: cache.branchPromptIndexByMessage,
+      navigationPromptIndexByMessage: cache.navigationPromptIndexByMessage,
     };
 
     addMessageToPromptIndexMaps(messages[messages.length - 1], maps, state);
@@ -202,6 +246,7 @@ export function updatePromptIndexMapsCache(
     cache.lastProcessedMessage = messages[messages.length - 1];
     cache.nextPromptIndex = state.nextPromptIndex;
     cache.hasSeenTrackedPrompt = state.hasSeenTrackedPrompt;
+    cache.nextNavigationPromptIndex = state.nextNavigationPromptIndex;
     return cache;
   }
 
@@ -219,16 +264,19 @@ export function updatePromptIndexMapsCache(
   const state = {
     nextPromptIndex: cache.nextPromptIndex,
     hasSeenTrackedPrompt: cache.hasSeenTrackedPrompt,
+    nextNavigationPromptIndex: cache.nextNavigationPromptIndex,
   };
   const maps: PromptIndexMaps = {
     promptIndexByMessage: cache.promptIndexByMessage,
     branchPromptIndexByMessage: cache.branchPromptIndexByMessage,
+    navigationPromptIndexByMessage: cache.navigationPromptIndexByMessage,
   };
 
   for (let index = cache.processedLength; index < messages.length; index++) {
     if (index === messages.length - 1) {
       cache.nextPromptIndexBeforeLast = state.nextPromptIndex;
       cache.hasSeenTrackedPromptBeforeLast = state.hasSeenTrackedPrompt;
+      cache.nextNavigationPromptIndexBeforeLast = state.nextNavigationPromptIndex;
     }
     addMessageToPromptIndexMaps(messages[index], maps, state);
   }
@@ -240,6 +288,7 @@ export function updatePromptIndexMapsCache(
   cache.lastProcessedMessage = messages[messages.length - 1];
   cache.nextPromptIndex = state.nextPromptIndex;
   cache.hasSeenTrackedPrompt = state.hasSeenTrackedPrompt;
+  cache.nextNavigationPromptIndex = state.nextNavigationPromptIndex;
   return cache;
 }
 
@@ -253,6 +302,12 @@ export function buildBranchPromptIndexByMessage(
   messages: Array<ClaudeStreamMessage | unknown>,
 ): BranchPromptIndexByMessage {
   return buildPromptIndexMaps(messages).branchPromptIndexByMessage;
+}
+
+export function buildPromptNavigationIndexByMessage(
+  messages: Array<ClaudeStreamMessage | unknown>,
+): PromptNavigationIndexByMessage {
+  return buildPromptIndexMaps(messages).navigationPromptIndexByMessage;
 }
 
 /**
@@ -274,6 +329,32 @@ export function getPromptIndexForDisplayableMessage(
 
   const actualIndex = messages.findIndex((message) => message === displayableMessage);
   return getPromptIndexForMessageInList(messages, actualIndex);
+}
+
+export function getPromptNavigationIndexForDisplayableMessage(
+  messages: Array<ClaudeStreamMessage | unknown>,
+  displayableMessages: Array<ClaudeStreamMessage | unknown>,
+  displayableIndex: number,
+  navigationPromptIndexByMessage?: PromptNavigationIndexByMessage,
+): number {
+  const displayableMessage = displayableMessages[displayableIndex];
+  if (!displayableMessage) return -1;
+
+  if (navigationPromptIndexByMessage && typeof displayableMessage === 'object') {
+    return navigationPromptIndexByMessage.get(displayableMessage) ?? -1;
+  }
+
+  const actualIndex = messages.findIndex((message) => message === displayableMessage);
+  if (actualIndex < 0) return -1;
+  if (!isNavigableUserPrompt(messages[actualIndex])) return -1;
+
+  let promptIndex = -1;
+  for (let i = 0; i <= actualIndex; i++) {
+    if (isNavigableUserPrompt(messages[i])) {
+      promptIndex += 1;
+    }
+  }
+  return promptIndex;
 }
 
 /**

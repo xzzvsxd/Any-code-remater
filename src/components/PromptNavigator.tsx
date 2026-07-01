@@ -5,7 +5,8 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { isTrackedUserPrompt } from "@/lib/promptIndex";
+import { isNavigableUserPrompt } from "@/lib/promptIndex";
+import { getMessageContent } from "@/lib/messageContentAccess";
 import type { ClaudeStreamMessage } from "@/types/claude";
 
 interface PromptNavigatorProps {
@@ -31,17 +32,15 @@ const EMPTY_PROMPT_ITEMS: PromptItem[] = [];
  * 提取用户消息的纯文本内容
  */
 const extractUserText = (message: ClaudeStreamMessage): string => {
-  if (!message.message?.content) return '';
-
-  const content = message.message.content;
+  const content = getMessageContent(message);
   let text = '';
 
   if (typeof content === 'string') {
     text = content;
   } else if (Array.isArray(content)) {
     text = content
-      .filter((item: any) => item.type === 'text')
-      .map((item: any) => item.text || '')
+      .filter((item: any) => item.type === 'text' || item.type === 'input_text')
+      .map((item: any) => item.text || (typeof item.content === 'string' ? item.content : ''))
       .join('\n');
   }
 
@@ -121,9 +120,9 @@ export const PromptNavigator: React.FC<PromptNavigatorProps> = ({
   const jumpInputRef = useRef<HTMLInputElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
-  // 提取所有用户提示词
-  // 过滤逻辑与 getPromptIndexForMessage (ClaudeCodeSession.tsx) 保持一致
-  // 排除 sidechain/子代理/warmup/skill/纯tool_result 等非真实用户输入
+  // 提取所有 UI 可导航的用户提示词。
+  // 注意：这里使用导航索引，不使用后端撤回 promptIndex；
+  // 已发送但尚未后端对账的 uiOnly optimistic prompt 也应显示在导航中。
   const prompts = useMemo<PromptItem[]>(() => {
     if (!isOpen) return EMPTY_PROMPT_ITEMS;
 
@@ -131,9 +130,8 @@ export const PromptNavigator: React.FC<PromptNavigatorProps> = ({
     const items: PromptItem[] = [];
 
     for (const message of messages) {
-      if (!isTrackedUserPrompt(message)) continue;
+      if (!isNavigableUserPrompt(message)) continue;
 
-      // 通过所有过滤条件，这是一条真实用户提示词
       const displayText = extractUserText(message);
       if (displayText) {
         items.push({

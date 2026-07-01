@@ -26,7 +26,7 @@ export interface DisplayableMessagesOptions {
  */
 function isStartupWarningMessage(message: ClaudeStreamMessage): boolean {
   // 只检查 system 类型的消息
-  if (message.type !== 'system') return false;
+  if (getMessageRenderType(message) !== 'system') return false;
 
   // 获取消息内容
   const content = getMessageContent(message);
@@ -36,7 +36,7 @@ function isStartupWarningMessage(message: ClaudeStreamMessage): boolean {
     text = content;
   } else if (Array.isArray(content)) {
     text = content
-      .filter((item: any) => item.type === 'text')
+      .filter((item: any) => item.type === 'text' || item.type === 'input_text')
       .map((item: any) => item.text ?? item.content ?? '')
       .join('');
   }
@@ -60,7 +60,7 @@ function isStartupWarningMessage(message: ClaudeStreamMessage): boolean {
  * 需要排除用户粘贴的包含 "Warmup" 关键字的长文本（如日志内容）
  */
 function isWarmupMessage(message: ClaudeStreamMessage): boolean {
-  if (message.type !== 'user') return false;
+  if (getMessageRenderType(message) !== 'user') return false;
 
   const content = getMessageContent(message);
   let text = '';
@@ -69,7 +69,7 @@ function isWarmupMessage(message: ClaudeStreamMessage): boolean {
     text = content;
   } else if (Array.isArray(content)) {
     text = content
-      .filter((item: any) => item.type === 'text')
+      .filter((item: any) => item.type === 'text' || item.type === 'input_text')
       .map((item: any) => item.text ?? item.content ?? '')
       .join('');
   }
@@ -113,6 +113,10 @@ const STREAM_MESSAGE_RENDERED_TYPES = new Set([
   'thinking',
 ]);
 
+function getMessageRenderType(message: ClaudeStreamMessage): string | undefined {
+  return (message as any).type ?? (message as any).message?.role;
+}
+
 function shouldSkipToolResultForToolUse(toolUse: any): boolean {
   const toolName = typeof toolUse?.name === 'string' ? toolUse.name : '';
   const normalizedToolName = toolName.toLowerCase();
@@ -147,7 +151,7 @@ function messageHasExtractableContent(message: ClaudeStreamMessage): boolean {
 }
 
 function shouldRenderMessageAsNull(message: ClaudeStreamMessage): boolean {
-  const messageType = (message as any).type;
+  const messageType = getMessageRenderType(message);
 
   if (
     messageType === 'tool_use' ||
@@ -157,7 +161,7 @@ function shouldRenderMessageAsNull(message: ClaudeStreamMessage): boolean {
     return true;
   }
 
-  if (!STREAM_MESSAGE_RENDERED_TYPES.has(messageType)) {
+  if (!messageType || !STREAM_MESSAGE_RENDERED_TYPES.has(messageType)) {
     return true;
   }
 
@@ -190,7 +194,7 @@ function shouldRenderMessageAsNull(message: ClaudeStreamMessage): boolean {
 }
 
 function rememberSkippableToolUses(message: ClaudeStreamMessage, skippableToolUseIds: Set<string>): void {
-  if (message.type !== 'assistant') return;
+  if (getMessageRenderType(message) !== 'assistant') return;
   const content = getMessageContentArray(message);
   if (!content) return;
 
@@ -214,7 +218,7 @@ function buildWarmupHiddenIndices(messages: ClaudeStreamMessage[], hideWarmupMes
     if (isWarmupMessage(msg)) {
       warmupIndices.add(idx);
       // 找到紧跟其后的 assistant 回复（Warmup 的响应）
-      if (idx + 1 < messages.length && messages[idx + 1].type === 'assistant') {
+      if (idx + 1 < messages.length && getMessageRenderType(messages[idx + 1]) === 'assistant') {
         warmupIndices.add(idx + 1);
       }
     }
@@ -255,7 +259,7 @@ function hasVisibleUserContent(message: ClaudeStreamMessage, skippableToolUseIds
 
   for (const content of rawContent) {
     // 如果有文本内容，保留消息
-    if (content.type === 'text') {
+    if (content.type === 'text' || content.type === 'input_text') {
       const text = typeof content.text === 'string' ? content.text : content.content;
       if (typeof text === 'string' && text.trim().length > 0) {
         return true;
@@ -286,6 +290,7 @@ function shouldDisplayMessageAtIndex(
   skippableToolUseIds: Set<string>,
 ): boolean {
   const message = messages[index];
+  const messageType = getMessageRenderType(message);
   let shouldDisplay = true;
 
   // 这些消息在 StreamMessageV2 / 子消息组件中会直接 return null。
@@ -311,7 +316,7 @@ function shouldDisplayMessageAtIndex(
   }
 
   // 规则 2 & 3：处理用户消息
-  if (shouldDisplay && message.type === 'user') {
+  if (shouldDisplay && messageType === 'user') {
     // 跳过元消息标记的用户消息
     if (message.isMeta) {
       shouldDisplay = false;

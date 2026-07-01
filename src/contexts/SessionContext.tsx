@@ -39,6 +39,8 @@ interface SessionContextValue {
   onLinkDetected?: (url: string) => void;
   onRevert?: (promptIndex: number, mode: RewindMode) => void;
   getPromptIndexForMessage?: (index: number) => number;
+  /** 计算 UI 提示词导航锚点索引；包含已发送但尚未后端对账的 optimistic prompt。 */
+  getPromptNavigationIndexForMessage?: (index: number) => number;
   /** 从某条消息分支出新会话（消息级分支）。index 为完整 messages 数组中的位置。 */
   onBranch?: (promptIndex: number) => void;
   /** 计算某条消息（任意类型）可用的分支 promptIndex；返回 -1 表示不可分支。 */
@@ -56,6 +58,7 @@ interface SessionProviderProps {
   onLinkDetected?: (url: string) => void;
   onRevert?: (promptIndex: number, mode: RewindMode) => void;
   getPromptIndexForMessage?: (index: number) => number;
+  getPromptNavigationIndexForMessage?: (index: number) => number;
   onBranch?: (promptIndex: number) => void;
   getBranchPromptIndexForMessage?: (index: number) => number;
   children: React.ReactNode;
@@ -70,6 +73,7 @@ export const SessionProvider: React.FC<SessionProviderProps> = ({
   onLinkDetected,
   onRevert,
   getPromptIndexForMessage,
+  getPromptNavigationIndexForMessage,
   onBranch,
   getBranchPromptIndexForMessage,
   children,
@@ -86,6 +90,7 @@ export const SessionProvider: React.FC<SessionProviderProps> = ({
       onLinkDetected,
       onRevert,
       getPromptIndexForMessage,
+      getPromptNavigationIndexForMessage,
       onBranch,
       getBranchPromptIndexForMessage,
     }),
@@ -98,6 +103,7 @@ export const SessionProvider: React.FC<SessionProviderProps> = ({
       onLinkDetected,
       onRevert,
       getPromptIndexForMessage,
+      getPromptNavigationIndexForMessage,
       onBranch,
       getBranchPromptIndexForMessage,
     ]

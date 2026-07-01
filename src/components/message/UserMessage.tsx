@@ -24,6 +24,8 @@ interface UserMessageProps {
   className?: string;
   /** 提示词索引（只计算用户提示词） */
   promptIndex?: number;
+  /** UI 提示词导航锚点索引（包含已发送但尚未后端对账的 optimistic prompt） */
+  promptNavigationIndex?: number;
   /** Session ID */
   sessionId?: string;
   /** Project ID */
@@ -239,7 +241,7 @@ const extractUserText = (message: ClaudeStreamMessage): string => {
   // 如果是数组，提取所有text类型的内容
   else if (Array.isArray(content)) {
     text = content
-      .filter((item: any) => item.type === 'text')
+      .filter((item: any) => item.type === 'text' || item.type === 'input_text')
       .map((item: any) => item.text ?? item.content ?? '')
       .join('\n');
   }
@@ -268,6 +270,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   message,
   className,
   promptIndex,
+  promptNavigationIndex,
   sessionId,
   projectId,
   projectPath,
@@ -372,11 +375,16 @@ export const UserMessage: React.FC<UserMessageProps> = ({
 
   const showRevertButton = promptIndex !== undefined && promptIndex >= 0 && onRevert;
   const hasWarning = capabilities && !capabilities.code;
+  const anchorIndex = promptNavigationIndex !== undefined && promptNavigationIndex >= 0
+    ? promptNavigationIndex
+    : promptIndex !== undefined && promptIndex >= 0
+      ? promptIndex
+      : undefined;
 
   return (
     <>
     <div
-      id={promptIndex !== undefined ? `prompt-${promptIndex}` : undefined}
+      id={anchorIndex !== undefined ? `prompt-${anchorIndex}` : undefined}
       className={cn("group relative", className)}
     >
       <div className="flex justify-end gap-4">

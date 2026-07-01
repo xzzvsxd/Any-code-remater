@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'vitest';
 import {
   getBranchPromptIndexForDisplayableMessage,
+  getPromptNavigationIndexForDisplayableMessage,
   getPromptIndexForDisplayableMessage,
+  isNavigableUserPrompt,
+  isTrackedUserPrompt,
   updatePromptIndexMapsCache,
   type PromptIndexMapsCache,
 } from '../promptIndex';
@@ -78,5 +81,64 @@ describe('prompt index cache', () => {
     expect(getPromptIndexForDisplayableMessage([], [firstPrompt], 0, cache.promptIndexByMessage)).toBe(0);
     expect(getPromptIndexForDisplayableMessage([], [optimisticPrompt], 0, cache.promptIndexByMessage)).toBe(-1);
     expect(getBranchPromptIndexForDisplayableMessage([], [answer], 0, cache.branchPromptIndexByMessage)).toBe(1);
+  });
+
+  test('counts UI-only submitted prompts for navigation without changing backend prompt indexes', () => {
+    const firstOptimisticPrompt: ClaudeStreamMessage = {
+      ...user('已发送但还没对账的一问'),
+      uiOnly: true,
+      uiOptimisticPrompt: true,
+      excludeFromAiContext: true,
+    };
+    const secondOptimisticPrompt: ClaudeStreamMessage = {
+      ...user('已发送但还没对账的二问'),
+      uiOnly: true,
+      uiOptimisticPrompt: true,
+      excludeFromAiContext: true,
+    };
+    const answer = assistant('assistant output');
+
+    const cache = updatePromptIndexMapsCache(null, [
+      firstOptimisticPrompt,
+      answer,
+      secondOptimisticPrompt,
+    ]);
+
+    expect(isTrackedUserPrompt(firstOptimisticPrompt)).toBe(false);
+    expect(isNavigableUserPrompt(firstOptimisticPrompt)).toBe(true);
+    expect(getPromptIndexForDisplayableMessage([], [firstOptimisticPrompt], 0, cache.promptIndexByMessage)).toBe(-1);
+    expect(getPromptIndexForDisplayableMessage([], [secondOptimisticPrompt], 0, cache.promptIndexByMessage)).toBe(-1);
+    expect(
+      getPromptNavigationIndexForDisplayableMessage([], [firstOptimisticPrompt], 0, cache.navigationPromptIndexByMessage),
+    ).toBe(0);
+    expect(
+      getPromptNavigationIndexForDisplayableMessage([], [secondOptimisticPrompt], 0, cache.navigationPromptIndexByMessage),
+    ).toBe(1);
+  });
+
+  test('recognizes legacy top-level content and role-only user prompts', () => {
+    const legacyTopLevel = {
+      type: 'user',
+      content: [{ type: 'text', text: '旧历史顶层 content' }],
+    } as any;
+    const roleOnly = {
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: '只有 message.role 的 prompt' }],
+      },
+    } as any;
+
+    const cache = updatePromptIndexMapsCache(null, [legacyTopLevel, assistant('answer'), roleOnly]);
+
+    expect(isTrackedUserPrompt(legacyTopLevel)).toBe(true);
+    expect(isTrackedUserPrompt(roleOnly)).toBe(true);
+    expect(getPromptIndexForDisplayableMessage([], [legacyTopLevel], 0, cache.promptIndexByMessage)).toBe(0);
+    expect(getPromptIndexForDisplayableMessage([], [roleOnly], 0, cache.promptIndexByMessage)).toBe(1);
+    expect(
+      getPromptNavigationIndexForDisplayableMessage([], [legacyTopLevel], 0, cache.navigationPromptIndexByMessage),
+    ).toBe(0);
+    expect(
+      getPromptNavigationIndexForDisplayableMessage([], [roleOnly], 0, cache.navigationPromptIndexByMessage),
+    ).toBe(1);
   });
 });

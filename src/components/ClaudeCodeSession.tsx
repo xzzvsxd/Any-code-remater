@@ -46,6 +46,7 @@ import { formatClaudeModelLabel, resolveClaudeContinuationModel } from '@/lib/cl
 import { buildQueueStorageKey, loadQueuedPrompts, saveQueuedPrompts } from '@/lib/queuedPromptsStore';
 import {
   getBranchPromptIndexForDisplayableMessage,
+  getPromptNavigationIndexForDisplayableMessage,
   getPromptIndexForDisplayableMessage,
 } from '@/lib/promptIndex';
 import { usePromptIndexMaps } from '@/hooks/usePromptIndexMaps';
@@ -1313,6 +1314,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   const {
     promptIndexByMessage,
     branchPromptIndexByMessage,
+    navigationPromptIndexByMessage,
   } = usePromptIndexMaps(visibleMessages);
   const getPromptIndexForMessage = useCallback((displayableIndex: number): number => {
     return getPromptIndexForDisplayableMessage(
@@ -1322,6 +1324,14 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       promptIndexByMessage,
     );
   }, [visibleMessages, displayableMessages, promptIndexByMessage]);
+  const getPromptNavigationIndexForMessage = useCallback((displayableIndex: number): number => {
+    return getPromptNavigationIndexForDisplayableMessage(
+      visibleMessages,
+      displayableMessages,
+      displayableIndex,
+      navigationPromptIndexByMessage,
+    );
+  }, [visibleMessages, displayableMessages, navigationPromptIndexByMessage]);
 
 
   // 🆕 撤回处理函数 - 支持三种撤回模式
@@ -1562,6 +1572,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       onLinkDetected={handleLinkDetected}
       onRevert={handleRevert}
       getPromptIndexForMessage={getPromptIndexForMessage}
+      getPromptNavigationIndexForMessage={getPromptNavigationIndexForMessage}
       onBranch={handleBranch}
       getBranchPromptIndexForMessage={getBranchPromptIndexForMessage}
     >

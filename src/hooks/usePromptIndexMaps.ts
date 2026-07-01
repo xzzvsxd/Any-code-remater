@@ -9,6 +9,7 @@ import type { ClaudeStreamMessage } from '@/types/claude';
 const EMPTY_PROMPT_INDEX_MAPS: PromptIndexMaps = {
   promptIndexByMessage: new WeakMap(),
   branchPromptIndexByMessage: new WeakMap(),
+  navigationPromptIndexByMessage: new WeakMap(),
 };
 
 /**
@@ -33,6 +34,7 @@ export function usePromptIndexMaps(
     return {
       promptIndexByMessage: cache.promptIndexByMessage,
       branchPromptIndexByMessage: cache.branchPromptIndexByMessage,
+      navigationPromptIndexByMessage: cache.navigationPromptIndexByMessage,
     };
   }, [messages]);
 }

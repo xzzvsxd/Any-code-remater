@@ -18,6 +18,7 @@ interface StreamMessageV2Props {
   claudeSettings?: { showSystemInitialization?: boolean };
   isStreaming?: boolean;
   promptIndex?: number;
+  promptNavigationIndex?: number;
   sessionId?: string;
   projectId?: string;
   projectPath?: string;
@@ -59,6 +60,7 @@ const StreamMessageV2Component: React.FC<StreamMessageV2Props> = ({
   claudeSettings,
   isStreaming = false,
   promptIndex,
+  promptNavigationIndex,
   sessionId,
   projectId,
   projectPath,
@@ -175,7 +177,7 @@ const StreamMessageV2Component: React.FC<StreamMessageV2Props> = ({
     }
   }
 
-  const messageType = (message as ClaudeStreamMessage & { type?: string }).type ?? (message as any).type;
+  const messageType = (message as ClaudeStreamMessage & { type?: string }).type ?? (message as any).message?.role;
 
   // Handle special cases
   if (messageType === 'thinking') {
@@ -223,6 +225,7 @@ const StreamMessageV2Component: React.FC<StreamMessageV2Props> = ({
   // Specific props based on type
   const specificProps = messageType === 'user' ? {
     promptIndex,
+    promptNavigationIndex,
     sessionId,
     projectId,
     projectPath,
@@ -393,6 +396,7 @@ export const StreamMessageV2 = React.memo(
         isMessageGroupEqual(prevProps.messageGroup, nextProps.messageGroup) &&
         prevProps.isStreaming === nextProps.isStreaming &&
         prevProps.promptIndex === nextProps.promptIndex &&
+        prevProps.promptNavigationIndex === nextProps.promptNavigationIndex &&
         prevProps.sessionId === nextProps.sessionId &&
         prevProps.projectId === nextProps.projectId &&
         prevProps.claudeSettings?.showSystemInitialization === nextProps.claudeSettings?.showSystemInitialization
@@ -409,6 +413,7 @@ export const StreamMessageV2 = React.memo(
       isMessageEqual(prevProps.message, nextProps.message) &&
       prevProps.isStreaming === nextProps.isStreaming &&
       prevProps.promptIndex === nextProps.promptIndex &&
+      prevProps.promptNavigationIndex === nextProps.promptNavigationIndex &&
       prevProps.sessionId === nextProps.sessionId &&
       prevProps.projectId === nextProps.projectId &&
       prevProps.projectPath === nextProps.projectPath &&

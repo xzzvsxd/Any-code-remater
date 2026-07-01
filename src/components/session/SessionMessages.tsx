@@ -25,6 +25,7 @@ import {
   SESSION_MESSAGE_LAYOUT_CHANGED_EVENT,
   type SessionMessageLayoutChangedDetail,
 } from "./sessionMessageLayoutEvents";
+import { isNavigableUserPrompt } from "@/lib/promptIndex";
 
 /**
  * 虚拟列表行。
@@ -74,6 +75,7 @@ export interface SessionMessagesRef {
  * - handleLinkDetected → onLinkDetected
  * - handleRevert → onRevert
  * - getPromptIndexForMessage → getPromptIndexForMessage
+ * - getPromptNavigationIndexForMessage → getPromptNavigationIndexForMessage
  */
 interface SessionMessagesProps {
   messageGroups: MessageGroup[];
@@ -94,7 +96,18 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
   onCancel
 }, ref) => {
   // ✅ 从 SessionContext 获取配置和回调，避免 Props Drilling
-  const { settings, sessionId, projectId, projectPath, onLinkDetected, onRevert, getPromptIndexForMessage, onBranch, getBranchPromptIndexForMessage } = useSession();
+  const {
+    settings,
+    sessionId,
+    projectId,
+    projectPath,
+    onLinkDetected,
+    onRevert,
+    getPromptIndexForMessage,
+    getPromptNavigationIndexForMessage,
+    onBranch,
+    getBranchPromptIndexForMessage,
+  } = useSession();
 
   // 消息组的稳定身份 key：用于 useVirtualizer 的 getItemKey 与高度缓存。
   // 不再按数组 index 命名。optimistic prompt 被历史回填、技术消息重新聚合、子代理归组时，
@@ -568,18 +581,17 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       cancelTopScrollFollowUps();
       const searchToken = promptScrollSearchTokenRef.current;
 
-      // Find the targetGroupIndex for the given promptIndex.
-      // Uses getPromptIndexForMessage to ensure counting logic matches backend
-      // (excludes warmup/skill/sidechain/tool-result-only non-real user inputs)
+      // Find the targetGroupIndex for the given navigation prompt index.
+      // 导航索引是 UI 锚点索引：包含已发送但尚未后端对账的 optimistic prompt；
+      // 不能复用后端撤回 promptIndex，否则这些可见用户提示词会显示 0/0 或无法跳转。
       let targetGroupIndex = -1;
 
       for (let i = 0; i < messageGroups.length; i++) {
         const group = messageGroups[i];
 
-        // Only check normal-type user messages
-        if (group.type === 'normal' && group.message?.type === 'user') {
-          if (getPromptIndexForMessage) {
-            const msgPromptIndex = getPromptIndexForMessage(group.index);
+        if (group.type === 'normal' && group.message && isNavigableUserPrompt(group.message)) {
+          if (getPromptNavigationIndexForMessage) {
+            const msgPromptIndex = getPromptNavigationIndexForMessage(group.index);
             if (msgPromptIndex === promptIndex) {
               targetGroupIndex = i;
               break;
@@ -768,8 +780,12 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
                 messageGroup.type === 'normal' && Number.isFinite(messageGroup.index)
                   ? messageGroup.index
                   : undefined;
-              const promptIndex = message && message.type === 'user' && originalIndex !== undefined && getPromptIndexForMessage
+              const isNavigablePrompt = Boolean(message && isNavigableUserPrompt(message));
+              const promptIndex = isNavigablePrompt && originalIndex !== undefined && getPromptIndexForMessage
                 ? getPromptIndexForMessage(originalIndex)
+                : undefined;
+              const promptNavigationIndex = isNavigablePrompt && originalIndex !== undefined && getPromptNavigationIndexForMessage
+                ? getPromptNavigationIndexForMessage(originalIndex)
                 : undefined;
 
               // 分支锚点：仅对「用户消息 / 助手最终回复 / 中断消息」允许分支。
@@ -830,6 +846,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
                         claudeSettings={settings}
                         isStreaming={isStreaming}
                         promptIndex={promptIndex}
+                        promptNavigationIndex={promptNavigationIndex}
                         sessionId={sessionId ?? undefined}
                         projectId={projectId ?? undefined}
                         projectPath={projectPath}
