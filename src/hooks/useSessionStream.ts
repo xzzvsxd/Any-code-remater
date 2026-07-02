@@ -163,6 +163,10 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
   // Internal refs
   const messageQueueRef = useRef<AsyncQueue<ClaudeStreamMessage> | null>(null);
   const loadingSessionIdRef = useRef<string | null>(null);
+  // 重连收尾去重 + 看门狗：防止专属 complete / 全局 complete / 存活轮询三路重复收尾，
+  // 并在错过 complete 事件时靠轮询进程存活兜底复位 loading（根治「切回运行中会话后卡在思考中」）。
+  const reconnectFinalizedRef = useRef<string | null>(null);
+  const reconnectWatchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   /**
    * 获取引擎类型
@@ -390,6 +394,13 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
     unlistenRefs.current.forEach(u => u && typeof u === 'function' && u());
     unlistenRefs.current = [];
 
+    // 重置本次重连的收尾去重标记与看门狗（允许对同一会话再次重连后正常收尾）。
+    reconnectFinalizedRef.current = null;
+    if (reconnectWatchdogRef.current) {
+      clearInterval(reconnectWatchdogRef.current);
+      reconnectWatchdogRef.current = null;
+    }
+
     // 设置会话 ID
     setCancelSessionId?.(sessionId);
     setClaudeSessionId(sessionId);
@@ -470,6 +481,12 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
           hasActiveSessionRef.current = false;
           setCancelSessionId?.(null);
           isListeningRef.current = false;
+          // 出错即视为本次重连已收尾：置去重标记并停看门狗，避免存活轮询重复触发。
+          reconnectFinalizedRef.current = sessionId;
+          if (reconnectWatchdogRef.current) {
+            clearInterval(reconnectWatchdogRef.current);
+            reconnectWatchdogRef.current = null;
+          }
           unlistenRefs.current.forEach(u => u && typeof u === 'function' && u());
           unlistenRefs.current = [];
         }
@@ -477,32 +494,88 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
     );
     unlistenRefs.current.push(errorUnlisten);
 
-    // 监听完成
+    // 统一收尾：三路触发（会话专属 complete / 全局 complete 兜底 / 存活轮询看门狗）共用，
+    // 用 reconnectFinalizedRef 按 sessionId 去重，保证只收尾一次。
+    const finalizeReconnect = async () => {
+      if (!isMountedRef.current) return;
+      if (reconnectFinalizedRef.current === sessionId) return; // 已收尾
+      reconnectFinalizedRef.current = sessionId;
+
+      // 停掉看门狗
+      if (reconnectWatchdogRef.current) {
+        clearInterval(reconnectWatchdogRef.current);
+        reconnectWatchdogRef.current = null;
+      }
+
+      setIsLoading(false);
+      messageQueueRef.current?.done();
+      hasActiveSessionRef.current = false;
+      setCancelSessionId?.(null);
+      isListeningRef.current = false;
+      unlistenRefs.current.forEach(u => u && typeof u === 'function' && u());
+      unlistenRefs.current = [];
+      await notifyAiExecutionComplete({
+        engine: notificationEngine,
+        sessionId,
+        runId: sessionId,
+        elapsedSeconds: getRunElapsedSeconds?.() ?? null,
+        projectPath: session?.project_path ?? null,
+      });
+    };
+
+    // 校验该会话是否仍在后端运行列表中。查询失败返回 null（未知，调用方不据此收尾）。
+    const isSessionStillRunning = async (): Promise<boolean | null> => {
+      try {
+        const running = await api.listRunningClaudeSessions();
+        return running.some((s: any) =>
+          'process_type' in s && s.process_type && 'ClaudeSession' in s.process_type &&
+          (s.process_type as any).ClaudeSession.session_id === sessionId
+        );
+      } catch {
+        return null;
+      }
+    };
+
+    // 监听完成（会话专属，主路径）
     const completeUnlisten = await listen<boolean>(
       `${eventPrefix}-complete:${sessionId}`,
+      () => { void finalizeReconnect(); }
+    );
+    unlistenRefs.current.push(completeUnlisten);
+
+    // 🔧 兜底1：全局 complete 事件。切回「后台运行中」会话时，若会话专属 complete 在
+    // 重连监听器 attach 之前就已发出（错过），前端会永久卡在「思考中」。后端在每次 complete
+    // 同时 emit 全局 `${engine}-complete`（payload 形如 { tab_id, payload }）。reconnect 场景
+    // 拿不到本次 run 的 tab_id，无法按 tab 精确匹配，因此这里收到全局 complete 后不直接收尾，
+    // 而是校验「该会话是否已从运行列表消失」——消失才收尾，避免误杀其它会话/其它轮次。
+    const globalCompleteUnlisten = await listen<{ tab_id?: string | null; payload?: boolean } | boolean>(
+      `${eventPrefix}-complete`,
       async () => {
-        if (isMountedRef.current) {
-          setIsLoading(false);
-          // 结束消息队列
-          messageQueueRef.current?.done();
-          // 重置状态
-          hasActiveSessionRef.current = false;
-          setCancelSessionId?.(null);
-          isListeningRef.current = false;
-          // 清理监听器
-          unlistenRefs.current.forEach(u => u && typeof u === 'function' && u());
-          unlistenRefs.current = [];
-          await notifyAiExecutionComplete({
-            engine: notificationEngine,
-            sessionId,
-            runId: sessionId,
-            elapsedSeconds: getRunElapsedSeconds?.() ?? null,
-            projectPath: session?.project_path ?? null,
-          });
+        if (!isMountedRef.current || reconnectFinalizedRef.current === sessionId) return;
+        if ((await isSessionStillRunning()) === false) {
+          await finalizeReconnect();
         }
       }
     );
-    unlistenRefs.current.push(completeUnlisten);
+    unlistenRefs.current.push(globalCompleteUnlisten);
+
+    // 🔧 兜底2：进程存活看门狗。即便两路 complete 事件都错过（id 漂移 / 事件丢失），
+    // 也能靠周期性校验运行列表发现「后端已结束」并主动收尾。每 5s 一次，开销可忽略。
+    if (reconnectWatchdogRef.current) {
+      clearInterval(reconnectWatchdogRef.current);
+    }
+    reconnectWatchdogRef.current = setInterval(async () => {
+      if (!isMountedRef.current || reconnectFinalizedRef.current === sessionId) {
+        if (reconnectWatchdogRef.current) {
+          clearInterval(reconnectWatchdogRef.current);
+          reconnectWatchdogRef.current = null;
+        }
+        return;
+      }
+      if ((await isSessionStillRunning()) === false) {
+        await finalizeReconnect();
+      }
+    }, 5000);
 
     // 更新状态
     setIsLoading(true);
@@ -577,6 +650,11 @@ export function useSessionStream(config: UseSessionStreamConfig): UseSessionStre
   useEffect(() => {
     return () => {
       messageQueueRef.current?.done();
+      // 卸载时停掉重连存活看门狗，避免定时器泄漏与卸载后误触发。
+      if (reconnectWatchdogRef.current) {
+        clearInterval(reconnectWatchdogRef.current);
+        reconnectWatchdogRef.current = null;
+      }
       // 不在这里清理监听器，由组件自己清理
       // 因为 unlistenRefs 是外部传入的
     };
