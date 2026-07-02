@@ -47,6 +47,12 @@ export interface AskUserQuestionWidgetProps {
   };
   /** 工具调用唯一 ID（用作去重键，避免「相同内容问题第二次问」被误吞） */
   toolId?: string;
+  /**
+   * 桥接（阻塞式 MCP）模式：ask_user 的交互由后端事件驱动的弹窗统一负责，
+   * 会话流卡片仅做展示 + 状态回显，不自动弹窗、不提供回答入口，避免与 bridge 弹窗双弹。
+   * 「已回答」以 tool_result 是否到达为准。
+   */
+  bridgeMode?: boolean;
 }
 
 export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
@@ -54,12 +60,15 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
   answers = {},
   result,
   toolId,
+  bridgeMode = false,
 }) => {
   const { t } = useTranslation();
   const isError = result?.is_error;
   const safeQuestions = useMemo(() => normalizeQuestions(questions), [questions]);
   const safeAnswers = useMemo(() => normalizeAnswers(answers), [answers]);
-  const hasAnswers = Object.keys(safeAnswers).length > 0;
+  // 桥接模式下，tool_result 到达（且非错误）即代表用户已在弹窗中回答。
+  const bridgeAnswered = bridgeMode && !!result && !isError;
+  const hasAnswers = Object.keys(safeAnswers).length > 0 || bridgeAnswered;
 
   // 折叠状态：已回答时默认折叠，未回答时默认展开
   const [isCollapsed, setIsCollapsed] = useState(hasAnswers);
@@ -81,7 +90,8 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
 
   // 检查是否已回答
   const answered = questionId && isQuestionAnswered ? isQuestionAnswered(questionId) : false;
-  const canAnswerQuestion = safeQuestions.length > 0 && !hasAnswers && !answered;
+  // 桥接模式：交互交给 bridge 弹窗，卡片永不提供「回答」入口，避免双弹。
+  const canAnswerQuestion = !bridgeMode && safeQuestions.length > 0 && !hasAnswers && !answered;
 
   // 🆕 自动触发问答对话框（仅在有问题且未回答时）。
   // 「只自动弹一次」由 Context 的 autoTriggeredIds 统一去重（与 widget 生命周期解耦），
@@ -277,16 +287,28 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
             </Button>
           </div>
 
-          {/* 折叠时显示的简要信息 */}
-          {isCollapsed && hasAnswers && (
-            <div className="mt-1 text-xs text-muted-foreground truncate">
-              {Object.entries(safeAnswers).slice(0, 2).map(([key, value]) => {
-                const displayValue = Array.isArray(value) ? value.join(", ") : value;
-                return `${key}: ${displayValue}`;
-              }).join(" | ")}
-              {Object.keys(safeAnswers).length > 2 && ` +${Object.keys(safeAnswers).length - 2}...`}
-            </div>
-          )}
+          {/* 折叠时显示的简要信息。优先结构化答案，其次从 result.content 解析出的答案 */}
+          {isCollapsed && hasAnswers && (() => {
+            const summaryAnswers = Object.keys(safeAnswers).length > 0 ? safeAnswers : parsedAnswers;
+            const entries = Object.entries(summaryAnswers);
+            if (entries.length === 0) {
+              // 桥接模式下已回答但无可解析答案明细：给出通用回执文案
+              return (
+                <div className="mt-1 text-xs text-muted-foreground truncate">
+                  {t('widget.userAnswered')}
+                </div>
+              );
+            }
+            return (
+              <div className="mt-1 text-xs text-muted-foreground truncate">
+                {entries.slice(0, 2).map(([key, value]) => {
+                  const displayValue = Array.isArray(value) ? value.join(", ") : value;
+                  return `${key}: ${displayValue}`;
+                }).join(" | ")}
+                {entries.length > 2 && ` +${entries.length - 2}...`}
+              </div>
+            );
+          })()}
         </div>
       </div>
 

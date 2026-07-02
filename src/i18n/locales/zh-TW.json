@@ -1105,6 +1105,7 @@
     "viewApprovalDialog": "查看審批對話框",
     "planApprovedExecuting": "計畫已批准，Claude 已開始執行",
     "planRejectedReplanning": "計畫已拒絕，Claude 正在重新規劃",
+    "planWaitingApproval": "等待你在彈窗中審批該計畫…",
     "viewFullPlanAndApprove": "查看完整計畫並審批",
     "questionsCount": "({{count}} 個問題)",
     "multipleChoice": "多選",
@@ -1220,6 +1221,10 @@
       "deleteSession": "刪除對話",
       "duplicate": "複製對話",
       "rename": "重新命名",
+      "aiRename": "AI 重新命名",
+      "aiRenamed": "已重新命名為「{{title}}」",
+      "aiRenameFailed": "AI 重新命名失敗",
+      "aiRenameNoContent": "無可用工作階段內容，無法產生標題",
       "exportMd": "匯出為 Markdown",
       "exportJson": "匯出為 JSON",
       "exportJsonl": "匯出為 JSONL",
@@ -1505,13 +1510,28 @@
       "task": "任務",
       "taskoutput": "任務輸出",
       "taskstop": "停止任務",
+      "taskcreate": "建立任務",
+      "taskupdate": "更新任務",
+      "tasklist": "任務清單",
+      "taskget": "檢視任務",
       "todoread": "讀取待辦",
       "todowrite": "更新待辦",
       "toolsearch": "工具搜尋",
       "webfetch": "擷取網頁",
       "websearch": "網路搜尋",
-      "write": "寫入"
+      "write": "寫入",
+      "submitplan": "提交計畫"
     }
+  },
+  "taskWidget": {
+    "statusCompleted": "已完成",
+    "statusInProgress": "進行中",
+    "statusPending": "待處理",
+    "statusDeleted": "已刪除",
+    "newTask": "新任務",
+    "taskLabel": "任務 #{{id}}",
+    "viewTaskList": "檢視任務清單",
+    "viewTask": "檢視任務 #{{id}}"
   },
   "cliIndicator": {
     "escToCancel": "esc 取消",

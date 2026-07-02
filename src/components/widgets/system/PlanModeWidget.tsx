@@ -31,6 +31,26 @@ export interface PlanModeWidgetProps {
   };
   /** 工具调用唯一 ID（用作去重键，避免「内容相似的 plan 第二次给出」被误吞） */
   toolId?: string;
+  /**
+   * 桥接（阻塞式 MCP submit_plan）模式：审批交互由后端事件驱动的弹窗统一负责，
+   * 会话流卡片仅做展示 + 审批状态回显，不自动弹窗、不提供审批入口，避免与 bridge 弹窗双弹。
+   * 审批结果以 tool_result 内容为准（回灌文本含「批准」/「拒绝」）。
+   */
+  bridgeMode?: boolean;
+}
+
+/**
+ * 从 bridge 提交的 tool_result 文本判定审批结果。
+ * 回灌文本约定：批准含「批准」、拒绝含「拒绝」（见 PlanModeContext.approvePlan/rejectPlan）。
+ */
+function resolveBridgePlanStatus(result?: { content?: any; is_error?: boolean }): PlanStatus {
+  if (!result || result.is_error) return 'pending';
+  const text = typeof result.content === 'string'
+    ? result.content
+    : JSON.stringify(result.content ?? '');
+  if (text.includes('批准')) return 'approved';
+  if (text.includes('拒绝')) return 'rejected';
+  return 'pending';
 }
 
 /**
@@ -43,6 +63,7 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
   plan,
   result,
   toolId,
+  bridgeMode = false,
 }) => {
   const { t } = useTranslation();
   const isEnter = action === "enter";
@@ -73,22 +94,27 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
     // Context 不可用时忽略（组件可能在 Provider 外部渲染）
   }
 
+  // 桥接模式：审批状态改从 tool_result 判定（bridge 用 bridge_${requestId} 存状态，
+  // 与本卡片的 plan_tool_${toolId} 键不通，无法直接读取）。
+  if (bridgeMode && planStatus === 'pending') {
+    planStatus = resolveBridgePlanStatus(result);
+  }
+
   const isApproved = planStatus === 'approved';
   const isRejected = planStatus === 'rejected';
   const hasDecision = isApproved || isRejected;
 
   // 自动触发审批对话框（仅在 ExitPlanMode 且有计划内容且未决策时）。
-  // 「只自动弹一次」由 Context 的 autoTriggeredPlanIds 统一去重（与 widget 生命周期解耦），
-  // 因此 widget 卸载/重挂载（列表滚动）也不会重复自动弹——这里只负责按需发起请求。
+  // 桥接模式不在卡片侧自动弹，交互统一由 bridge 弹窗负责，避免双弹。
   useEffect(() => {
-    if (isExit && plan && triggerPlanApproval && !hasDecision && !result) {
+    if (!bridgeMode && isExit && plan && triggerPlanApproval && !hasDecision && !result) {
       // 延迟触发，确保 UI 已渲染
       const timer = setTimeout(() => {
         triggerPlanApproval(plan, toolId, true);
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [isExit, plan, triggerPlanApproval, hasDecision, result, toolId]);
+  }, [bridgeMode, isExit, plan, triggerPlanApproval, hasDecision, result, toolId]);
 
   // 根据操作类型和审批状态选择样式
   const Icon = isEnter ? Search : LogOut;
@@ -155,8 +181,9 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
       ? RefreshCw
       : Icon;
 
-  // 未决策的 ExitPlanMode：整个卡片头部可点击触发审批（标题区与操作融为一体）
-  const headerClickable = isExit && !!plan && !!triggerPlanApproval && !hasDecision && !result;
+  // 未决策的 ExitPlanMode：整个卡片头部可点击触发审批（标题区与操作融为一体）。
+  // 桥接模式不提供卡片侧审批入口（交互交给 bridge 弹窗）。
+  const headerClickable = !bridgeMode && isExit && !!plan && !!triggerPlanApproval && !hasDecision && !result;
 
   return (
     <div className={`rounded-lg border ${colorClass} overflow-hidden`}>
@@ -262,6 +289,12 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
                 <div className="flex items-center gap-2 text-xs text-amber-600">
                   <RefreshCw className="h-3.5 w-3.5" />
                   <span>{t('widget.planRejectedReplanning')}</span>
+                </div>
+              ) : bridgeMode ? (
+                // 桥接模式未决策：审批交给 bridge 弹窗，卡片仅提示等待状态
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Info className="h-3.5 w-3.5" />
+                  <span>{t('widget.planWaitingApproval')}</span>
                 </div>
               ) : triggerPlanApproval ? (
                 // 未决策：显示审批按钮（阻止冒泡，避免与可点击头部重复触发）

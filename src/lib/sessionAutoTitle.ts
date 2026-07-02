@@ -237,3 +237,52 @@ export async function autoNameSessionFromPrompt({
   inFlightAutoTitleBySessionId.set(trimmedSessionId, naming);
   return naming;
 }
+
+/**
+ * 手动触发的「AI 重命名」：与 autoNameSessionFromPrompt 不同，它由用户主动点击触发，
+ * 因此刻意**绕过**「已有标题就跳过」的检查（用户就是想重新命名已命名的会话），
+ * 也不受 autoTopicNaming 开关限制。AI 失败时降级为本地 fallback（截取首行）。
+ * 返回最终写入的标题；无可用 prompt 或彻底失败时返回 null。
+ */
+export async function renameSessionWithAI({
+  sessionId,
+  prompt,
+}: {
+  sessionId: string;
+  prompt: string;
+}): Promise<string | null> {
+  const trimmedSessionId = sessionId.trim();
+  const trimmedPrompt = prompt.trim();
+  if (!trimmedSessionId || !trimmedPrompt) {
+    return null;
+  }
+
+  const { api } = await import('./api');
+
+  let title = '';
+  try {
+    title = sanitizeGeneratedSessionTitle(
+      await generateSessionTitleFromPrompt(trimmedPrompt)
+    );
+  } catch (error) {
+    console.warn('[SessionAutoTitle] Manual AI rename failed, using local fallback:', error);
+    title = generateFallbackSessionTitleFromPrompt(trimmedPrompt);
+  }
+
+  if (!title) {
+    title = generateFallbackSessionTitleFromPrompt(trimmedPrompt);
+  }
+
+  if (!title) {
+    return null;
+  }
+
+  await setSessionTitleWithRetry(api, trimmedSessionId, title);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('session-title-changed', {
+      detail: { sessionId: trimmedSessionId, title },
+    }));
+  }
+
+  return title;
+}

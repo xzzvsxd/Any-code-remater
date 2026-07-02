@@ -27,6 +27,7 @@ import {
   Files,
   Download,
   Pencil,
+  Wand2,
   GripVertical,
   Loader2,
 } from 'lucide-react';
@@ -166,6 +167,8 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
   const [busy, setBusy] = useState(false);
   // 会话自定义标题映射（{session_id: title}），用于覆盖首条消息派生的默认名
   const [sessionTitles, setSessionTitles] = useState<Record<string, string>>({});
+  // 正在进行 AI 重命名的会话 id（用于菜单项 loading 态与防重复触发）
+  const [aiRenamingSessionId, setAiRenamingSessionId] = useState<string | null>(null);
   // 会话自定义排序（{ "engine:project_id": [session_id...] }）
   const [sessionOrder, setSessionOrder] = useState<Record<string, string[]>>({});
   // 项目手动拖拽顺序（项目 id 列表）；非空即"用户已手动排序"，锁定顺序、不再自动置顶。
@@ -714,6 +717,58 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     }
   }, [t]);
 
+  const aiRenameSession = useCallback(async (session: Session) => {
+    if (aiRenamingSessionId) return; // 防重复触发
+    setAiRenamingSessionId(session.id);
+    try {
+      const { renameSessionWithAI } = await import('@/lib/sessionAutoTitle');
+
+      // 取用于生成标题的 prompt：优先列表已带的首条消息；缺失或为占位则回退读会话历史首条用户消息。
+      const placeholderPattern = /^(codex session|new session)$/i;
+      let prompt = (session.first_message || '').trim();
+      if (!prompt || placeholderPattern.test(prompt)) {
+        try {
+          const engine = (session.engine || 'claude') as 'claude' | 'codex' | 'gemini';
+          const history = await api.loadSessionHistory(
+            session.id,
+            session.project_id,
+            engine === 'gemini' ? undefined : engine,
+          );
+          const firstUser = Array.isArray(history)
+            ? history.find((m: any) => m?.role === 'user' || m?.type === 'user')
+            : null;
+          const content = firstUser?.content ?? firstUser?.message?.content;
+          if (typeof content === 'string') {
+            prompt = content.trim() || prompt;
+          } else if (Array.isArray(content)) {
+            const textPart = content.find((p: any) => typeof p?.text === 'string');
+            if (textPart?.text) prompt = String(textPart.text).trim() || prompt;
+          }
+        } catch (e) {
+          console.warn('[Workbench] AI rename: load history for prompt failed:', e);
+        }
+      }
+
+      if (!prompt) {
+        toast(t('workbench.ctx.aiRenameNoContent'), 'error');
+        return;
+      }
+
+      const title = await renameSessionWithAI({ sessionId: session.id, prompt });
+      if (title) {
+        setSessionTitles((prev) => ({ ...prev, [session.id]: title }));
+        toast(t('workbench.ctx.aiRenamed', { title }));
+      } else {
+        toast(t('workbench.ctx.aiRenameFailed'), 'error');
+      }
+    } catch (e) {
+      console.error('[Workbench] AI rename failed:', e);
+      toast(t('workbench.ctx.aiRenameFailed'), 'error');
+    } finally {
+      setAiRenamingSessionId(null);
+    }
+  }, [aiRenamingSessionId, t]);
+
   const duplicateSession = useCallback(async (session: Session) => {
     try {
       const engine = (session.engine || 'claude') as 'claude' | 'codex' | 'gemini';
@@ -886,6 +941,8 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
         onExportSession={exportSessionAs}
         sessionTitles={sessionTitles}
         onRenameSession={renameSession}
+        onAIRenameSession={aiRenameSession}
+        aiRenamingSessionId={aiRenamingSessionId}
         sessionOrder={sessionOrder}
         onReorderSessions={reorderSessions}
         onReorderProjects={reorderProjects}
@@ -1130,6 +1187,8 @@ interface ProjectTreeProps {
   onExportSession: (session: Session, format: ExportFormat) => void;
   sessionTitles: Record<string, string>;
   onRenameSession: (session: Session, title: string) => void;
+  onAIRenameSession: (session: Session) => void;
+  aiRenamingSessionId: string | null;
   sessionOrder: Record<string, string[]>;
   onReorderSessions: (engine: string, projectId: string, orderedIds: string[]) => void;
   onReorderProjects: (orderedIds: string[]) => void;
@@ -1145,7 +1204,7 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
   openTabSessionsByProjectId, draftSessionsByProjectId, runningCountByProjectId,
   onToggleProject, onOpenSession,
   onNewSession, onNewSessionInProject, onRefreshProject, onOpenInExplorer, onCopyText, onDuplicateSession, onExportSession,
-  sessionTitles, onRenameSession, sessionOrder, onReorderSessions, onReorderProjects,
+  sessionTitles, onRenameSession, onAIRenameSession, aiRenamingSessionId, sessionOrder, onReorderSessions, onReorderProjects,
   onRequestDeleteSession, onRequestRemoveProject, onRequestPurgeProject,
 }) => {
   const { t } = useTranslation();
@@ -1498,6 +1557,15 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
                                   setRenamingId(session.id);
                                 }}>
                                   <Pencil className="h-4 w-4 mr-2" />{t('workbench.ctx.rename')}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  disabled={aiRenamingSessionId === session.id}
+                                  onClick={() => onAIRenameSession(session)}
+                                >
+                                  {aiRenamingSessionId === session.id
+                                    ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                    : <Wand2 className="h-4 w-4 mr-2" />}
+                                  {t('workbench.ctx.aiRename')}
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem

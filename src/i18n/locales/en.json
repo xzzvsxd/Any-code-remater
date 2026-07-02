@@ -1112,6 +1112,7 @@
     "viewApprovalDialog": "View Approval Dialog",
     "planApprovedExecuting": "Plan approved, Claude is executing",
     "planRejectedReplanning": "Plan rejected, Claude is re-planning",
+    "planWaitingApproval": "Waiting for your approval in the dialog…",
     "viewFullPlanAndApprove": "View Full Plan and Approve",
     "questionsCount": "({{count}} questions)",
     "multipleChoice": "Multiple Choice",
@@ -1199,6 +1200,10 @@
       "deleteSession": "Delete session",
       "duplicate": "Duplicate session",
       "rename": "Rename",
+      "aiRename": "AI Rename",
+      "aiRenamed": "Renamed to \"{{title}}\"",
+      "aiRenameFailed": "AI rename failed",
+      "aiRenameNoContent": "No session content available to generate a title",
       "exportMd": "Export as Markdown",
       "exportJson": "Export as JSON",
       "exportJsonl": "Export as JSONL",
@@ -1531,13 +1536,28 @@
       "task": "Task",
       "taskoutput": "Task Output",
       "taskstop": "Stop Task",
+      "taskcreate": "Create Task",
+      "taskupdate": "Update Task",
+      "tasklist": "Task List",
+      "taskget": "Get Task",
       "todoread": "Read Todos",
       "todowrite": "Update Todos",
       "toolsearch": "Tool Search",
       "webfetch": "Web Fetch",
       "websearch": "Web Search",
-      "write": "Write"
+      "write": "Write",
+      "submitplan": "Submit Plan"
     }
+  },
+  "taskWidget": {
+    "statusCompleted": "Completed",
+    "statusInProgress": "In Progress",
+    "statusPending": "Pending",
+    "statusDeleted": "Deleted",
+    "newTask": "New Task",
+    "taskLabel": "Task #{{id}}",
+    "viewTaskList": "View task list",
+    "viewTask": "View task #{{id}}"
   },
   "cliIndicator": {
     "escToCancel": "esc to cancel",

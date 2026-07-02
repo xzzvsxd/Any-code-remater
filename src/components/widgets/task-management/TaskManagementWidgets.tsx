@@ -7,6 +7,7 @@
  */
 
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { CheckCircle2, Clock, Circle, Trash2, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -19,11 +20,12 @@ const statusIcons: Record<string, React.ReactNode> = {
   deleted: <Trash2 className="h-4 w-4 text-destructive" />,
 };
 
-const statusLabels: Record<string, string> = {
-  completed: "已完成",
-  in_progress: "进行中",
-  pending: "待处理",
-  deleted: "已删除",
+// 状态 → i18n key，运行时经 t() 本地化，避免硬编码中文导致英文/繁体环境不切换。
+const statusLabelKeys: Record<string, string> = {
+  completed: "taskWidget.statusCompleted",
+  in_progress: "taskWidget.statusInProgress",
+  pending: "taskWidget.statusPending",
+  deleted: "taskWidget.statusDeleted",
 };
 
 // ============================================================================
@@ -48,6 +50,7 @@ export interface TaskListAggregateWidgetProps {
 export const TaskListAggregateWidget: React.FC<TaskListAggregateWidgetProps> = ({
   toolCalls,
 }) => {
+  const { t } = useTranslation();
   const lookup = useTaskSubjectLookup();
 
   return (
@@ -78,7 +81,7 @@ export const TaskListAggregateWidget: React.FC<TaskListAggregateWidgetProps> = (
           return (
             <div key={tc.id || idx} className="flex items-center gap-2 py-0.5 text-xs text-muted-foreground">
               <Circle className="h-3 w-3" />
-              <span>查看任务列表</span>
+              <span>{t('taskWidget.viewTaskList')}</span>
             </div>
           );
         }
@@ -86,7 +89,7 @@ export const TaskListAggregateWidget: React.FC<TaskListAggregateWidgetProps> = (
           return (
             <div key={tc.id || idx} className="flex items-center gap-2 py-0.5 text-xs text-muted-foreground">
               <Circle className="h-3 w-3" />
-              <span>查看任务 #{tc.input?.taskId}</span>
+              <span>{t('taskWidget.viewTask', { id: tc.input?.taskId })}</span>
             </div>
           );
         }
@@ -103,22 +106,25 @@ export const TaskListAggregateWidget: React.FC<TaskListAggregateWidgetProps> = (
 const TaskCreateRow: React.FC<{ subject?: string; description?: string }> = ({
   subject,
   description,
-}) => (
-  <div className="flex items-start gap-2.5 px-3 py-2 rounded-md border bg-card/50">
-    <div className="mt-0.5 shrink-0">
-      <Plus className="h-4 w-4 text-primary" />
+}) => {
+  const { t } = useTranslation();
+  return (
+    <div className="flex items-start gap-2.5 px-3 py-2 rounded-md border bg-card/50">
+      <div className="mt-0.5 shrink-0">
+        <Plus className="h-4 w-4 text-primary" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm leading-snug">{subject || t('taskWidget.newTask')}</p>
+        {description && (
+          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{description}</p>
+        )}
+      </div>
+      <Badge variant="outline" className="text-xs shrink-0 bg-muted/10 text-muted-foreground border-muted/20">
+        {t('taskWidget.statusPending')}
+      </Badge>
     </div>
-    <div className="flex-1 min-w-0">
-      <p className="text-sm leading-snug">{subject || '新任务'}</p>
-      {description && (
-        <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{description}</p>
-      )}
-    </div>
-    <Badge variant="outline" className="text-xs shrink-0 bg-muted/10 text-muted-foreground border-muted/20">
-      {statusLabels.pending}
-    </Badge>
-  </div>
-);
+  );
+};
 
 // ============================================================================
 // TaskUpdate 行
@@ -129,6 +135,7 @@ const TaskUpdateRow: React.FC<{ taskId: string; status?: string; subject?: strin
   status,
   subject,
 }) => {
+  const { t } = useTranslation();
   const displayStatus = status || 'pending';
   return (
     <div className={cn(
@@ -143,7 +150,7 @@ const TaskUpdateRow: React.FC<{ taskId: string; status?: string; subject?: strin
           "text-sm leading-snug",
           displayStatus === "completed" && "line-through text-muted-foreground"
         )}>
-          {subject || `任务 #${taskId}`}
+          {subject || t('taskWidget.taskLabel', { id: taskId })}
         </p>
       </div>
       <Badge variant="outline" className={cn("text-xs shrink-0", {
@@ -152,7 +159,7 @@ const TaskUpdateRow: React.FC<{ taskId: string; status?: string; subject?: strin
         "bg-muted/10 text-muted-foreground border-muted/20": displayStatus === "pending",
         "bg-destructive/10 text-destructive border-destructive/20": displayStatus === "deleted",
       })}>
-        {statusLabels[displayStatus] || displayStatus}
+        {statusLabelKeys[displayStatus] ? t(statusLabelKeys[displayStatus]) : displayStatus}
       </Badge>
     </div>
   );

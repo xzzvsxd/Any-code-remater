@@ -227,6 +227,7 @@ export const ToolCallsGroup: React.FC<ToolCallsGroupProps> = ({
         <CollapsedSummary
           toolCalls={toolCalls}
           getStatusById={getStatusById}
+          onExpand={toggleCollapse}
         />
       ) : (
         <div className="space-y-2 p-4 bg-background">
@@ -258,9 +259,10 @@ export const ToolCallsGroup: React.FC<ToolCallsGroupProps> = ({
 interface CollapsedSummaryProps {
   toolCalls: ToolCall[];
   getStatusById: (toolUseId?: string | null) => 'pending' | 'success' | 'error';
+  onExpand?: () => void;
 }
 
-const CollapsedSummary: React.FC<CollapsedSummaryProps> = ({ toolCalls, getStatusById }) => {
+const CollapsedSummary: React.FC<CollapsedSummaryProps> = ({ toolCalls, getStatusById, onExpand }) => {
   const { t } = useTranslation();
   return (
     <div className="px-4 py-3 bg-background/50 border-t border-border space-y-2">
@@ -296,7 +298,13 @@ const CollapsedSummary: React.FC<CollapsedSummaryProps> = ({ toolCalls, getStatu
         <div className="text-xs text-muted-foreground pl-5">{t('tools.moreTools', { count: toolCalls.length - 3 })}</div>
       )}
 
-      <div className="text-[10px] text-muted-foreground/70 pt-1">{t('tools.clickToExpand')}</div>
+      <button
+        type="button"
+        onClick={onExpand}
+        className="text-[10px] text-muted-foreground/70 pt-1 hover:text-foreground transition-colors cursor-pointer text-left w-full"
+      >
+        {t('tools.clickToExpand')}
+      </button>
     </div>
   );
 };

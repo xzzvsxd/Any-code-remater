@@ -770,6 +770,37 @@ export function initializeToolRegistry(): void {
       })),
       description: '用户问题询问工具',
     },
+
+    // ── askuser MCP 桥接工具：会话流内富渲染 + 状态回显 ──
+    // 这两个工具名带 mcp__ 前缀，若不精确注册会被通用 mcp 分支（priority 10）以 JSON 兜底渲染。
+    // 精确名匹配优先级最高（见 toolRegistry.getRenderer），故此处直接复用现有富渲染卡片。
+    // 交互（回答/审批）统一由后端事件驱动的弹窗负责，卡片以 bridgeMode 只做展示 + 状态回显，避免双弹。
+
+    // mcp__askuser__ask_user - 阻塞式提问
+    {
+      name: 'mcp__askuser__ask_user',
+      render: createToolAdapter(AskUserQuestionWidget, (props) => ({
+        questions: normalizeQuestions(props.input?.questions ?? props.input?.question ?? props.input),
+        answers: normalizeAnswers(props.input?.answers || props.result?.content?.answers),
+        result: props.result,
+        toolId: props.toolId,
+        bridgeMode: true,
+      })),
+      description: '用户提问（阻塞式 MCP）',
+    },
+
+    // mcp__askuser__submit_plan - 阻塞式计划审批
+    {
+      name: 'mcp__askuser__submit_plan',
+      render: createToolAdapter(PlanModeWidget, (props) => ({
+        action: 'exit' as const,
+        plan: props.input?.plan || props.input?.content || '',
+        result: props.result,
+        toolId: props.toolId,
+        bridgeMode: true,
+      })),
+      description: '计划审批（阻塞式 MCP）',
+    },
   ];
 
   // 批量注册所有工具

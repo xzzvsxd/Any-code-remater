@@ -22,6 +22,10 @@ const TOOL_NAME_ALIASES: Record<string, string> = {
   shellcommand: 'bash',
   taskoutput: 'taskoutput',
   taskstop: 'taskstop',
+  taskcreate: 'taskcreate',
+  taskupdate: 'taskupdate',
+  tasklist: 'tasklist',
+  taskget: 'taskget',
   todoread: 'todoread',
   todowrite: 'todowrite',
   toolsearch: 'toolsearch',
@@ -50,6 +54,10 @@ const TOOL_NAME_FALLBACKS: Record<string, string> = {
   task: 'Task',
   taskoutput: 'Task Output',
   taskstop: 'Stop Task',
+  taskcreate: 'Create Task',
+  taskupdate: 'Update Task',
+  tasklist: 'Task List',
+  taskget: 'Get Task',
   todoread: 'Read Todos',
   todowrite: 'Update Todos',
   toolsearch: 'Tool Search',
@@ -72,6 +80,15 @@ export const getLocalizedToolName = (
   t: Translate,
 ): string => {
   if (!toolName) return '';
+
+  // askuser MCP 桥接的两个内置工具：虽带 mcp__ 前缀，但属于本应用自有能力，需本地化显示。
+  const lowerName = toolName.toLowerCase();
+  if (lowerName === 'mcp__askuser__ask_user') {
+    return t('tool.names.askuserquestion', TOOL_NAME_FALLBACKS.askuserquestion);
+  }
+  if (lowerName === 'mcp__askuser__submit_plan') {
+    return t('tool.names.submitplan', 'Submit Plan');
+  }
 
   if (toolName.startsWith('mcp__')) {
     return toolName;

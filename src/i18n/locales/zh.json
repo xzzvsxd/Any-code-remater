@@ -1112,6 +1112,7 @@
     "viewApprovalDialog": "查看审批对话框",
     "planApprovedExecuting": "计划已批准，Claude 已开始执行",
     "planRejectedReplanning": "计划已拒绝，Claude 正在重新规划",
+    "planWaitingApproval": "等待你在弹窗中审批该计划…",
     "viewFullPlanAndApprove": "查看完整计划并审批",
     "questionsCount": "({{count}} 个问题)",
     "multipleChoice": "多选",
@@ -1231,6 +1232,10 @@
       "deleteSession": "删除会话",
       "duplicate": "复制会话",
       "rename": "重命名",
+      "aiRename": "AI 重命名",
+      "aiRenamed": "已重命名为「{{title}}」",
+      "aiRenameFailed": "AI 重命名失败",
+      "aiRenameNoContent": "无可用会话内容，无法生成标题",
       "exportMd": "导出为 Markdown",
       "exportJson": "导出为 JSON",
       "exportJsonl": "导出为 JSONL",
@@ -1525,13 +1530,28 @@
       "task": "任务",
       "taskoutput": "任务输出",
       "taskstop": "停止任务",
+      "taskcreate": "创建任务",
+      "taskupdate": "更新任务",
+      "tasklist": "任务列表",
+      "taskget": "查看任务",
       "todoread": "读取待办",
       "todowrite": "更新待办",
       "toolsearch": "工具搜索",
       "webfetch": "获取网页",
       "websearch": "网络搜索",
-      "write": "写入"
+      "write": "写入",
+      "submitplan": "提交计划"
     }
+  },
+  "taskWidget": {
+    "statusCompleted": "已完成",
+    "statusInProgress": "进行中",
+    "statusPending": "待处理",
+    "statusDeleted": "已删除",
+    "newTask": "新任务",
+    "taskLabel": "任务 #{{id}}",
+    "viewTaskList": "查看任务列表",
+    "viewTask": "查看任务 #{{id}}"
   },
   "cliIndicator": {
     "escToCancel": "esc 取消",
