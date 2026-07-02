@@ -104,7 +104,11 @@ const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
 export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { t } = useTranslation();
   const [projects, setProjects] = useState<Project[]>([]);
-  const [manualProjects, setManualProjects] = useState<Project[]>([]);
+  // manualProjects 仅用于触发重渲染；所有读取一律走 manualProjectsRef 最新值。
+  // loadProjects 的异步 .then 若读闭包捕获的 state，会是发起时的旧值，导致
+  // 「新建项目后被迟到的旧刷新覆盖抹掉」的竞态，故读取统一改用 ref。
+  const [, setManualProjects] = useState<Project[]>([]);
+  const manualProjectsRef = useRef<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   // 按项目 id 缓存会话，支持多项目同时展开。selectProject/refreshSessions/loadProjectSessions 写入。
@@ -119,6 +123,20 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   const refreshPromiseRef = useRef<Promise<void> | null>(null);
   const sessionLoadRequestRef = useRef(0);
   const loading = projectsLoading || sessionsLoading || mutationLoading;
+
+  // 统一写入 manualProjects：同步更新 state 与 ref，保证异步回调始终能读到最新手动项目列表。
+  const updateManualProjects = useCallback(
+    (updater: Project[] | ((prev: Project[]) => Project[])) => {
+      setManualProjects(prev => {
+        const next = typeof updater === 'function'
+          ? (updater as (prev: Project[]) => Project[])(prev)
+          : updater;
+        manualProjectsRef.current = next;
+        return next;
+      });
+    },
+    [],
+  );
 
   const normalizeProjectPath = useCallback((path: string) => {
     return path ? path.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase() : '';
@@ -240,7 +258,8 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       setError(null);
       const list = await api.listProjects();
       const sortedList = [...list].sort((a, b) => b.created_at - a.created_at);
-      setProjects(mergeProjects(sortedList, manualProjects));
+      // 读 ref 最新值而非闭包捕获值，避免迟到回调用旧手动项目列表覆盖新建项目。
+      setProjects(mergeProjects(sortedList, manualProjectsRef.current));
 
       getCachedCodexSessions()
         .then(codexSessions => {
@@ -265,7 +284,8 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             return timeB - timeA;
           });
 
-          setProjects(mergeProjects(resortedList, manualProjects));
+          // 同上：合并当下最新的手动项目，防止竞态抹除。
+          setProjects(mergeProjects(resortedList, manualProjectsRef.current));
         })
         .catch(e => {
           console.warn("Failed to refresh Codex activity for project sorting:", e);
@@ -276,7 +296,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     } finally {
       setProjectsLoading(false);
     }
-  }, [getCachedCodexSessions, manualProjects, mergeProjects, normalizeProjectPath, t]);
+  }, [getCachedCodexSessions, mergeProjects, normalizeProjectPath, t]);
 
   const selectProject = useCallback(async (project: Project) => {
     const requestId = sessionLoadRequestRef.current + 1;
@@ -373,12 +393,13 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       const matchedProject = findProjectByPath(latestProjects, projectPath);
       const projectToRegister = matchedProject ?? buildVirtualProject(projectPath);
 
-      // 使用手动项目列表保留“尚未产生会话”的项目卡片
+      // 使用手动项目列表保留“尚未产生会话”的项目卡片。读 ref 最新值，避免与并发刷新竞态。
+      const currentManualProjects = manualProjectsRef.current;
       const nextManualProjects = matchedProject
-        ? manualProjects.filter(project => normalizeProjectPath(project.path) !== normalizeProjectPath(projectPath))
-        : mergeProjects([projectToRegister], manualProjects);
+        ? currentManualProjects.filter(project => normalizeProjectPath(project.path) !== normalizeProjectPath(projectPath))
+        : mergeProjects([projectToRegister], currentManualProjects);
 
-      setManualProjects(nextManualProjects);
+      updateManualProjects(nextManualProjects);
       setProjects(prevProjects => mergeProjects([projectToRegister], mergeProjects(prevProjects, nextManualProjects)));
       sessionLoadRequestRef.current += 1;
       setSelectedProject(null);
@@ -393,7 +414,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     } finally {
       setMutationLoading(false);
     }
-  }, [buildVirtualProject, findProjectByPath, manualProjects, mergeProjects, normalizeProjectPath, projects, t]);
+  }, [buildVirtualProject, findProjectByPath, mergeProjects, normalizeProjectPath, projects, t, updateManualProjects]);
 
   const refreshSessions = useCallback(async (options?: { silent?: boolean }) => {
     if (selectedProject) {
@@ -463,7 +484,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   const deleteProject = useCallback(async (project: Project) => {
     try {
       if (project.id.startsWith('virtual:')) {
-        setManualProjects(prevProjects =>
+        updateManualProjects(prevProjects =>
           prevProjects.filter(item => normalizeProjectPath(item.path) !== normalizeProjectPath(project.path))
         );
         setProjects(prevProjects =>
@@ -502,7 +523,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     } finally {
       setMutationLoading(false);
     }
-  }, [loadProjects, normalizeProjectPath, selectedProject]);
+  }, [loadProjects, normalizeProjectPath, selectedProject, updateManualProjects]);
 
   const clearSelection = useCallback(() => {
     sessionLoadRequestRef.current += 1;
