@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
+  isClaudeResultMessage,
+  isPotentialClaudeGlobalControlLine,
   resolveClaudeExecutionMode,
   shouldAcceptClaudeGlobalMessage,
   shouldAttachClaudeSessionListeners,
@@ -85,6 +87,27 @@ describe('Claude execution routing', () => {
         cwd: '/home/me/work/project',
       },
     })).toBe(false);
+  });
+
+  test('accepts current-tab result control messages after session listeners are attached', () => {
+    expect(shouldAcceptClaudeGlobalMessage({
+      currentTabId: 'tab-1',
+      eventTabId: 'tab-1',
+      hasAttachedSessionListeners: true,
+      currentSessionId: 'claude-session',
+      message: {
+        type: 'result',
+        session_id: 'claude-session',
+      },
+    })).toBe(true);
+  });
+
+  test('detects Claude result lines as global control lines for completion self-healing', () => {
+    expect(isClaudeResultMessage({ type: 'result' })).toBe(true);
+    expect(isClaudeResultMessage({ type: 'assistant' })).toBe(false);
+    expect(isPotentialClaudeGlobalControlLine('{"type":"result","subtype":"success"}')).toBe(true);
+    expect(isPotentialClaudeGlobalControlLine('{"type":"system","subtype":"init"}')).toBe(true);
+    expect(isPotentialClaudeGlobalControlLine('{"type":"assistant","message":{}}')).toBe(false);
   });
 
   test('attaches session listeners for an existing resumed session even when the init sid matches currentSessionId', () => {

@@ -28,7 +28,13 @@ import { resolveInitialCancelSessionId } from '@/lib/cancelChannel';
 import { persistUiOnlySessionMessage } from '@/lib/uiOnlySessionEvents';
 import { normalizeStreamLines, AsyncQueue, consumeYielding } from '@/lib/stream';
 import { safeRandomUUID } from '@/lib/browserCompat';
-import { resolveClaudeExecutionMode, shouldAcceptClaudeGlobalMessage, shouldAttachClaudeSessionListeners } from '@/lib/claudeExecutionRouting';
+import {
+  isClaudeResultMessage,
+  isPotentialClaudeGlobalControlLine,
+  resolveClaudeExecutionMode,
+  shouldAcceptClaudeGlobalMessage,
+  shouldAttachClaudeSessionListeners,
+} from '@/lib/claudeExecutionRouting';
 import { resolveExecutionRunTabId } from '@/lib/executionRunTabId';
 import { createTerminalEventGate } from '@/lib/terminalEventGate';
 import { createCrossChannelDuplicateGuard } from '@/lib/stream/crossChannelDuplicateGuard';
@@ -1497,11 +1503,16 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             // 回调只逐行入队（同步、瞬时返回），真正处理放到消费循环里，不阻塞 event loop。
             for (const line of normalizeStreamLines(evt.payload)) {
               claudeTaskQueue.enqueue(async () => {
-                await handleStreamMessage(line, 'session', userInputTranslation || undefined);
+                const message = await handleStreamMessage(line, 'session', userInputTranslation || undefined);
+                if (!message) return;
+                if (isClaudeResultMessage(message)) {
+                  await processComplete();
+                  return;
+                }
 
                 // Handle user message recording in session-specific listener
                 try {
-                  const msg = JSON.parse(line) as ClaudeStreamMessage;
+                  const msg = message;
 
                   // 在收到第一条 user 消息后记录
                   if (msg.type === 'user' && !hasRecordedPrompt && isUserInitiated) {
@@ -1587,15 +1598,15 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           payload: string,
           source: 'global' | 'session',
           currentTranslationResult?: TranslationResult,
-        ) {
+        ): Promise<ClaudeStreamMessage | null> {
           try {
             // Don't process if component unmounted
-            if (!isMountedRef.current) return;
+            if (!isMountedRef.current) return null;
 
             // 🔧 FIX: Deduplicate only global/session overlap; identical same-channel deltas are valid.
             const messageId = getClaudeMessageId(payload);
             if (!claudeDuplicateGuard.shouldProcess(messageId, source)) {
-              return;
+              return null;
             }
 
             // Store raw JSONL
@@ -1605,9 +1616,11 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
             // Use the shared translation function for consistency
             await processMessageWithTranslation(message, payload, currentTranslationResult);
+            return message;
 
           } catch (err) {
             console.error('Failed to parse message:', err, payload);
+            return null;
           }
         }
 
@@ -1721,7 +1734,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
             // 不可能是 init 的行直接跳过，省掉每条消息一次入队/解析/去重开销（与最终判定语义等价）。
             // Codex/Gemini 的 global 回调在拿到 sessionId 后直接 return，Claude 因 plan/continue/resume
             // 可能从 global init 切换 session_id，不能整体 return，故按行预筛保留 init 放行能力。
-            if (hadAttachedSessionListenersAtReceive && !messagePayload.includes('init')) {
+            if (hadAttachedSessionListenersAtReceive && !isPotentialClaudeGlobalControlLine(messagePayload)) {
               continue;
             }
 
@@ -1742,7 +1755,12 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
                 // Always process the message if we haven't established a session yet
                 // Or if it is the init message
-                await handleStreamMessage(messagePayload, 'global', userInputTranslation || undefined);
+                const message = await handleStreamMessage(messagePayload, 'global', userInputTranslation || undefined);
+                if (!message) return;
+                if (isClaudeResultMessage(message)) {
+                  await processComplete();
+                  return;
+                }
 
                 if (msg.type === 'system' && msg.subtype === 'init' && msg.session_id) {
                   // Cache model display name from init message for dynamic model selector

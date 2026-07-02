@@ -21,6 +21,15 @@ const normalizeSessionId = (sessionId: NullableSessionId): string | null => {
   return trimmed ? trimmed : null;
 };
 
+export function isClaudeResultMessage(message: ClaudeGlobalMessageLike | unknown): boolean {
+  return Boolean(message && typeof message === 'object' && (message as ClaudeGlobalMessageLike).type === 'result');
+}
+
+export function isPotentialClaudeGlobalControlLine(line: string): boolean {
+  return /"type"\s*:\s*"result"/.test(line)
+    || (/"type"\s*:\s*"system"/.test(line) && /"subtype"\s*:\s*"init"/.test(line));
+}
+
 export function resolveClaudeExecutionMode(input: ClaudeExecutionModeInput): ClaudeExecutionMode {
   const sessionId = normalizeSessionId(input.effectiveSessionId)
     || normalizeSessionId(input.extractedSessionId)
@@ -58,6 +67,14 @@ export function shouldAcceptClaudeGlobalMessage(input: ClaudeGlobalRoutingInput)
   }
 
   if (!input.hasAttachedSessionListeners) {
+    return true;
+  }
+
+  // `result` is the authoritative end-of-turn marker in Claude stream-json.
+  // Keep it available on the global fallback channel even after session
+  // listeners are attached, so the UI can self-heal if the paired
+  // claude-complete event or session-specific event is missed.
+  if (isClaudeResultMessage(input.message)) {
     return true;
   }
 

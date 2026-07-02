@@ -15,4 +15,10 @@ describe('prompt execution terminal event safety', () => {
     const terminalGuardUsages = promptExecutionSource.match(/terminalEventGate\.tryStart\(/g) ?? [];
     expect(terminalGuardUsages.length).toBeGreaterThanOrEqual(6);
   });
+
+  test('self-heals Claude completion from result stream messages, not only claude-complete events', () => {
+    expect(promptExecutionSource).toContain('isClaudeResultMessage');
+    expect(promptExecutionSource).toContain('isPotentialClaudeGlobalControlLine');
+    expect(promptExecutionSource).toMatch(/isClaudeResultMessage\(message\)[\s\S]{0,160}processComplete\(\)/);
+  });
 });
