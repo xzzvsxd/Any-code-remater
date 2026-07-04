@@ -437,6 +437,35 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
     const activeTaskQueues: Array<{ done: () => void }> = [];
 
+    // ── Claude result 软收尾 / 看门狗兜底 ──────────────────────────────
+    // 背景：Claude one-shot 路径下，stdout 的 `result` 行只是「模型本轮文本产出结束」，
+    // 而进程此刻仍在收尾（跑 hook / 写 JSONL / PostToolUse），后端要等 child.wait() 之后
+    // 才 emit 权威的 `claude-complete`。历史实现一见 result 就 processComplete（撕监听器 +
+    // done 队列），导致「窗口显示已结束、停止实时刷新，但后端进程仍在跑、侧栏仍转」。
+    // 修复：result 不再直接收尾，只作为「延迟兜底」——启动看门狗，若 CLAUDE_RESULT_COMPLETE_FALLBACK_MS
+    // 内没等到进程退出的 `claude-complete`（极端：complete 事件丢失/错过），才由看门狗兜底收尾，
+    // 避免退回「永久卡思考中」。正常情况 complete 先到并清掉看门狗，result 仅表示本轮结束。
+    // 声明在 try 外层作用域：catch 分支也要能清理，避免定时器泄漏。
+    const CLAUDE_RESULT_COMPLETE_FALLBACK_MS = 4000;
+    let claudeResultWatchdog: ReturnType<typeof setTimeout> | null = null;
+    const clearClaudeResultWatchdog = () => {
+      if (claudeResultWatchdog !== null) {
+        clearTimeout(claudeResultWatchdog);
+        claudeResultWatchdog = null;
+      }
+    };
+    // result 到达时调用：不立即收尾，仅安排一个延迟兜底。重复调用只保留一个定时器。
+    // 真正的 processComplete 由进程退出的 `claude-complete` 驱动（并在其内清掉本看门狗）。
+    const scheduleClaudeResultFallbackComplete = (runComplete: () => void | Promise<void>) => {
+      if (claudeResultWatchdog !== null) return; // 已安排
+      claudeResultWatchdog = setTimeout(() => {
+        claudeResultWatchdog = null;
+        // 卸载后不再兜底收尾（避免卸载后 setState）；仍在挂载才执行。
+        if (!isMountedRef.current) return;
+        void runComplete();
+      }, CLAUDE_RESULT_COMPLETE_FALLBACK_MS);
+    };
+
     try {
       setIsLoading(true);
       setError(null);
@@ -1506,7 +1535,9 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
                 const message = await handleStreamMessage(line, 'session', userInputTranslation || undefined);
                 if (!message) return;
                 if (isClaudeResultMessage(message)) {
-                  await processComplete();
+                  // result = 本轮文本产出结束，但进程可能仍在收尾。不立即撕监听器/done 队列，
+                  // 只安排延迟兜底：权威收尾由进程退出的 `claude-complete` 驱动（见 scheduleClaudeResultFallbackComplete）。
+                  scheduleClaudeResultFallbackComplete(processComplete);
                   return;
                 }
 
@@ -1628,6 +1659,8 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         // Helper: Process Completion
         // ====================================================================
         const processComplete = async () => {
+          // 权威收尾一旦启动，result 兜底看门狗不再需要（无论本次由 complete 事件还是看门狗触发）。
+          clearClaudeResultWatchdog();
           if (!terminalEventGate.tryStart('complete')) return;
           const completedSessionId = currentSessionId || effectiveSession?.id || claudeSessionId || null;
 
@@ -1682,6 +1715,8 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         };
 
         const processClaudeError = (payload: string) => {
+          // 错误也是终态：清掉 result 兜底看门狗，避免其在错误收尾后再触发一次 processComplete。
+          clearClaudeResultWatchdog();
           if (!terminalEventGate.tryStart('error')) return;
           console.error('Claude error:', payload);
           setError(payload);
@@ -1758,7 +1793,9 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
                 const message = await handleStreamMessage(messagePayload, 'global', userInputTranslation || undefined);
                 if (!message) return;
                 if (isClaudeResultMessage(message)) {
-                  await processComplete();
+                  // result = 本轮文本产出结束，但进程可能仍在收尾。不立即撕监听器/done 队列，
+                  // 只安排延迟兜底：权威收尾由进程退出的 `claude-complete` 驱动（见 scheduleClaudeResultFallbackComplete）。
+                  scheduleClaudeResultFallbackComplete(processComplete);
                   return;
                 }
 
@@ -2153,6 +2190,7 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
         errorMessage
       );
       activeTaskQueues.forEach(queue => queue.done());
+      clearClaudeResultWatchdog();
       resetRuntimeState();
     }
   }, [

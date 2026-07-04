@@ -70,10 +70,14 @@ export function shouldAcceptClaudeGlobalMessage(input: ClaudeGlobalRoutingInput)
     return true;
   }
 
-  // `result` is the authoritative end-of-turn marker in Claude stream-json.
-  // Keep it available on the global fallback channel even after session
-  // listeners are attached, so the UI can self-heal if the paired
-  // claude-complete event or session-specific event is missed.
+  // `result` is the end-of-turn marker in Claude stream-json. Keep it available
+  // on the global fallback channel even after session listeners are attached, so
+  // the UI can still self-heal when the authoritative `claude-complete` (emitted
+  // only when the backend process exits) is missed. Note: receiving `result` no
+  // longer tears down listeners immediately — usePromptExecution now schedules a
+  // deferred fallback (scheduleClaudeResultFallbackComplete) and lets the process
+  // exit event drive the real teardown, so a still-finalizing process is not cut
+  // off mid-stream.
   if (isClaudeResultMessage(input.message)) {
     return true;
   }
