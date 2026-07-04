@@ -17,6 +17,7 @@ import { useTranslation } from "react-i18next";
 import { Search, LogOut, CheckCircle, AlertCircle, Play, RefreshCw, Info, Lightbulb, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { usePlanMode, getPlanId, type PlanStatus } from "@/contexts/PlanModeContext";
+import { resolvePlanResultStatus, type PlanResultStatus } from "@/lib/interactionResultParsing";
 import ReactMarkdown from 'react-markdown';
 
 export interface PlanModeWidgetProps {
@@ -37,20 +38,6 @@ export interface PlanModeWidgetProps {
    * 审批结果以 tool_result 内容为准（回灌文本含「批准」/「拒绝」）。
    */
   bridgeMode?: boolean;
-}
-
-/**
- * 从 bridge 提交的 tool_result 文本判定审批结果。
- * 回灌文本约定：批准含「批准」、拒绝含「拒绝」（见 PlanModeContext.approvePlan/rejectPlan）。
- */
-function resolveBridgePlanStatus(result?: { content?: any; is_error?: boolean }): PlanStatus {
-  if (!result || result.is_error) return 'pending';
-  const text = typeof result.content === 'string'
-    ? result.content
-    : JSON.stringify(result.content ?? '');
-  if (text.includes('批准')) return 'approved';
-  if (text.includes('拒绝')) return 'rejected';
-  return 'pending';
 }
 
 /**
@@ -79,7 +66,7 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
   // 尝试获取 PlanMode Context
   let triggerPlanApproval: ((plan: string, toolId?: string, auto?: boolean) => void) | undefined;
   let getPlanStatus: ((planId: string) => PlanStatus) | undefined;
-  let planStatus: PlanStatus = 'pending';
+  let planStatus: PlanResultStatus = 'pending';
 
   try {
     const planModeContext = usePlanMode();
@@ -97,11 +84,12 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
   // 桥接模式：审批状态改从 tool_result 判定（bridge 用 bridge_${requestId} 存状态，
   // 与本卡片的 plan_tool_${toolId} 键不通，无法直接读取）。
   if (bridgeMode && planStatus === 'pending') {
-    planStatus = resolveBridgePlanStatus(result);
+    planStatus = resolvePlanResultStatus(result?.content, result?.is_error);
   }
 
   const isApproved = planStatus === 'approved';
   const isRejected = planStatus === 'rejected';
+  const isDeferred = planStatus === 'deferred';
   const hasDecision = isApproved || isRejected;
 
   // 自动触发审批对话框（仅在 ExitPlanMode 且有计划内容且未决策时）。
@@ -124,8 +112,10 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
     ? "border-destructive/20 bg-destructive/5"
     : isApproved
       ? "border-green-500/30 bg-green-500/10"  // 已审批：绿色
-      : isRejected
-        ? "border-amber-500/30 bg-amber-500/10"  // 已拒绝：琥珀色
+    : isRejected
+      ? "border-amber-500/30 bg-amber-500/10"  // 已拒绝：琥珀色
+    : isDeferred
+      ? "border-blue-500/20 bg-blue-500/5"  // 暂不决定：蓝色等待
         : isEnter
           ? "border-blue-500/20 bg-blue-500/5"
           : "border-green-500/20 bg-green-500/5";
@@ -134,8 +124,10 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
     ? "bg-destructive/10"
     : isApproved
       ? "bg-green-500/20"
-      : isRejected
-        ? "bg-amber-500/20"
+    : isRejected
+      ? "bg-amber-500/20"
+    : isDeferred
+      ? "bg-blue-500/10"
         : isEnter
           ? "bg-blue-500/10"
           : "bg-green-500/10";
@@ -144,8 +136,10 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
     ? "text-destructive"
     : isApproved
       ? "text-green-600"
-      : isRejected
-        ? "text-amber-600"
+    : isRejected
+      ? "text-amber-600"
+    : isDeferred
+      ? "text-blue-600"
         : isEnter
           ? "text-blue-500"
           : "text-green-500";
@@ -155,16 +149,20 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
     ? t('promptInput.enterPlanMode')
     : isApproved
       ? t('promptInput.planApproved')
-      : isRejected
-        ? t('promptInput.planRejected')
+    : isRejected
+      ? t('promptInput.planRejected')
+    : isDeferred
+      ? t('promptInput.planDeferred', '计划暂未决定')
         : t('promptInput.exitPlanMode');
 
   const description = isEnter
     ? t('promptInput.enterPlanModeDesc')
     : isApproved
       ? t('promptInput.planApprovedDesc')
-      : isRejected
-        ? t('promptInput.planRejectedDesc')
+    : isRejected
+      ? t('promptInput.planRejectedDesc')
+    : isDeferred
+      ? t('promptInput.planDeferredDesc', '用户选择暂不决定，Claude 将暂停等待后续确认或修改意见')
         : t('promptInput.exitPlanModeDesc');
 
   // 手动触发审批：始终放行（auto=false），即便此前已自动弹过。
@@ -179,6 +177,8 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
     ? CheckCircle
     : isRejected
       ? RefreshCw
+    : isDeferred
+      ? Info
       : Icon;
 
   // 未决策的 ExitPlanMode：整个卡片头部可点击触发审批（标题区与操作融为一体）。
@@ -211,6 +211,11 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
             {isRejected && (
               <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-600 font-medium">
                 {t('widget.rejected')}
+              </span>
+            )}
+            {isDeferred && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-600 font-medium">
+                {t('widget.deferred', '暂不决定')}
               </span>
             )}
             {result && !isError && !isExit && !hasDecision && (
@@ -289,6 +294,12 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
                 <div className="flex items-center gap-2 text-xs text-amber-600">
                   <RefreshCw className="h-3.5 w-3.5" />
                   <span>{t('widget.planRejectedReplanning')}</span>
+                </div>
+              ) : isDeferred ? (
+                // 已暂不决定：显示暂停等待标签
+                <div className="flex items-center gap-2 text-xs text-blue-600">
+                  <Info className="h-3.5 w-3.5" />
+                  <span>{t('widget.planDeferredWaiting', '已暂不决定，Claude 将等待后续确认')}</span>
                 </div>
               ) : bridgeMode ? (
                 // 桥接模式未决策：审批交给 bridge 弹窗，卡片仅提示等待状态

@@ -22,6 +22,10 @@ import {
   normalizeAnswers,
   normalizeQuestions,
 } from "@/lib/askUserQuestionUtils";
+import {
+  parseAskUserAnswersFromResultContent,
+  resolveAskUserResultStatus,
+} from "@/lib/interactionResultParsing";
 
 export interface AskUserQuestionWidgetProps {
   /** 问题列表 */
@@ -66,9 +70,27 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
   const isError = result?.is_error;
   const safeQuestions = useMemo(() => normalizeQuestions(questions), [questions]);
   const safeAnswers = useMemo(() => normalizeAnswers(answers), [answers]);
-  // 桥接模式下，tool_result 到达（且非错误）即代表用户已在弹窗中回答。
-  const bridgeAnswered = bridgeMode && !!result && !isError;
-  const hasAnswers = Object.keys(safeAnswers).length > 0 || bridgeAnswered;
+  const resultAnswers = useMemo(
+    () => parseAskUserAnswersFromResultContent(result?.content),
+    [result?.content]
+  );
+  const bridgeResultStatus = useMemo(
+    () => bridgeMode ? resolveAskUserResultStatus(result?.content, isError) : 'pending',
+    [bridgeMode, result?.content, isError]
+  );
+  const bridgeDeferred = bridgeMode && bridgeResultStatus === 'deferred';
+  const parsedAnswers = useMemo(() => {
+    // 如果answers不为空，直接使用
+    if (Object.keys(safeAnswers).length > 0) {
+      return safeAnswers;
+    }
+
+    return resultAnswers;
+  }, [safeAnswers, resultAnswers]);
+  const hasParsedAnswers = Object.keys(parsedAnswers).length > 0;
+  // 桥接模式下，优先用真实解析出的答案；只有非 defer 的未知成功结果才退化为“已回答”。
+  const bridgeAnswered = bridgeMode && bridgeResultStatus === 'answered';
+  const hasAnswers = hasParsedAnswers || bridgeAnswered;
 
   // 折叠状态：已回答时默认折叠，未回答时默认展开
   const [isCollapsed, setIsCollapsed] = useState(hasAnswers);
@@ -115,44 +137,6 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
     triggerQuestionDialog(safeQuestions, toolId, false);
   };
 
-  // 解析answers - 可能在result.content中以字符串格式存储
-  const parsedAnswers = useMemo(() => {
-    // 如果answers不为空，直接使用
-    if (Object.keys(safeAnswers).length > 0) {
-      return safeAnswers;
-    }
-
-    // 尝试从result.content解析
-    if (result?.content) {
-      const content = result.content;
-
-      // 如果content是字符串，尝试解析 "问题？"="答案" 格式
-      if (typeof content === 'string') {
-        const parsed: Record<string, string> = {};
-
-        // 正则：匹配格式 "问题？"="答案"
-        // 注意：问号可能是中文全角？或英文半角?
-        const regex = /"([^"]+[？?])"="([^"]+)"/g;
-        const matches = content.matchAll(regex);
-
-        for (const match of matches) {
-          const question = match[1].trim(); // 问题部分（包含问号）
-          const answer = match[2].trim();   // 答案部分
-          parsed[question] = answer;
-        }
-
-        return parsed;
-      }
-
-      // 如果content.answers存在
-      if (content.answers) {
-        return normalizeAnswers(content.answers);
-      }
-    }
-
-    return {};
-  }, [safeAnswers, result]);
-
   // 构建问题到答案的映射
   const questionAnswerMap = useMemo(() => {
     const map = new Map<string, string | string[]>();
@@ -196,6 +180,8 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
         "rounded-lg border overflow-hidden",
         isError
           ? "border-destructive/20 bg-destructive/5"
+          : bridgeDeferred
+            ? "border-amber-500/20 bg-amber-500/5"
           : hasAnswers
             ? "border-green-500/20 bg-green-500/5"
             : "border-blue-500/20 bg-blue-500/5"
@@ -218,6 +204,8 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
               "h-8 w-8 rounded-full flex items-center justify-center",
               isError
                 ? "bg-destructive/10"
+                : bridgeDeferred
+                  ? "bg-amber-500/15"
                 : hasAnswers
                   ? "bg-green-500/20"
                   : "bg-blue-500/10"
@@ -231,7 +219,7 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
                 )}
               />
             ) : (
-              <HelpCircle className="h-4 w-4 text-blue-500" />
+              <HelpCircle className={cn("h-4 w-4", bridgeDeferred ? "text-amber-600" : "text-blue-500")} />
             )}
           </div>
         </div>
@@ -245,12 +233,18 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
                   "text-xs font-medium",
                   isError
                     ? "text-destructive"
+                    : bridgeDeferred
+                      ? "text-amber-600"
                     : hasAnswers
                       ? "text-green-600"
                       : "text-blue-500"
                 )}
               >
-                {hasAnswers ? t('widget.userAnswered') : t('widget.waitingAnswer')}
+                {bridgeDeferred
+                  ? t('widget.answerDeferred', '暂未回答')
+                  : hasAnswers
+                    ? t('widget.userAnswered')
+                    : t('widget.waitingAnswer')}
               </span>
               {safeQuestions.length > 0 && (
                 <span className="text-xs text-muted-foreground">
@@ -309,6 +303,11 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
               </div>
             );
           })()}
+          {isCollapsed && bridgeDeferred && (
+            <div className="mt-1 text-xs text-muted-foreground truncate">
+              {t('widget.answerDeferredDesc', '用户选择暂时不回答，Claude 将暂停或继续处理不依赖答案的部分')}
+            </div>
+          )}
         </div>
       </div>
 
