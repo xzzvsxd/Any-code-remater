@@ -120,6 +120,9 @@ export const CLAUDE_PRICING = {
 export const CLAUDE_CONTEXT_WINDOWS = {
   // Claude 5 Series
   'claude-fable-5': 1000000,
+  // Sonnet 5 原生自带 1M 上下文（无 [1m] 后缀），必须显式登记，
+  // 否则通用 [1m] 后缀正则抓不到，会误回落到 default=200000。
+  'claude-sonnet-5': 1000000,
   // Claude 4.8 Series
   'claude-opus-4-8': 200000,
   'claude-opus-4-8[1m]': 1000000,
@@ -336,8 +339,10 @@ export const MODEL_ALIASES = {
   'opus-4.5': 'claude-opus-4-5',
   'opus4.1': 'claude-opus-4-1',
   'opus-4.1': 'claude-opus-4-1',
-  'sonnet': 'claude-sonnet-4-6',
+  'sonnet': 'claude-sonnet-5',
   'sonnet1m': 'claude-sonnet-4-6[1m]',
+  'sonnet5': 'claude-sonnet-5',
+  'sonnet-5': 'claude-sonnet-5',
   'sonnet4.6': 'claude-sonnet-4-6',
   'sonnet-4.6': 'claude-sonnet-4-6',
   'sonnet4.5': 'claude-sonnet-4-5',

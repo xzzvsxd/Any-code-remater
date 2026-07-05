@@ -71,6 +71,15 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     cacheWrite: 37.5,
     cacheRead: 3.0
   },
+  // Claude Sonnet 5（原生 1M 上下文）
+  // 标准价 $3/$15（与 4.6 同档）。注：2026-08-31 前有引入价 $2/$10，
+  // 此处先用标准价，避免引入时段判断逻辑（YAGNI）。
+  'claude-sonnet-5': {
+    input: 3.0,
+    output: 15.0,
+    cacheWrite: 3.75,
+    cacheRead: 0.30
+  },
   'claude-sonnet-4.6': {
     input: 3.0,
     output: 15.0,
@@ -462,6 +471,15 @@ export function getPricingForModel(model?: string, engine?: string): ModelPricin
   }
   if (normalized.includes('sonnet') && (normalized.includes('4.6') || normalized.includes('4-6'))) {
     return MODEL_PRICING['claude-sonnet-4.6'];
+  }
+  // Sonnet 5（claude-sonnet-5 / sonnet-5 / sonnet5 / 裸 sonnet 别名）
+  // 注意排除 4.5：用 sonnet-5 结尾或 sonnet5，避免误匹配 claude-sonnet-4-5 的 "-5"。
+  if (
+    normalized === 'sonnet' ||
+    /sonnet-?5\b/.test(normalized) ||
+    /claude-sonnet-5/.test(normalized)
+  ) {
+    return MODEL_PRICING['claude-sonnet-5'];
   }
 
   // Claude 4.5 Series

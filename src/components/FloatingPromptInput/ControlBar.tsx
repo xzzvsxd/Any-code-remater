@@ -13,7 +13,6 @@ import { CodexModelSelector } from "./CodexModelSelector";
 import { CodexReasoningLevelSelector, type CodexReasoningLevel } from "./CodexReasoningLevelSelector";
 import { CodexRateLimitBadge } from "./CodexRateLimitBadge";
 import { GeminiModelSelector } from "./GeminiModelSelector";
-import { ThinkingModeToggle } from "./ThinkingModeToggle";
 import { PlanModeToggle } from "./PlanModeToggle";
 import { SessionToolbar } from "@/components/SessionToolbar";
 import { ContextWindowIndicator } from "@/components/widgets/ContextWindowIndicator";
@@ -35,6 +34,10 @@ interface ControlBarProps {
   selectedThinkingMode: string;
   selectedThinkingEffort?: ThinkingEffort;
   handleToggleThinkingMode: () => void;
+  /** 直接设置思考程度（整合进 ModelSelector 弹窗底部） */
+  onSetThinkingEffort?: (effort: ThinkingEffort | "off") => void;
+  /** 环境变量自定义模型 */
+  customModels?: ModelConfig[];
   isPlanMode?: boolean;
   onTogglePlanMode?: () => void;
   hasMessages: boolean;
@@ -179,7 +182,8 @@ const ControlBarComponent: React.FC<ControlBarProps> = ({
   availableModels,
   selectedThinkingMode,
   selectedThinkingEffort,
-  handleToggleThinkingMode,
+  onSetThinkingEffort,
+  customModels,
   isPlanMode,
   onTogglePlanMode,
   hasMessages,
@@ -278,14 +282,10 @@ const ControlBarComponent: React.FC<ControlBarProps> = ({
             selectedModel={selectedModel}
             onModelChange={setSelectedModel}
             disabled={disabled}
-            availableModels={availableModels}
-          />
-
-          <ThinkingModeToggle
-            isEnabled={selectedThinkingMode === "adaptive"}
-            effort={selectedThinkingEffort}
-            onToggle={handleToggleThinkingMode}
-            disabled={disabled}
+            selectedThinkingMode={selectedThinkingMode}
+            selectedThinkingEffort={selectedThinkingEffort}
+            onSetThinkingEffort={onSetThinkingEffort}
+            extraModels={customModels}
           />
 
           {onTogglePlanMode && (

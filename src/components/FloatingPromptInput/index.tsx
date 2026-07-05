@@ -4,8 +4,7 @@ import { useTranslation } from "react-i18next";
 import { ArrowDown, LoaderCircle, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FloatingPromptInputProps, FloatingPromptInputRef, ThinkingMode, ThinkingEffort, ModelType, ModelConfig, type ExecutionStatusInfo, type ExecutionEngineConfig } from "./types";
-import { getModels } from "./constants";
-import { MODEL_NAMES_UPDATED_EVENT } from "@/lib/modelNameParser";
+import { getModels, decodeClaudeModel, encodeClaudeModel } from "./constants";
 import { toClaudeImageMention } from "@/lib/imagePath";
 import { useImageHandling } from "./hooks/useImageHandling";
 import { useFileSelection } from "./hooks/useFileSelection";
@@ -115,15 +114,19 @@ const FloatingPromptInputInner = (
   const { t } = useTranslation();
 
   // Helper function to convert backend model string to frontend ModelType
+  // ModelType 已放宽为 string：完整 model ID（claude-sonnet-5 / claude-opus-4-6[1m]）直接原样保留；
+  // 旧别名与带家族关键字的串交由 decodeClaudeModel 归一化到已知版本，再编码回真实串。
   const parseSessionModel = (modelStr?: string): ModelType | null => {
     if (!modelStr) return null;
+    const raw = modelStr.trim();
+    if (!raw) return null;
 
-    const lowerModel = modelStr.toLowerCase();
-    if (lowerModel.includes("fable")) return "fable";
-    if (lowerModel.includes("opus") && lowerModel.includes("1m")) return "opus1m";
-    if (lowerModel.includes("opus")) return "opus";
-    if (lowerModel.includes("sonnet") && lowerModel.includes("1m")) return "sonnet1m";
-    if (lowerModel.includes("sonnet")) return "sonnet";
+    // 完整 model ID（含可选 [1m] 后缀）直接透传，保留会话原始记忆
+    if (/^claude-/i.test(raw)) return raw;
+
+    // 旧别名 / 模糊串 → 解析到已知版本后重新编码为真实串
+    const decoded = decodeClaudeModel(raw);
+    if (decoded) return encodeClaudeModel(decoded.versionId, decoded.oneMillion);
 
     return null;
   };
@@ -261,28 +264,12 @@ const FloatingPromptInputInner = (
     }
   }, [state.executionEngineConfig, onExecutionEngineConfigChange]);
 
-  // Dynamic model list - initialized with dynamic names from cache
-  const [availableModels, setAvailableModels] = useState<ModelConfig[]>(() => getModels());
+  // 内置模型扁平列表（供发送路径/上下文窗口的 resolveSelectedModelName 兼容消费）。
+  // 新家族数据为静态，无需再监听 MODEL_NAMES_UPDATED_EVENT 动态改名。
+  const availableModels = useMemo<ModelConfig[]>(() => getModels(), []);
 
-  // Listen for model name updates from stream init messages
-  useEffect(() => {
-    const handleModelNamesUpdated = () => {
-      setAvailableModels(prev => {
-        const updated = getModels();
-        // Preserve any custom model that was dynamically added
-        const customModel = prev.find(m => m.id === 'custom');
-        if (customModel) {
-          return [...updated, customModel];
-        }
-        return updated;
-      });
-    };
-
-    window.addEventListener(MODEL_NAMES_UPDATED_EVENT, handleModelNamesUpdated);
-    return () => {
-      window.removeEventListener(MODEL_NAMES_UPDATED_EVENT, handleModelNamesUpdated);
-    };
-  }, []);
+  // 环境变量注入的自定义模型（非内置家族），单独承载并作为"自定义"家族传给选择器。
+  const [customModels, setCustomModels] = useState<ModelConfig[]>([]);
 
   // 🔧 Mac 输入法兼容：追踪 IME 组合输入状态
   const [isComposing, setIsComposing] = useState(false);
@@ -515,24 +502,21 @@ const FloatingPromptInputInner = (
                              envVars.ANTHROPIC_DEFAULT_OPUS_MODEL;
 
           if (customModel && typeof customModel === 'string') {
-            // Check if it's a built-in model ID (fable, sonnet, opus, sonnet1m, opus1m)
-            const isBuiltInModel = ['fable', 'sonnet', 'opus', 'sonnet1m', 'opus1m'].includes(customModel.toLowerCase());
+            // 识别是否为内置模型（旧别名或 claude- 全名）——是则不作为自定义模型
+            const lower = customModel.toLowerCase();
+            const isBuiltInModel =
+              ['fable', 'sonnet', 'opus', 'haiku', 'sonnet1m', 'opus1m'].includes(lower) ||
+              /^claude-/i.test(lower);
 
             if (!isBuiltInModel) {
-              // This is a custom model - add it to the list
+              // 非内置：作为自定义模型，其真实 model 串同时作为 id 与显示名
               const customModelConfig: ModelConfig = {
-                id: "custom" as ModelType,
+                id: customModel as ModelType,
                 name: customModel,
                 description: "Custom model from environment variables",
                 icon: <Sparkles className="h-4 w-4" />
               };
-
-              setAvailableModels(prev => {
-                const hasCustom = prev.some(m => m.id === "custom");
-                if (!hasCustom) return [...prev, customModelConfig];
-                // Update existing custom model if name changed
-                return prev.map(m => m.id === "custom" ? customModelConfig : m);
-              });
+              setCustomModels([customModelConfig]);
             }
           }
         }
@@ -554,15 +538,11 @@ const FloatingPromptInputInner = (
   // Toggle thinking mode - cycle through: off → high → xhigh → low → medium → off
   const EFFORT_CYCLE: (ThinkingEffort | 'off')[] = ['off', 'high', 'xhigh', 'low', 'medium'];
 
-  const handleToggleThinkingMode = useCallback(async () => {
+  // 应用思考模式的底层逻辑（dispatch + localStorage + 后端同步 + 失败回滚）。
+  // toggle（Tab 快捷键）与弹窗内的直接分段选择共用此函数，避免逻辑重复扩散（DRY）。
+  const applyThinkingMode = useCallback(async (nextKey: ThinkingEffort | 'off') => {
     const currentMode = state.selectedThinkingMode;
     const currentEffort = state.selectedThinkingEffort;
-
-    // Find current position in cycle
-    const currentKey = currentMode === 'off' ? 'off' : (currentEffort || 'high');
-    const currentIndex = EFFORT_CYCLE.indexOf(currentKey);
-    const nextIndex = (currentIndex + 1) % EFFORT_CYCLE.length;
-    const nextKey = EFFORT_CYCLE[nextIndex];
 
     const newMode: ThinkingMode = nextKey === 'off' ? 'off' : 'adaptive';
     const newEffort: ThinkingEffort | undefined = nextKey === 'off' ? undefined : nextKey as ThinkingEffort;
@@ -592,6 +572,21 @@ const FloatingPromptInputInner = (
       }
     }
   }, [state.selectedThinkingMode, state.selectedThinkingEffort]);
+
+  // 循环切换（Tab 快捷键）：off → high → xhigh → low → medium → off
+  const handleToggleThinkingMode = useCallback(async () => {
+    const currentMode = state.selectedThinkingMode;
+    const currentEffort = state.selectedThinkingEffort;
+    const currentKey = currentMode === 'off' ? 'off' : (currentEffort || 'high');
+    const currentIndex = EFFORT_CYCLE.indexOf(currentKey);
+    const nextIndex = (currentIndex + 1) % EFFORT_CYCLE.length;
+    await applyThinkingMode(EFFORT_CYCLE[nextIndex]);
+  }, [state.selectedThinkingMode, state.selectedThinkingEffort, applyThinkingMode]);
+
+  // 直接设置思考程度（弹窗内分段选择），传 'off' 关闭
+  const handleSetThinkingEffort = useCallback((effort: ThinkingEffort | 'off') => {
+    void applyThinkingMode(effort);
+  }, [applyThinkingMode]);
 
   // Focus management
   useEffect(() => {
@@ -845,6 +840,8 @@ const FloatingPromptInputInner = (
             selectedThinkingMode={state.selectedThinkingMode}
             selectedThinkingEffort={state.selectedThinkingEffort}
             handleToggleThinkingMode={handleToggleThinkingMode}
+            onSetThinkingEffort={handleSetThinkingEffort}
+            customModels={customModels}
             isPlanMode={isPlanMode}
             onTogglePlanMode={onTogglePlanMode}
             isEnhancing={isEnhancing}
@@ -966,6 +963,8 @@ const FloatingPromptInputInner = (
             selectedThinkingMode={state.selectedThinkingMode}
             selectedThinkingEffort={state.selectedThinkingEffort}
             handleToggleThinkingMode={handleToggleThinkingMode}
+            onSetThinkingEffort={handleSetThinkingEffort}
+            customModels={customModels}
             isPlanMode={isPlanMode}
             onTogglePlanMode={onTogglePlanMode}
             hasMessages={hasMessages}

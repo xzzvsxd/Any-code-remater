@@ -60,8 +60,14 @@ export function isDefaultModel(model: ModelType): boolean {
 }
 
 /**
- * 验证模型类型是否有效
+ * 验证模型类型是否有效。
+ *
+ * ModelType 已放宽为 string，可承载完整 model ID（如 claude-sonnet-5、claude-opus-4-6[1m]）。
+ * 这里接受：旧别名字符串 或 任何以 "claude-" 开头的完整 model ID。
  */
 function isValidModelType(value: string): value is ModelType {
-  return ["fable", "sonnet", "opus", "sonnet1m", "opus1m", "custom"].includes(value);
+  if (["fable", "sonnet", "opus", "haiku", "sonnet1m", "opus1m", "custom"].includes(value)) {
+    return true;
+  }
+  return /^claude-/i.test(value);
 }
