@@ -135,6 +135,29 @@ pub fn build_permission_args(config: &ClaudePermissionConfig) -> Vec<String> {
     args
 }
 
+/// 判断 model 是否为 Claude Code 的「内置别名」。
+///
+/// 内置别名（sonnet/opus/haiku/fable、其 [1m] 变体，以及 default/opusplan 自动模式）
+/// 只能通过 `--model` 参数传递，**不能**作为 `ANTHROPIC_MODEL` 环境变量值
+/// （例如 `ANTHROPIC_MODEL=default` 是非法值）。
+///
+/// 完整自定义模型 ID（如 claude-opus-4-8、第三方模型名）则相反：通过 `ANTHROPIC_MODEL`
+/// 环境变量设置，不加 `--model`。此函数是「参数 vs 环境变量」分流的唯一判据（DRY），
+/// 同时服务于 build_execution_args 与 create_system_command。
+pub fn is_builtin_alias(model: &str) -> bool {
+    matches!(
+        model,
+        "sonnet"
+            | "opus"
+            | "haiku"
+            | "fable"
+            | "sonnet[1m]"
+            | "opus[1m]"
+            | "default"
+            | "opusplan"
+    )
+}
+
 /// 执行参数构建函数
 /// 注意：prompt 不再通过命令行参数传递，而是通过 stdin 管道传递
 /// 这样可以避免操作系统命令行长度限制（Windows ~8KB, Linux/macOS ~128KB-2MB）
@@ -143,12 +166,9 @@ pub fn build_execution_args(config: &ClaudeExecutionConfig, model: &str) -> Vec<
 
     // prompt 通过 stdin 传递，不再作为命令行参数
 
-    // 🔥 修复：仅为内置模型添加 --model 参数
-    // 对于自定义模型（非 sonnet/opus/sonnet[1m]/opus[1m]），通过 ANTHROPIC_MODEL 环境变量设置
-    // 避免命令行参数与环境变量冲突导致发送失败
-    let is_builtin_model =
-        model == "sonnet" || model == "opus" || model == "sonnet[1m]" || model == "opus[1m]";
-    if is_builtin_model {
+    // 🔥 仅为内置别名添加 --model 参数（含 default/opusplan 自动模式）。
+    // 自定义完整模型 ID 走 ANTHROPIC_MODEL 环境变量，避免参数与环境变量冲突。
+    if is_builtin_alias(model) {
         args.push("--model".to_string());
         args.push(model.to_string());
     }

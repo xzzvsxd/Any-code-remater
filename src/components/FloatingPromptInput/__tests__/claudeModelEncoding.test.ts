@@ -4,6 +4,7 @@ import {
   encodeClaudeModel,
   decodeClaudeModel,
   getModelFamilies,
+  isAutoModel,
 } from '../constants';
 
 describe('Claude model encode/decode', () => {
@@ -66,5 +67,25 @@ describe('Claude model encode/decode', () => {
         expect(v.supports1m).toBe(false);
       }
     }
+  });
+});
+
+describe('Claude auto models (default / opusplan)', () => {
+  it('recognizes default and opusplan as auto models', () => {
+    expect(isAutoModel('default')).toBe(true);
+    expect(isAutoModel('opusplan')).toBe(true);
+    expect(isAutoModel('claude-sonnet-5')).toBe(false);
+    expect(isAutoModel('sonnet')).toBe(false);
+    expect(isAutoModel(null)).toBe(false);
+  });
+
+  it('decodes auto models without 1M and preserves the id as versionId', () => {
+    expect(decodeClaudeModel('default')).toEqual({ versionId: 'default', oneMillion: false });
+    expect(decodeClaudeModel('opusplan')).toEqual({ versionId: 'opusplan', oneMillion: false });
+  });
+
+  it('encodes auto models unchanged (no [1m] suffix even if requested)', () => {
+    expect(encodeClaudeModel('default', true)).toBe('default');
+    expect(encodeClaudeModel('opusplan', true)).toBe('opusplan');
   });
 });

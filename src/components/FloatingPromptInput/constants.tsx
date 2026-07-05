@@ -91,6 +91,27 @@ export const CLAUDE_MODEL_FAMILIES: ClaudeModelFamily[] = [
 ];
 
 /**
+ * 自动调配模式（Claude Code 原生别名，只能走 --model，不细分版本/1M）。
+ * - default：清除模型覆盖，由 Claude Code 按账户推荐决定
+ * - opusplan：计划阶段用 Opus，执行阶段自动切 Sonnet
+ */
+export interface ClaudeAutoModel {
+  id: "default" | "opusplan";
+  labelKey: string;
+  descKey: string;
+}
+
+export const CLAUDE_AUTO_MODELS: ClaudeAutoModel[] = [
+  { id: "default", labelKey: "promptInput.autoModelDefault", descKey: "promptInput.autoModelDefaultDesc" },
+  { id: "opusplan", labelKey: "promptInput.autoModelOpusPlan", descKey: "promptInput.autoModelOpusPlanDesc" },
+];
+
+/** 判断一个 model 串是否为自动模式别名 */
+export function isAutoModel(model: string | null | undefined): model is "default" | "opusplan" {
+  return model === "default" || model === "opusplan";
+}
+
+/**
  * 获取 Claude 模型家族列表。
  * 目前为静态数据；保留函数形态以便未来接入缓存/动态型号发现。
  */
@@ -123,6 +144,12 @@ export function decodeClaudeModel(
   if (!model || typeof model !== "string") return null;
   const raw = model.trim();
   if (!raw) return null;
+
+  // 自动模式别名（default/opusplan）：原样作为 versionId 返回，无 1M 概念。
+  // 调用方用 isAutoModel 单独判断，不进入家族/版本解析。
+  if (isAutoModel(raw)) {
+    return { versionId: raw, oneMillion: false };
+  }
 
   // 1M 检测：兼容 [1m] 后缀、-1m/_1m 分隔，以及旧别名无分隔写法（opus1m/sonnet1m）。
   const oneMillion = /\[1m\]|[-_]1m\b|\d?1m$|\b1m\b/i.test(raw);

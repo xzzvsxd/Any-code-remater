@@ -7,7 +7,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
 use crate::commands::permission_config::{
-    build_execution_args, ClaudeExecutionConfig, ClaudePermissionConfig,
+    build_execution_args, is_builtin_alias, ClaudeExecutionConfig, ClaudePermissionConfig,
 };
 #[cfg(windows)]
 use crate::process::JobObject;
@@ -52,6 +52,10 @@ pub(super) fn map_model_to_claude_alias(model: &str) -> String {
         "opus1m" => "opus[1m]".to_string(),
         // Use 'opus' alias which automatically resolves to latest Opus.
         "opus" => "opus".to_string(),
+        // 自动模式别名：default = 由 Claude Code 决定；opusplan = 计划用 Opus / 执行用 Sonnet。
+        // 这两者只能走 --model 参数，透传即可。
+        "default" => "default".to_string(),
+        "opusplan" => "opusplan".to_string(),
         // Pass through any other model names unchanged (for future compatibility)
         _ => model.to_string(),
     }
@@ -205,13 +209,22 @@ fn create_windows_command(
 ) -> Result<Command, String> {
     let mut cmd = create_command_with_env(claude_path);
 
-    // 🔥 修复：设置ANTHROPIC_MODEL环境变量以确保模型选择生效
+    // 🔥 仅为「自定义完整模型 ID」设置 ANTHROPIC_MODEL 环境变量。
+    // 内置别名（sonnet/opus/haiku/fable、[1m] 变体、default/opusplan）已通过 --model 参数传递，
+    // 且 default/opusplan 作为环境变量值非法（ANTHROPIC_MODEL=default 会报错），故此处必须跳过。
     if let Some(model_name) = model {
-        log::info!(
-            "Setting ANTHROPIC_MODEL environment variable to: {}",
-            model_name
-        );
-        cmd.env("ANTHROPIC_MODEL", model_name);
+        if is_builtin_alias(model_name) {
+            log::info!(
+                "Model '{}' is a builtin alias; passed via --model, skipping ANTHROPIC_MODEL env",
+                model_name
+            );
+        } else {
+            log::info!(
+                "Setting ANTHROPIC_MODEL environment variable to: {}",
+                model_name
+            );
+            cmd.env("ANTHROPIC_MODEL", model_name);
+        }
     }
 
     // Note: MAX_THINKING_TOKENS is now controlled via settings.json env field

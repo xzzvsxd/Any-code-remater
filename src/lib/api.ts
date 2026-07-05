@@ -424,8 +424,16 @@ export interface ProviderConfig {
   auth_token?: string;
   api_key?: string;
   api_key_helper?: string;
+  /** @deprecated 旧的单一 model 字段，等价于 lock_model；保留以兼容旧配置 */
   model?: string;
   enable_auto_api_key_helper?: boolean;
+  /** 四个任务槽位自定义模型 → ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS,FABLE}_MODEL，留空用官方默认 */
+  haiku_model?: string;
+  sonnet_model?: string;
+  opus_model?: string;
+  fable_model?: string;
+  /** 强制锁定模型 → ANTHROPIC_MODEL，覆盖整个会话的模型选择（含 default/opusplan） */
+  lock_model?: string;
 }
 
 /**
@@ -437,6 +445,13 @@ export interface CurrentProviderConfig {
   anthropic_api_key?: string;
   anthropic_api_key_helper?: string;
   anthropic_model?: string;
+  anthropic_small_fast_model?: string;
+  api_timeout_ms?: string;
+  claude_code_disable_nonessential_traffic?: string;
+  anthropic_default_haiku_model?: string;
+  anthropic_default_sonnet_model?: string;
+  anthropic_default_opus_model?: string;
+  anthropic_default_fable_model?: string;
 }
 
 /**

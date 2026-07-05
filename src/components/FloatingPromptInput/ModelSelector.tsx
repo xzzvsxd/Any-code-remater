@@ -1,6 +1,6 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronUp, Check, Star, Brain, Sparkles } from "lucide-react";
+import { ChevronUp, Check, Star, Brain, Sparkles, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover } from "@/components/ui/popover";
 import { Switch } from "@/components/ui/switch";
@@ -10,6 +10,8 @@ import {
   getModelFamilies,
   encodeClaudeModel,
   decodeClaudeModel,
+  isAutoModel,
+  CLAUDE_AUTO_MODELS,
   THINKING_MODES,
 } from "./constants";
 import { getDefaultModel, setDefaultModel } from "./defaultModelStorage";
@@ -80,6 +82,10 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     return base;
   }, [extraModels]);
 
+  // 当前是否处于自动模式（default/opusplan）。自动模式绕过家族/版本/1M 逻辑。
+  const isAuto = isAutoModel(selectedModel);
+  const activeAuto = isAuto ? CLAUDE_AUTO_MODELS.find((a) => a.id === selectedModel) : undefined;
+
   // 解析当前选择 → {versionId, oneMillion}
   // 1) 先在全量家族（含自定义）里按真实 id 直接匹配（自定义模型无法被 decodeClaudeModel 识别）
   // 2) 再交给 decodeClaudeModel 处理内置别名/模糊串
@@ -91,7 +97,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     .find((v) => v.id === selectedBase || v.id === selectedModel);
   const decoded = directMatch
     ? { versionId: directMatch.id, oneMillion: oneMillionInSelected }
-    : decodeClaudeModel(selectedModel);
+    : (isAuto ? null : decodeClaudeModel(selectedModel));
   const fallbackVersion = families[0].versions.find((v) => v.isLatest) || families[0].versions[0];
   const activeVersionId = decoded?.versionId || fallbackVersion.id;
   const activeOneMillion = decoded?.oneMillion || false;
@@ -110,12 +116,21 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
   const browsingFamily = families.find((f) => f.key === browsingFamilyKey) || activeFamily;
 
-  // Trigger 上显示的当前选择信息（自定义模型直接用其 label，不加 "Claude " 前缀）
-  const effectiveOneMillion = activeVersion.native1m || (activeVersion.supports1m && activeOneMillion);
-  const triggerLabel = isCustomFamily ? activeVersion.label : `Claude ${activeVersion.label}`;
+  // Trigger 上显示的当前选择信息（自动模式优先；自定义模型直接用其 label，不加 "Claude " 前缀）
+  const effectiveOneMillion = !isAuto && (activeVersion.native1m || (activeVersion.supports1m && activeOneMillion));
+  const triggerLabel = activeAuto
+    ? t(activeAuto.labelKey)
+    : isCustomFamily
+      ? activeVersion.label
+      : `Claude ${activeVersion.label}`;
 
   const thinkingOn = selectedThinkingMode === "adaptive";
   const currentEffortKey: ThinkingEffort | "off" = thinkingOn ? (selectedThinkingEffort || "high") : "off";
+
+  // 选中自动模式
+  const handleSelectAuto = (id: "default" | "opusplan") => {
+    onModelChange(id);
+  };
 
   // 选中某版本：保留当前 1M 意图（若新版本支持），编码后回调
   const handleSelectVersion = (version: ClaudeModelVersion) => {
@@ -151,7 +166,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           disabled={disabled}
           className="h-8 gap-2 min-w-[160px] justify-start border-border/50 bg-background/50 hover:bg-accent/50"
         >
-          {activeFamily.icon}
+          {activeAuto ? <Wand2 className="h-4 w-4" /> : activeFamily.icon}
           <span className="flex-1 text-left truncate">{triggerLabel}</span>
           {effectiveOneMillion && (
             <span className="text-[10px] font-semibold text-primary/80 px-1 rounded bg-primary/10">
@@ -163,7 +178,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
               level={EFFORT_SEGMENTS.find((s) => s.key === currentEffortKey)?.level || 0}
             />
           )}
-          {isDefaultVersion(activeVersion) && (
+          {!isAuto && isDefaultVersion(activeVersion) && (
             <Star className="h-3 w-3 text-yellow-500 fill-yellow-500" />
           )}
           <ChevronUp className="h-4 w-4 opacity-50" />
@@ -174,6 +189,27 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           {/* 标题 */}
           <div className="px-1 pb-2 text-xs text-muted-foreground border-b border-border/50 mb-2">
             选择模型（点击星标设为新会话默认）
+          </div>
+
+          {/* 0) 自动调配模式入口 */}
+          <div className="flex items-center gap-1 mb-2">
+            {CLAUDE_AUTO_MODELS.map((auto) => (
+              <button
+                key={auto.id}
+                onClick={() => handleSelectAuto(auto.id)}
+                title={t(auto.descKey)}
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-xs transition-colors border",
+                  selectedModel === auto.id
+                    ? "bg-accent text-foreground font-medium border-primary/40"
+                    : "text-muted-foreground hover:bg-accent/50 border-transparent"
+                )}
+              >
+                <Wand2 className="h-3.5 w-3.5" />
+                <span className="truncate">{t(auto.labelKey)}</span>
+                {selectedModel === auto.id && <Check className="h-3 w-3 text-primary" />}
+              </button>
+            ))}
           </div>
 
           {/* 1) 家族 Tab */}
@@ -198,7 +234,8 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           {/* 2) 版本列表 */}
           <div className="space-y-0.5">
             {browsingFamily.versions.map((version) => {
-              const isActive = version.id === activeVersionId;
+              // 自动模式下不高亮任何具体版本（activeVersionId 只是 fallback）
+              const isActive = !isAuto && version.id === activeVersionId;
               return (
                 <button
                   key={version.id}
@@ -248,8 +285,8 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
           {/* 3) 底部整合区 */}
           <div className="mt-2 pt-2 border-t border-border/50 space-y-2.5">
-            {/* 1M 上下文开关 */}
-            {activeVersion.native1m ? (
+            {/* 1M 上下文开关（自动模式无 1M 概念，隐藏） */}
+            {!isAuto && (activeVersion.native1m ? (
               <div className="flex items-center justify-between px-1 text-xs">
                 <span className="text-muted-foreground">1M 上下文</span>
                 <span className="text-primary/80 font-medium">原生已启用</span>
@@ -273,7 +310,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                 <span className="text-muted-foreground">1M 上下文</span>
                 <span className="text-muted-foreground/60">该模型不支持</span>
               </div>
-            )}
+            ))}
 
             {/* 思考程度分段 */}
             {onSetThinkingEffort && (

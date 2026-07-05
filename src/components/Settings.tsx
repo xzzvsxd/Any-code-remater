@@ -27,7 +27,7 @@ import { StorageTab } from "./StorageTab";
 import { PromptEnhancementSettings } from "./PromptEnhancementSettings";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useNavigation } from "@/contexts/NavigationContext";
-import ProviderManager from "./ProviderManager";
+import ProviderManagerV2 from "./ProviderManagerV2";
 import CodexProviderManager from "./CodexProviderManager";
 import GeminiProviderManager from "./GeminiProviderManager";
 import { TranslationSettings } from "./TranslationSettings";
@@ -515,7 +515,7 @@ export const Settings: React.FC<SettingsProps> = ({
                   <TabsTrigger value="gemini">{t('settings.geminiProvider')}</TabsTrigger>
                 </TabsList>
                 <TabsContent value="claude">
-                  <ProviderManager onBack={() => {}} />
+                  <ProviderManagerV2 onBack={() => {}} />
                 </TabsContent>
                 <TabsContent value="codex">
                   <CodexProviderManager />

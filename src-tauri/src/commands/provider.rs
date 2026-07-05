@@ -17,6 +17,20 @@ pub struct ProviderConfig {
     pub api_key_helper: Option<String>,
     pub model: Option<String>,
     pub enable_auto_api_key_helper: Option<bool>,
+    // 四个「任务槽位」自定义模型：写入 ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS,FABLE}_MODEL。
+    // 留空则不写该槽位，让 Claude Code 用官方默认解析。serde 默认 None，向后兼容旧 providers.json。
+    #[serde(default)]
+    pub haiku_model: Option<String>,
+    #[serde(default)]
+    pub sonnet_model: Option<String>,
+    #[serde(default)]
+    pub opus_model: Option<String>,
+    #[serde(default)]
+    pub fable_model: Option<String>,
+    // 强制锁定模型：写入 ANTHROPIC_MODEL，覆盖整个会话的模型选择（含选择器里的 default/opusplan）。
+    // 留空则不写，让模型选择器与别名生效。
+    #[serde(default)]
+    pub lock_model: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -30,6 +44,11 @@ pub struct CurrentConfig {
     pub anthropic_small_fast_model: Option<String>,
     pub api_timeout_ms: Option<String>,
     pub claude_code_disable_nonessential_traffic: Option<String>,
+    // 四槽位当前值（读自 settings.json env）
+    pub anthropic_default_haiku_model: Option<String>,
+    pub anthropic_default_sonnet_model: Option<String>,
+    pub anthropic_default_opus_model: Option<String>,
+    pub anthropic_default_fable_model: Option<String>,
 }
 
 // 获取Claude设置文件路径
@@ -273,6 +292,22 @@ pub fn get_current_provider_config() -> Result<CurrentConfig, String> {
             .get("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
+        anthropic_default_haiku_model: env_vars
+            .get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        anthropic_default_sonnet_model: env_vars
+            .get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        anthropic_default_opus_model: env_vars
+            .get("ANTHROPIC_DEFAULT_OPUS_MODEL")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        anthropic_default_fable_model: env_vars
+            .get("ANTHROPIC_DEFAULT_FABLE_MODEL")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
     })
 }
 
@@ -315,6 +350,12 @@ pub async fn switch_provider_config(
     env_obj.remove("ANTHROPIC_BASE_URL");
     env_obj.remove("ANTHROPIC_MODEL");
 
+    // 清理四个任务槽位模型变量
+    env_obj.remove("ANTHROPIC_DEFAULT_HAIKU_MODEL");
+    env_obj.remove("ANTHROPIC_DEFAULT_SONNET_MODEL");
+    env_obj.remove("ANTHROPIC_DEFAULT_OPUS_MODEL");
+    env_obj.remove("ANTHROPIC_DEFAULT_FABLE_MODEL");
+
     // 清理Claude Code 2025的新环境变量
     env_obj.remove("ANTHROPIC_SMALL_FAST_MODEL");
     env_obj.remove("API_TIMEOUT_MS");
@@ -355,12 +396,36 @@ pub async fn switch_provider_config(
         }
     }
 
-    if let Some(model) = &config.model {
-        if !model.is_empty() {
-            env_obj.insert(
-                "ANTHROPIC_MODEL".to_string(),
-                serde_json::Value::String(model.clone()),
-            );
+    // 强制锁定模型：优先用 lock_model；为兼容旧配置，lock_model 为空时回退到旧的 model 字段。
+    // 非空则写 ANTHROPIC_MODEL（覆盖整个会话的模型选择，含选择器里的 default/opusplan）。
+    let lock_model = config
+        .lock_model
+        .as_ref()
+        .filter(|s| !s.is_empty())
+        .or_else(|| config.model.as_ref().filter(|s| !s.is_empty()));
+    if let Some(model) = lock_model {
+        env_obj.insert(
+            "ANTHROPIC_MODEL".to_string(),
+            serde_json::Value::String(model.clone()),
+        );
+    }
+
+    // 四个任务槽位自定义模型：分别写入对应 ANTHROPIC_DEFAULT_*_MODEL。
+    // 让"选 haiku 却用自定义模型"等映射生效；留空则不写，用官方默认。
+    let slot_pairs = [
+        ("ANTHROPIC_DEFAULT_HAIKU_MODEL", &config.haiku_model),
+        ("ANTHROPIC_DEFAULT_SONNET_MODEL", &config.sonnet_model),
+        ("ANTHROPIC_DEFAULT_OPUS_MODEL", &config.opus_model),
+        ("ANTHROPIC_DEFAULT_FABLE_MODEL", &config.fable_model),
+    ];
+    for (env_key, slot) in slot_pairs {
+        if let Some(value) = slot {
+            if !value.is_empty() {
+                env_obj.insert(
+                    env_key.to_string(),
+                    serde_json::Value::String(value.clone()),
+                );
+            }
         }
     }
 
@@ -378,15 +443,18 @@ pub async fn switch_provider_config(
         log::info!("设置第三方API优化参数: timeout=600s, disable_nonessential_traffic=true");
     }
 
-    // 设置小型快速模型（用于代码完成等任务）
-    if let Some(model) = &config.model {
-        if !model.is_empty() {
-            // 对于第三方API，通常使用同一个模型作为fast model
-            env_obj.insert(
-                "ANTHROPIC_SMALL_FAST_MODEL".to_string(),
-                serde_json::Value::String(model.clone()),
-            );
-        }
+    // 设置小型快速模型（用于代码完成等任务）：优先用 haiku 槽位（最贴合"小快"语义），
+    // 否则回退到锁定模型。均为空则不写。
+    let small_fast = config
+        .haiku_model
+        .as_ref()
+        .filter(|s| !s.is_empty())
+        .or(lock_model);
+    if let Some(model) = small_fast {
+        env_obj.insert(
+            "ANTHROPIC_SMALL_FAST_MODEL".to_string(),
+            serde_json::Value::String(model.clone()),
+        );
     }
 
     // apiKeyHelper 根据用户勾选状态决定是否自动生成
@@ -469,6 +537,11 @@ pub async fn clear_provider_config(_app: AppHandle) -> Result<String, String> {
         env_obj.remove("ANTHROPIC_AUTH_TOKEN");
         env_obj.remove("ANTHROPIC_BASE_URL");
         env_obj.remove("ANTHROPIC_MODEL");
+        env_obj.remove("ANTHROPIC_DEFAULT_HAIKU_MODEL");
+        env_obj.remove("ANTHROPIC_DEFAULT_SONNET_MODEL");
+        env_obj.remove("ANTHROPIC_DEFAULT_OPUS_MODEL");
+        env_obj.remove("ANTHROPIC_DEFAULT_FABLE_MODEL");
+        env_obj.remove("ANTHROPIC_SMALL_FAST_MODEL");
 
         log::info!("已清理ANTHROPIC环境变量");
     }
