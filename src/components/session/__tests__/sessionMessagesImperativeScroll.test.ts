@@ -28,10 +28,11 @@ describe('SessionMessages imperative scrolling invariants', () => {
     );
   });
 
-  test('scrollToBottom itself never starts the imperative settle loop while streaming', () => {
+  test('scrollToBottom aligns the virtualizer while streaming but never starts the idle settle loop', () => {
     expect(source).toMatch(
-      /scrollToBottom:\s*\(\)\s*=>\s*{[\s\S]*?if \(messageGroups\.length === 0\) return;[\s\S]*?if \(isLoading\) return;[\s\S]*?rowVirtualizer\.scrollToIndex/,
+      /scrollToBottom:\s*\(\)\s*=>\s*{[\s\S]*?cancelBottomScrollLoop\(\);[\s\S]*?rowVirtualizer\.scrollToIndex\(messageGroups\.length - 1,[\s\S]*?if \(isLoading\) \{[\s\S]*?return;[\s\S]*?let rafId = 0;/,
     );
+    expect(source).not.toMatch(/if \(isLoading\) return;[\s\S]{0,200}rowVirtualizer\.scrollToIndex\(messageGroups\.length - 1/);
   });
 
   test('new imperative scroll commands cancel any pending prompt-navigation retry loop', () => {

@@ -143,7 +143,7 @@ const EngineCountBadges: React.FC<{ project: Project; isCurrent: boolean }> = ({
  */
 export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick }) => {
   const { t } = useTranslation();
-  const { tabs, switchToTab, createNewTab, openSessionInBackground, closeTab } = useTabs();
+  const { tabs, switchToTab, createNewTab, openSessionInBackground, closeTab, updateTabTitle } = useTabs();
   const { projects, selectedProject, sessions, sessionsByProject, sessionsLoading, selectProject, deleteProject, refreshSessions, loadProjectSessions } = useProject();
   const { currentView, navigateTo } = useNavigation();
 
@@ -754,9 +754,18 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
         return;
       }
 
-      const title = await renameSessionWithAI({ sessionId: session.id, prompt });
+      const currentTitle =
+        sessionTitles[session.id]?.trim()
+        || (session.first_message ? getFirstLine(session.first_message) : '')
+        || session.id.slice(0, 8);
+      const title = await renameSessionWithAI({ sessionId: session.id, prompt, currentTitle });
       if (title) {
         setSessionTitles((prev) => ({ ...prev, [session.id]: title }));
+        tabs.forEach((tab) => {
+          if (tab.session?.id === session.id) {
+            updateTabTitle(tab.id, title);
+          }
+        });
         toast(t('workbench.ctx.aiRenamed', { title }));
       } else {
         toast(t('workbench.ctx.aiRenameFailed'), 'error');
@@ -767,7 +776,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     } finally {
       setAiRenamingSessionId(null);
     }
-  }, [aiRenamingSessionId, t]);
+  }, [aiRenamingSessionId, sessionTitles, t, tabs, updateTabTitle]);
 
   const duplicateSession = useCallback(async (session: Session) => {
     try {

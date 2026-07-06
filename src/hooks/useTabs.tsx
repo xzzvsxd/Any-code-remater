@@ -164,6 +164,30 @@ export const TabProvider: React.FC<TabProviderProps> = ({ children }) => {
     };
   }, []);
 
+  useEffect(() => {
+    const handleSessionTitleChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId?: string; title?: string }>).detail;
+      const sessionId = detail?.sessionId?.trim();
+      if (!sessionId) return;
+
+      const title = detail?.title?.trim();
+      if (!title) return;
+
+      setTabs(prev => {
+        let changed = false;
+        const next = prev.map(tab => {
+          if (tab.session?.id !== sessionId || tab.title === title) return tab;
+          changed = true;
+          return { ...tab, title };
+        });
+        return changed ? next : prev;
+      });
+    };
+
+    window.addEventListener('session-title-changed', handleSessionTitleChanged);
+    return () => window.removeEventListener('session-title-changed', handleSessionTitleChanged);
+  }, []);
+
   // ✨ REFACTORED: Compute TabSession with isActive (simplified)
   const tabsWithActive: TabSession[] = useMemo(
     () => tabs.map(tab => ({

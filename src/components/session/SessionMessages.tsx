@@ -471,19 +471,38 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
   useImperativeHandle(ref, () => ({
     scrollToBottom: () => {
       if (messageGroups.length === 0) return;
-      // streaming 时不允许启动这里的长 settle 循环；粘底已由
-      // useSmartAutoScroll 统一接管。这里的早退也防住旧闭包/外部 ref
-      // 误调用 scrollToBottom 后重新制造双 rAF 抢写。
-      if (isLoading) return;
       cancelBottomScrollLoop();
       cancelPromptScrollSearch();
       cancelTopScrollFollowUps();
 
       // Use virtualizer's scrollToIndex for reliable scrolling to the last item
-      rowVirtualizer.scrollToIndex(messageGroups.length - 1, {
-        align: 'end',
-        behavior: 'auto',
-      });
+      const alignLastRowToBottom = () => {
+        rowVirtualizer.scrollToIndex(messageGroups.length - 1, {
+          align: 'end',
+          behavior: 'auto',
+        });
+
+        const el = parentRef.current;
+        if (el) {
+          el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+        }
+      };
+
+      alignLastRowToBottom();
+
+      // streaming 时不启动下面的长 settle 循环；粘底已由
+      // useSmartAutoScroll 统一接管。这里仍做 2 帧虚拟列表对齐，
+      // 解决用户点击“回到最新”后末项尚未渲染/测高导致的反弹。
+      if (isLoading) {
+        bottomScrollRafRef.current = requestAnimationFrame(() => {
+          alignLastRowToBottom();
+          bottomScrollRafRef.current = requestAnimationFrame(() => {
+            alignLastRowToBottom();
+            bottomScrollRafRef.current = 0;
+          });
+        });
+        return;
+      }
 
       // 进入会话/切换会话时的稳定置底：虚拟列表的真实行高是渐进测量的（先用 estimateSize 估算，
       // 再由 ResizeObserver 逐项测真值），totalSize 会在数百毫秒内持续变化。固定两三档 followUp

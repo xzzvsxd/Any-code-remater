@@ -6,6 +6,7 @@ import {
   autoNameSessionFromPrompt,
   generateFallbackSessionTitleFromPrompt,
   isAutoTopicNamingEnabled,
+  renameSessionWithAI,
   sanitizeGeneratedSessionTitle,
 } from '../sessionAutoTitle';
 
@@ -182,5 +183,39 @@ describe('session auto topic naming helpers', () => {
 
     warnSpy.mockRestore();
     vi.useRealTimers();
+  });
+
+  test('manual AI rename retries when Haiku returns the current visible title', async () => {
+    vi.mocked(claudeSDK.sendMessage)
+      .mockResolvedValueOnce({ content: '修复 Linux 卡顿' } as any)
+      .mockResolvedValueOnce({ content: '滚动与模型状态修复' } as any);
+
+    const title = await renameSessionWithAI({
+      sessionId: 'session-manual-rename',
+      prompt: '修复 Linux 卡顿、模型 1M 状态和滚动回弹',
+      currentTitle: '修复 Linux 卡顿',
+    });
+
+    expect(title).toBe('滚动与模型状态修复');
+    expect(claudeSDK.sendMessage).toHaveBeenCalledTimes(2);
+    expect(api.setSessionTitle).toHaveBeenCalledWith(
+      'session-manual-rename',
+      '滚动与模型状态修复',
+    );
+  });
+
+  test('manual AI rename does not report success when every candidate equals the current title', async () => {
+    vi.mocked(claudeSDK.sendMessage).mockResolvedValue({ content: '修复 Linux 卡顿' } as any);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const title = await renameSessionWithAI({
+      sessionId: 'session-same-title',
+      prompt: '修复 Linux 卡顿',
+      currentTitle: '修复 Linux 卡顿',
+    });
+
+    expect(title).toBeNull();
+    expect(api.setSessionTitle).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 });

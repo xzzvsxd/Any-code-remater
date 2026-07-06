@@ -17,12 +17,13 @@ describe('ClaudeCodeSession initial bottom scroll invariants', () => {
     );
   });
 
-  test('does not start imperative bottom settling while streaming is active', () => {
+  test('jump-to-latest always delegates to SessionMessages so streaming uses virtualizer-aware bottom alignment', () => {
     expect(source).toContain('const isLoadingRef = useRef(isLoading);');
     expect(source).toContain('isLoadingRef.current = isLoading;');
     expect(source).toMatch(
-      /const handleJumpToLatest = useCallback\(\(\) => \{[\s\S]*?if \(!isLoadingRef\.current\) \{\s*sessionMessagesRef\.current\?\.scrollToBottom\(\);\s*\}/,
+      /const handleJumpToLatest = useCallback\(\(\) => \{[\s\S]*?setUserScrolled\(false\);[\s\S]*?setShouldAutoScroll\(true\);[\s\S]*?sessionMessagesRef\.current\?\.scrollToBottom\(\);[\s\S]*?\},/,
     );
+    expect(source).not.toContain('el.scrollTop = el.scrollHeight - el.clientHeight');
   });
 
   test('cancels stale initial bottom scroll frames when the session changes', () => {

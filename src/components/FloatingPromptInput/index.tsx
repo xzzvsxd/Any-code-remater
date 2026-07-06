@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { ArrowDown, LoaderCircle, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FloatingPromptInputProps, FloatingPromptInputRef, ThinkingMode, ThinkingEffort, ModelType, ModelConfig, type ExecutionStatusInfo, type ExecutionEngineConfig } from "./types";
-import { getModels, decodeClaudeModel, encodeClaudeModel } from "./constants";
+import { getModels } from "./constants";
 import { toClaudeImageMention } from "@/lib/imagePath";
 import { useImageHandling } from "./hooks/useImageHandling";
 import { useFileSelection } from "./hooks/useFileSelection";
@@ -20,6 +20,11 @@ import { formatDuration } from "@/lib/pricing";
 import { inputReducer, initialState } from "./reducer";
 import { getDefaultModel } from "./defaultModelStorage";
 import { resolveSelectedModelName } from "./resolveModelName";
+import {
+  buildPromptInputModelScopeKey,
+  parseSessionModelForPromptInput,
+  resolvePromptInputModelForScopeChange,
+} from "./modelSessionScope";
 
 // Import sub-components
 import { InputArea } from "./InputArea";
@@ -113,30 +118,12 @@ const FloatingPromptInputInner = (
 ) => {
   const { t } = useTranslation();
 
-  // Helper function to convert backend model string to frontend ModelType
-  // ModelType 已放宽为 string：完整 model ID（claude-sonnet-5 / claude-opus-4-6[1m]）直接原样保留；
-  // 旧别名与带家族关键字的串交由 decodeClaudeModel 归一化到已知版本，再编码回真实串。
-  const parseSessionModel = (modelStr?: string): ModelType | null => {
-    if (!modelStr) return null;
-    const raw = modelStr.trim();
-    if (!raw) return null;
-
-    // 完整 model ID（含可选 [1m] 后缀）直接透传，保留会话原始记忆
-    if (/^claude-/i.test(raw)) return raw;
-
-    // 旧别名 / 模糊串 → 解析到已知版本后重新编码为真实串
-    const decoded = decodeClaudeModel(raw);
-    if (decoded) return encodeClaudeModel(decoded.versionId, decoded.oneMillion);
-
-    return null;
-  };
-
   // Determine initial model:
   // 1. Historical session: use sessionModel
   // 2. New session: use user's default model or fallback to "sonnet"
   const getInitialModel = (): ModelType => {
     // If this is a historical session with saved model, use it
-    const parsedSessionModel = parseSessionModel(sessionModel);
+    const parsedSessionModel = parseSessionModelForPromptInput(sessionModel);
     if (parsedSessionModel) {
       return parsedSessionModel;
     }
@@ -155,6 +142,15 @@ const FloatingPromptInputInner = (
     selectedModel: getInitialModel(),
     executionEngineConfig: externalEngineConfig || initialState.executionEngineConfig,
   });
+  const modelScopeKey = useMemo(
+    () => buildPromptInputModelScopeKey({ sessionId, draftTabId, projectPath }),
+    [draftTabId, projectPath, sessionId],
+  );
+  const lastModelScopeKeyRef = useRef(modelScopeKey);
+  const modelEditedByUserRef = useRef(false);
+  const appliedSessionModelScopeKeyRef = useRef(
+    parseSessionModelForPromptInput(sessionModel) ? modelScopeKey : ''
+  );
 
   // 草稿持久化 Hook - 确保输入内容在页面切换后不丢失；新会话草稿落盘到后端(多草稿)
   const { saveDraft, clearDraft } = useDraftPersistence({
@@ -300,6 +296,7 @@ const FloatingPromptInputInner = (
   }, []);
 
   const setSelectedModel = useCallback((model: ModelType) => {
+    modelEditedByUserRef.current = true;
     dispatch({ type: "SET_MODEL", payload: model });
   }, []);
 
@@ -480,13 +477,46 @@ const FloatingPromptInputInner = (
     }
   }, [state.enableProjectContext]);
 
-  // Restore session model
+  // Restore session model only when the input is reused for a different
+  // session/draft scope.  Same-scope session.model updates can be late runtime
+  // echoes and must not clear the user's 1M selection.
   useEffect(() => {
-    const parsedSessionModel = parseSessionModel(sessionModel);
-    if (parsedSessionModel) {
-      dispatch({ type: "SET_MODEL", payload: parsedSessionModel });
+    const previousScopeKey = lastModelScopeKeyRef.current;
+    const nextScopeKey = modelScopeKey;
+    const parsedSessionModel = parseSessionModelForPromptInput(sessionModel);
+
+    if (previousScopeKey === nextScopeKey) {
+      if (
+        parsedSessionModel
+        && !modelEditedByUserRef.current
+        && appliedSessionModelScopeKeyRef.current !== nextScopeKey
+        && parsedSessionModel !== state.selectedModel
+      ) {
+        appliedSessionModelScopeKeyRef.current = nextScopeKey;
+        dispatch({ type: "SET_MODEL", payload: parsedSessionModel });
+      } else if (parsedSessionModel && appliedSessionModelScopeKeyRef.current !== nextScopeKey) {
+        appliedSessionModelScopeKeyRef.current = nextScopeKey;
+      }
+      return;
     }
-  }, [sessionModel]);
+
+    modelEditedByUserRef.current = false;
+    const nextModel = resolvePromptInputModelForScopeChange({
+      previousScopeKey,
+      nextScopeKey,
+      currentModel: state.selectedModel,
+      sessionModel,
+      userDefaultModel: getDefaultModel(),
+      defaultModel,
+    });
+
+    lastModelScopeKeyRef.current = nextScopeKey;
+    appliedSessionModelScopeKeyRef.current = parsedSessionModel ? nextScopeKey : '';
+
+    if (nextModel !== state.selectedModel) {
+      dispatch({ type: "SET_MODEL", payload: nextModel });
+    }
+  }, [defaultModel, modelScopeKey, sessionModel, state.selectedModel]);
 
   // Load custom models
   useEffect(() => {

@@ -43,6 +43,19 @@ export function sanitizeGeneratedSessionTitle(raw: string | undefined | null): s
   return truncateTitle(title);
 }
 
+function normalizeComparableTitle(title: string | undefined | null): string {
+  return sanitizeGeneratedSessionTitle(title)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function isSameSessionTitle(a: string | undefined | null, b: string | undefined | null): boolean {
+  const left = normalizeComparableTitle(a);
+  const right = normalizeComparableTitle(b);
+  return Boolean(left && right && left === right);
+}
+
 export function generateFallbackSessionTitleFromPrompt(prompt: string): string {
   const trimmedPrompt = prompt.trim();
   if (!trimmedPrompt) {
@@ -79,11 +92,19 @@ async function withAutoTitleTimeout<T>(promise: Promise<T>): Promise<T> {
   ]);
 }
 
-export async function generateSessionTitleFromPrompt(prompt: string): Promise<string> {
+export async function generateSessionTitleFromPrompt(
+  prompt: string,
+  options: { avoidTitle?: string } = {},
+): Promise<string> {
   const trimmedPrompt = prompt.trim();
   if (!trimmedPrompt) {
     return '';
   }
+
+  const avoidTitle = sanitizeGeneratedSessionTitle(options.avoidTitle);
+  const systemPrompt =
+    '请根据用户首条 prompt 生成一个简短的会话标题。要求：不超过 20 个字，优先 4-16 个汉字或 3-8 个英文词；只输出标题本身；不要引号、不要编号、不要解释。'
+    + (avoidTitle ? `\n当前标题是「${avoidTitle}」，新标题必须和当前标题明显不同，不能原样返回当前标题。` : '');
 
   const { claudeSDK } = await import('./claudeSDK');
   let lastError: unknown;
@@ -102,8 +123,7 @@ export async function generateSessionTitleFromPrompt(prompt: string): Promise<st
             model: AUTO_TOPIC_NAMING_MODEL,
             maxTokens: 24,
             temperature: 0.2,
-            systemPrompt:
-              '请根据用户首条 prompt 生成一个简短的会话标题。要求：不超过 20 个字，优先 4-16 个汉字或 3-8 个英文词；只输出标题本身；不要引号、不要编号、不要解释。',
+            systemPrompt,
           }
         )
       );
@@ -247,9 +267,11 @@ export async function autoNameSessionFromPrompt({
 export async function renameSessionWithAI({
   sessionId,
   prompt,
+  currentTitle,
 }: {
   sessionId: string;
   prompt: string;
+  currentTitle?: string | null;
 }): Promise<string | null> {
   const trimmedSessionId = sessionId.trim();
   const trimmedPrompt = prompt.trim();
@@ -260,20 +282,33 @@ export async function renameSessionWithAI({
   const { api } = await import('./api');
 
   let title = '';
-  try {
-    title = sanitizeGeneratedSessionTitle(
-      await generateSessionTitleFromPrompt(trimmedPrompt)
-    );
-  } catch (error) {
-    console.warn('[SessionAutoTitle] Manual AI rename failed, using local fallback:', error);
-    title = generateFallbackSessionTitleFromPrompt(trimmedPrompt);
+  let lastError: unknown;
+  const avoidTitle = sanitizeGeneratedSessionTitle(currentTitle);
+
+  for (let attempt = 0; attempt < AUTO_TITLE_HAIKU_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      title = sanitizeGeneratedSessionTitle(
+        await generateSessionTitleFromPrompt(trimmedPrompt, { avoidTitle })
+      );
+      if (title && !isSameSessionTitle(title, avoidTitle)) {
+        break;
+      }
+      title = '';
+      lastError = new Error('Haiku returned the current session title unchanged');
+    } catch (error) {
+      lastError = error;
+      title = '';
+    }
   }
 
   if (!title) {
+    if (lastError) {
+      console.warn('[SessionAutoTitle] Manual AI rename failed, using local fallback:', lastError);
+    }
     title = generateFallbackSessionTitleFromPrompt(trimmedPrompt);
   }
 
-  if (!title) {
+  if (!title || isSameSessionTitle(title, avoidTitle)) {
     return null;
   }
 
