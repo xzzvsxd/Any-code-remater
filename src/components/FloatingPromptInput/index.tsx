@@ -22,8 +22,12 @@ import { getDefaultModel } from "./defaultModelStorage";
 import { resolveSelectedModelName } from "./resolveModelName";
 import {
   buildPromptInputModelScopeKey,
+  doesSessionModelOnlyDropOneMillion,
+  isPromptInputDraftToSessionPromotion,
   parseSessionModelForPromptInput,
+  readPromptInputScopedModel,
   resolvePromptInputModelForScopeChange,
+  writePromptInputScopedModel,
 } from "./modelSessionScope";
 
 // Import sub-components
@@ -117,11 +121,17 @@ const FloatingPromptInputInner = (
   ref: React.Ref<FloatingPromptInputRef>,
 ) => {
   const { t } = useTranslation();
+  const initialModelScopeKey = buildPromptInputModelScopeKey({ sessionId, draftTabId, projectPath });
 
   // Determine initial model:
-  // 1. Historical session: use sessionModel
-  // 2. New session: use user's default model or fallback to "sonnet"
+  // 1. Scoped UI choice: preserves Claude 1M intent per session/draft
+  // 2. Historical session: use sessionModel
+  // 3. New session: use user's default model or fallback to "sonnet"
   const getInitialModel = (): ModelType => {
+    const scopedModel = readPromptInputScopedModel(initialModelScopeKey);
+    if (scopedModel) {
+      return scopedModel;
+    }
     // If this is a historical session with saved model, use it
     const parsedSessionModel = parseSessionModelForPromptInput(sessionModel);
     if (parsedSessionModel) {
@@ -297,8 +307,9 @@ const FloatingPromptInputInner = (
 
   const setSelectedModel = useCallback((model: ModelType) => {
     modelEditedByUserRef.current = true;
+    writePromptInputScopedModel(modelScopeKey, model);
     dispatch({ type: "SET_MODEL", payload: model });
-  }, []);
+  }, [modelScopeKey]);
 
   const setShowCostPopover = useCallback((show: boolean) => {
     dispatch({ type: "SET_SHOW_COST_POPOVER", payload: show });
@@ -484,13 +495,16 @@ const FloatingPromptInputInner = (
     const previousScopeKey = lastModelScopeKeyRef.current;
     const nextScopeKey = modelScopeKey;
     const parsedSessionModel = parseSessionModelForPromptInput(sessionModel);
+    const scopedModel = readPromptInputScopedModel(nextScopeKey);
 
     if (previousScopeKey === nextScopeKey) {
       if (
         parsedSessionModel
         && !modelEditedByUserRef.current
+        && !scopedModel
         && appliedSessionModelScopeKeyRef.current !== nextScopeKey
         && parsedSessionModel !== state.selectedModel
+        && !doesSessionModelOnlyDropOneMillion(state.selectedModel, parsedSessionModel)
       ) {
         appliedSessionModelScopeKeyRef.current = nextScopeKey;
         dispatch({ type: "SET_MODEL", payload: parsedSessionModel });
@@ -505,6 +519,7 @@ const FloatingPromptInputInner = (
       previousScopeKey,
       nextScopeKey,
       currentModel: state.selectedModel,
+      scopedModel,
       sessionModel,
       userDefaultModel: getDefaultModel(),
       defaultModel,
@@ -512,6 +527,10 @@ const FloatingPromptInputInner = (
 
     lastModelScopeKeyRef.current = nextScopeKey;
     appliedSessionModelScopeKeyRef.current = parsedSessionModel ? nextScopeKey : '';
+
+    if (isPromptInputDraftToSessionPromotion(previousScopeKey, nextScopeKey)) {
+      writePromptInputScopedModel(nextScopeKey, nextModel);
+    }
 
     if (nextModel !== state.selectedModel) {
       dispatch({ type: "SET_MODEL", payload: nextModel });
@@ -718,6 +737,10 @@ const FloatingPromptInputInner = (
       // 与上下文窗口计算共用同一解析（resolveModelName），避免逻辑重复扩散。
       const modelToSend = resolveSelectedModelName(state.selectedModel, availableModels) as ModelType;
 
+      if (state.executionEngineConfig.engine === 'claude') {
+        writePromptInputScopedModel(modelScopeKey, state.selectedModel);
+      }
+
       onSend(finalPrompt, modelToSend, undefined);
       dispatch({ type: "RESET_INPUT" });
       setImageAttachments([]);
@@ -730,6 +753,7 @@ const FloatingPromptInputInner = (
     clearDraft,
     disabled,
     imageAttachments,
+    modelScopeKey,
     onSend,
     setEmbeddedImages,
     setImageAttachments,

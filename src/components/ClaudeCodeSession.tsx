@@ -44,7 +44,7 @@ import { codexConverter } from '@/lib/codexConverter';
 import { convertGeminiSessionDetailToClaudeMessages } from '@/lib/geminiConverter';
 import { formatClaudeModelLabel, resolveClaudeContinuationModel } from '@/lib/claudeModelSelection';
 import { buildQueueStorageKey, loadQueuedPrompts, saveQueuedPrompts } from '@/lib/queuedPromptsStore';
-import { DEFAULT_CODEX_MODEL_ID } from '@/lib/codexModelSupport';
+import { resolveInitialExecutionEngineConfig } from './executionEngineConfigPolicy';
 import {
   getBranchPromptIndexForDisplayableMessage,
   getPromptNavigationIndexForDisplayableMessage,
@@ -74,6 +74,13 @@ interface ClaudeCodeSessionProps {
    * Initial project path (for new sessions)
    */
   initialProjectPath?: string;
+  /**
+   * Initial engine restored from a tab/window shell. Brand-new tabs leave this
+   * empty and therefore start as Claude; persisted draft/window shells can
+   * restore an explicitly selected Codex/Gemini engine without making it the
+   * global default for every future new session.
+   */
+  initialEngine?: 'claude' | 'codex' | 'gemini';
   /**
    * Optional className for styling
    */
@@ -180,6 +187,7 @@ const getMessageActivityKey = (messages: ClaudeStreamMessage[]): string => {
 const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   session,
   initialProjectPath = "",
+  initialEngine,
   className,
   onStreamingChange,
   onProjectPathChange,
@@ -308,24 +316,25 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   // 注：ask-user / ask-user-plan 的事件监听器移至 usePromptExecution 解构之后，
   // 因为它们需要 hook 暴露的真实 runTabId（后端事件路由用的 id）来过滤，而非外层 tabIdProp。
 
-  // 🆕 Execution Engine Config (Codex integration)
-  // Load from localStorage to remember user's settings
+  // 🆕 Execution Engine Config (Codex/Gemini integration)
+  // localStorage 只记住非引擎细节（Codex 模型/权限、Gemini 模型等）。
+  // 引擎身份必须是 session/tab scoped：已有会话用 session.engine，恢复的草稿/独立窗口用
+  // initialEngine，全新会话永远从 Claude 开始，避免上一次选过 Codex/Gemini 后污染新会话。
   const [executionEngineConfig, setExecutionEngineConfig] = useState<import('@/components/FloatingPromptInput/types').ExecutionEngineConfig>(() => {
+    let storedConfig: unknown;
     try {
       const stored = localStorage.getItem('execution_engine_config');
       if (stored) {
-        return JSON.parse(stored);
+        storedConfig = JSON.parse(stored);
       }
     } catch (error) {
       console.error('[ClaudeCodeSession] Failed to load engine config from localStorage:', error);
     }
-    // Default config
-    return {
-      engine: 'claude',
-      codexMode: 'read-only',
-      codexModel: DEFAULT_CODEX_MODEL_ID,
-      geminiModel: 'gemini-3-flash',
-    };
+
+    return resolveInitialExecutionEngineConfig({
+      storedConfig,
+      sessionEngine: session?.engine || initialEngine,
+    });
   });
 
   // 队列持久化键：优先用 TabSessionWrapper 下传的 prop，缺省时按 session/path 兜底（与下传逻辑同款）。

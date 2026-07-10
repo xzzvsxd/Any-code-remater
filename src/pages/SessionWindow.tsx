@@ -414,6 +414,7 @@ export const SessionWindow: React.FC = () => {
             <ClaudeCodeSession
               key={state.tabId || 'detached-session'}
               initialProjectPath={state.projectPath || undefined}
+              initialEngine={state.engine || undefined}
               session={state.session || undefined}
               isActive={true}
               tabId={state.tabId || undefined}

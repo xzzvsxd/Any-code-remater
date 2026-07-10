@@ -303,6 +303,7 @@ export const TabManager: React.FC<TabManagerProps> = ({
                   tabId={tab.id}
                   session={tab.session}
                   initialProjectPath={tab.projectPath}
+                  initialEngine={tab.engine}
                   isActive={tab.isActive}
                   onStreamingChange={(isStreaming, sessionId) =>
                     updateTabStreamingStatus(tab.id, isStreaming, sessionId)

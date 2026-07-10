@@ -143,7 +143,7 @@ const EngineCountBadges: React.FC<{ project: Project; isCurrent: boolean }> = ({
  */
 export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick }) => {
   const { t } = useTranslation();
-  const { tabs, switchToTab, createNewTab, openSessionInBackground, closeTab, updateTabTitle } = useTabs();
+  const { tabs, switchToTab, createNewTab, openSessionInBackground, closeTab, updateTabTitle, updateTabEngine } = useTabs();
   const { projects, selectedProject, sessions, sessionsByProject, sessionsLoading, selectProject, deleteProject, refreshSessions, loadProjectSessions } = useProject();
   const { currentView, navigateTo } = useNavigation();
 
@@ -660,6 +660,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
         // 复用草稿原 id（session.id）作为新 tab id：draftId 随之等于原草稿 id，
         // useDraftPersistence 会按该 id 恢复 localStorage 草稿，编辑也写回同一份。
         const newTabId = createNewTab(undefined, session.project_path, true, session.id);
+        updateTabEngine(newTabId, (session.engine || 'claude') as 'claude' | 'codex' | 'gemini');
         closePrevIfIdle(newTabId);
         // localStorage 可能已被清（如重启/清理），用后端草稿正文兜底回填，确保正文不丢。
         const text = session.first_message || '';
@@ -678,7 +679,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     switchToTab(result.tabId);
     closePrevIfIdle(result.tabId);
     navigateTo('claude-tab-manager');
-  }, [openSessionInBackground, switchToTab, navigateTo, tabs, createNewTab, closePrevIfIdle]);
+  }, [openSessionInBackground, switchToTab, navigateTo, tabs, createNewTab, updateTabEngine, closePrevIfIdle]);
 
   const onNewSession = useCallback(() => {
     createNewTab();
