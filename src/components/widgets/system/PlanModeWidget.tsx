@@ -81,8 +81,15 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
     // Context 不可用时忽略（组件可能在 Provider 外部渲染）
   }
 
-  // 桥接模式：审批状态改从 tool_result 判定（bridge 用 bridge_${requestId} 存状态，
-  // 与本卡片的 plan_tool_${toolId} 键不通，无法直接读取）。
+  // 桥接模式：先用内容键读取「超时后补答」的本地状态，再退回到 tool_result 判定。
+  // bridge 弹窗用 bridge_${requestId} 存状态，而会话卡片通常只有 plan_tool_${toolId}；
+  // 因此审批/拒绝/暂不决定时也镜像写入 getPlanId(plan)，原卡片才能稳定回显。
+  if (bridgeMode && planStatus === 'pending' && plan && getPlanStatus) {
+    planStatus = getPlanStatus(getPlanId(plan));
+  }
+
+  // 最后从 tool_result 判定：超时 / 批准 / 拒绝 / 暂不决定都应是显式状态，
+  // 不能继续显示“等待审批”。
   if (bridgeMode && planStatus === 'pending') {
     planStatus = resolvePlanResultStatus(result?.content, result?.is_error);
   }
@@ -90,7 +97,9 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
   const isApproved = planStatus === 'approved';
   const isRejected = planStatus === 'rejected';
   const isDeferred = planStatus === 'deferred';
+  const isExpired = planStatus === 'expired';
   const hasDecision = isApproved || isRejected;
+  const showError = isError && !isApproved && !isRejected && !isDeferred && !isExpired;
 
   // 自动触发审批对话框（仅在 ExitPlanMode 且有计划内容且未决策时）。
   // 桥接模式不在卡片侧自动弹，交互统一由 bridge 弹窗负责，避免双弹。
@@ -108,7 +117,7 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
   const Icon = isEnter ? Search : LogOut;
 
   // 根据状态选择颜色
-  const colorClass = isError
+  const colorClass = showError
     ? "border-destructive/20 bg-destructive/5"
     : isApproved
       ? "border-green-500/30 bg-green-500/10"  // 已审批：绿色
@@ -116,11 +125,13 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
       ? "border-amber-500/30 bg-amber-500/10"  // 已拒绝：琥珀色
     : isDeferred
       ? "border-blue-500/20 bg-blue-500/5"  // 暂不决定：蓝色等待
+    : isExpired
+      ? "border-orange-500/30 bg-orange-500/10" // 已超时：橙色提示
         : isEnter
           ? "border-blue-500/20 bg-blue-500/5"
           : "border-green-500/20 bg-green-500/5";
 
-  const iconBgClass = isError
+  const iconBgClass = showError
     ? "bg-destructive/10"
     : isApproved
       ? "bg-green-500/20"
@@ -128,11 +139,13 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
       ? "bg-amber-500/20"
     : isDeferred
       ? "bg-blue-500/10"
+    : isExpired
+      ? "bg-orange-500/15"
         : isEnter
           ? "bg-blue-500/10"
           : "bg-green-500/10";
 
-  const iconColorClass = isError
+  const iconColorClass = showError
     ? "text-destructive"
     : isApproved
       ? "text-green-600"
@@ -140,6 +153,8 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
       ? "text-amber-600"
     : isDeferred
       ? "text-blue-600"
+    : isExpired
+      ? "text-orange-600"
         : isEnter
           ? "text-blue-500"
           : "text-green-500";
@@ -153,6 +168,8 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
       ? t('promptInput.planRejected')
     : isDeferred
       ? t('promptInput.planDeferred', '计划暂未决定')
+    : isExpired
+      ? t('promptInput.planExpired', '计划审批已超时')
         : t('promptInput.exitPlanMode');
 
   const description = isEnter
@@ -163,6 +180,8 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
       ? t('promptInput.planRejectedDesc')
     : isDeferred
       ? t('promptInput.planDeferredDesc', '用户选择暂不决定，Claude 将暂停等待后续确认或修改意见')
+    : isExpired
+      ? t('promptInput.planExpiredDesc', '该计划审批请求已超时；如果你已补充决定，将作为新一轮消息发送')
         : t('promptInput.exitPlanModeDesc');
 
   // 手动触发审批：始终放行（auto=false），即便此前已自动弹过。
@@ -179,6 +198,8 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
       ? RefreshCw
     : isDeferred
       ? Info
+    : isExpired
+      ? AlertCircle
       : Icon;
 
   // 未决策的 ExitPlanMode：整个卡片头部可点击触发审批（标题区与操作融为一体）。
@@ -218,10 +239,15 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
                 {t('widget.deferred', '暂不决定')}
               </span>
             )}
+            {isExpired && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-orange-500/20 text-orange-600 font-medium">
+                {t('widget.expired', '已超时')}
+              </span>
+            )}
             {result && !isError && !isExit && !hasDecision && (
               <CheckCircle className="h-3.5 w-3.5 text-green-500" />
             )}
-            {isError && (
+            {showError && (
               <AlertCircle className="h-3.5 w-3.5 text-destructive" />
             )}
           </div>
@@ -301,6 +327,12 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
                   <Info className="h-3.5 w-3.5" />
                   <span>{t('widget.planDeferredWaiting', '已暂不决定，Claude 将等待后续确认')}</span>
                 </div>
+              ) : isExpired ? (
+                // 已超时：明确显示，不再伪装成“等待审批”
+                <div className="flex items-center gap-2 text-xs text-orange-600">
+                  <AlertCircle className="h-3.5 w-3.5" />
+                  <span>{t('widget.planExpiredWaiting', '审批请求已超时；补答会作为新一轮消息发送')}</span>
+                </div>
               ) : bridgeMode ? (
                 // 桥接模式未决策：审批交给 bridge 弹窗，卡片仅提示等待状态
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -325,7 +357,7 @@ export const PlanModeWidget: React.FC<PlanModeWidgetProps> = ({
           )}
 
           {/* 显示错误信息 */}
-          {isError && result?.content && (
+          {showError && result?.content && (
             <div className="mt-2 p-2 rounded bg-destructive/10 text-xs text-destructive">
               {typeof result.content === 'string'
                 ? result.content

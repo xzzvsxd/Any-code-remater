@@ -1,8 +1,8 @@
 import type { UserAnswers } from '@/contexts/UserQuestionContext';
 import { normalizeAnswers } from '@/lib/askUserQuestionUtils';
 
-export type AskUserResultStatus = 'pending' | 'answered' | 'deferred';
-export type PlanResultStatus = 'pending' | 'approved' | 'rejected' | 'deferred';
+export type AskUserResultStatus = 'pending' | 'answered' | 'deferred' | 'expired';
+export type PlanResultStatus = 'pending' | 'approved' | 'rejected' | 'deferred' | 'expired';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -186,12 +186,31 @@ const PLAN_APPROVE_PATTERNS = [
   /\bapprove(?:d)?\b/i,
 ];
 
+const INTERACTION_EXPIRED_PATTERNS = [
+  /等待用户回答超时/,
+  /用户回答超时/,
+  /请求超时/,
+  /已超时/,
+  /超时/,
+  /已过期/,
+  /过期/,
+  /提问通道已关闭/,
+  /通道已关闭/,
+  /未能收集到回答/,
+  /\bexpired\b/i,
+  /\btimed\s*out\b/i,
+  /\btimeout\b/i,
+  /\bno\s+pending\s+request\b/i,
+  /\bpending\s+request\s+(?:not\s+found|missing)\b/i,
+  /\binteraction\s+(?:not\s+found|expired)\b/i,
+];
+
 function matchesAny(text: string, patterns: RegExp[]): boolean {
   return patterns.some((pattern) => pattern.test(text));
 }
 
 export function resolveAskUserResultStatus(value: unknown, isError?: boolean): AskUserResultStatus {
-  if (isError || value == null) {
+  if (value == null) {
     return 'pending';
   }
 
@@ -209,17 +228,29 @@ export function resolveAskUserResultStatus(value: unknown, isError?: boolean): A
     return 'deferred';
   }
 
+  if (matchesAny(text, INTERACTION_EXPIRED_PATTERNS)) {
+    return 'expired';
+  }
+
+  if (isError) {
+    return 'pending';
+  }
+
   return 'answered';
 }
 
 export function resolvePlanResultStatus(value: unknown, isError?: boolean): PlanResultStatus {
-  if (isError || value == null) {
+  if (value == null) {
     return 'pending';
   }
 
   const text = extractInteractionResultText(value);
   if (!text) {
     return 'pending';
+  }
+
+  if (matchesAny(text, INTERACTION_EXPIRED_PATTERNS)) {
+    return 'expired';
   }
 
   // Must run before approve matching: the defer sentence intentionally contains
@@ -234,6 +265,10 @@ export function resolvePlanResultStatus(value: unknown, isError?: boolean): Plan
 
   if (matchesAny(text, PLAN_APPROVE_PATTERNS)) {
     return 'approved';
+  }
+
+  if (isError) {
+    return 'pending';
   }
 
   return 'pending';

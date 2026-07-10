@@ -10,9 +10,9 @@ describe('smart auto-scroll render safety invariants', () => {
     expect(source).not.toContain('JSON.stringify(lastMessage.message?.content');
   });
 
-  test('resize-driven bottom following is rAF-batched and finishes with precise bottom settle', () => {
-    expect(source).toContain('PRECISE_BOTTOM_THRESHOLD');
-    expect(source).toContain('performAutoScroll({ precise: true })');
+  test('streaming bottom following never bypasses the deadband with a precise final settle', () => {
+    expect(source).not.toContain('PRECISE_BOTTOM_THRESHOLD');
+    expect(source).not.toContain('performAutoScroll({ precise: true })');
     expect(source).toContain('resizeFollowFrameRef');
     expect(source).toContain('requestAnimationFrame(runResizeFollow)');
     expect(source).not.toContain('contentObserver = new ResizeObserver(() => {\n        if (shouldFollowResizeToBottom');

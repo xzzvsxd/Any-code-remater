@@ -21,7 +21,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { getQuestionIdContent, getQuestionKey, normalizeQuestions } from "@/lib/askUserQuestionUtils";
+import { getQuestionIdContent, getQuestionKey, normalizeAnswers, normalizeQuestions } from "@/lib/askUserQuestionUtils";
 import { api } from "@/lib/api";
 import {
   enqueuePendingInteraction,
@@ -105,6 +105,8 @@ interface UserQuestionContextValue {
   isQuestionAnswered: (questionId: string) => boolean;
   /** 已回答的问题 ID 集合 */
   answeredQuestionIds: Set<string>;
+  /** 获取阻塞式 bridge 问题的本地回答快照（用于超时后回答仍能在原卡片回显）。 */
+  getBridgeAnswerSnapshot: (questions: Question[]) => UserAnswers | null;
 
   /** 设置发送消息的回调（由 ClaudeCodeSession 设置） */
   setSendMessageCallback: (callback: ((message: string) => void) | null) => void;
@@ -141,6 +143,10 @@ function resolveDedupeKey(questions: Question[], toolId?: string): string {
   return toolId ? `tool_${toolId}` : generateQuestionId(questions);
 }
 
+function getBridgeQuestionSnapshotKey(questions: Question[]): string {
+  return `bridge_answer_${generateQuestionId(normalizeQuestions(questions))}`;
+}
+
 /**
  * UserQuestion Context Provider
  */
@@ -152,6 +158,7 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
   const questionQueueRef = useRef<PendingQuestion[]>([]);
   // 已回答集合仅存内存：刷新/重开会话应允许重新询问，避免「相同问题被永久吞掉」导致 CLI 卡死。
   const [answeredQuestionIds, setAnsweredQuestionIds] = useState<Set<string>>(() => new Set());
+  const [bridgeAnswerSnapshots, setBridgeAnswerSnapshots] = useState<Record<string, UserAnswers>>({});
 
   // 发送消息的回调引用
   const sendMessageCallbackRef = useRef<((message: string) => void) | null>(null);
@@ -173,6 +180,22 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
   const isQuestionAnswered = useCallback((questionId: string): boolean => {
     return answeredQuestionIds.has(questionId);
   }, [answeredQuestionIds]);
+
+  const rememberBridgeAnswerSnapshot = useCallback((questions: Question[], answers: UserAnswers) => {
+    const snapshotKey = getBridgeQuestionSnapshotKey(questions);
+    const safeAnswers = normalizeAnswers(answers);
+    if (Object.keys(safeAnswers).length === 0) {
+      return;
+    }
+    setBridgeAnswerSnapshots(prev => ({
+      ...prev,
+      [snapshotKey]: safeAnswers,
+    }));
+  }, []);
+
+  const getBridgeAnswerSnapshot = useCallback((questions: Question[]): UserAnswers | null => {
+    return bridgeAnswerSnapshots[getBridgeQuestionSnapshotKey(questions)] ?? null;
+  }, [bridgeAnswerSnapshots]);
 
   const activateOrQueueQuestion = useCallback((nextQuestion: PendingQuestion) => {
     // 当前已有可见弹窗时，不覆盖它；后续问题排队，避免第一个 bridge 请求被覆盖后永远挂起。
@@ -287,6 +310,8 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
 
     // 路径①：阻塞式 MCP 回灌
     if (requestId) {
+      rememberBridgeAnswerSnapshot(questions, answers);
+
       // 标记已回答 + 关闭对话框
       setAnsweredQuestionIds(prev => {
         const newSet = new Set(prev);
@@ -332,7 +357,7 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
     }, 100);
 
     return true;
-  }, [pendingQuestion, formatAnswersAsMessage, showNextQueuedQuestion]);
+  }, [pendingQuestion, formatAnswersAsMessage, rememberBridgeAnswerSnapshot, showNextQueuedQuestion]);
 
   const deferQuestionResponse = useCallback(() => {
     const activeQuestion = pendingQuestionRef.current;
@@ -352,9 +377,16 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
       });
       showNextQueuedQuestion();
 
-      api.answerUserQuestion(requestId, text).catch((e) => {
-        console.error("[UserQuestion] defer answerUserQuestion failed:", e);
-      });
+      api.answerUserQuestion(requestId, text)
+        .then((hit) => {
+          if (!hit && sendMessageCallbackRef.current) {
+            sendMessageCallbackRef.current(text);
+          }
+        })
+        .catch((e) => {
+          console.error("[UserQuestion] defer answerUserQuestion failed:", e);
+          if (sendMessageCallbackRef.current) sendMessageCallbackRef.current(text);
+        });
       return true;
     }
 
@@ -397,6 +429,7 @@ export function UserQuestionProvider({ children }: UserQuestionProviderProps) {
     closeQuestionDialog,
     isQuestionAnswered,
     answeredQuestionIds,
+    getBridgeAnswerSnapshot,
     setSendMessageCallback,
   };
 

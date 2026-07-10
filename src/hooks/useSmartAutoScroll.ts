@@ -46,7 +46,6 @@ const RESUME_AUTO_SCROLL_MAX_THRESHOLD = 260;
 // 若沿用 80px 的宽松阈值，用户在底部附近小幅上滑（落在 80px 内）会被 scroll 事件
 // 立刻判定为“已回到底部”而重新粘底，与上滑解除直接对冲 —— 这正是“吸铁石”根因。
 const RESUME_AT_BOTTOM_THRESHOLD = 4;
-const PRECISE_BOTTOM_THRESHOLD = 2;
 // 贴底死区：离底在此像素内一律视为"已贴底"，不再触发任何滚动。
 // 根治"一直闪"的关键——流式期间消息区有持续改变高度的元素（光标/loading/思考动画、
 // 代码高亮异步重排），会让虚拟列表 totalSize 持续微幅摆动。若每帧都去对齐这个摆动的目标，
@@ -107,10 +106,6 @@ function getLastMessageContentHash(messages: ClaudeStreamMessage[]): string {
  */
 function getDistanceFromBottom(element: HTMLDivElement): number {
   return element.scrollHeight - element.scrollTop - element.clientHeight;
-}
-
-interface AutoScrollOptions {
-  precise?: boolean;
 }
 
 export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScrollReturn {
@@ -176,9 +171,11 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
    *    流式动画造成的高度微摆，这是"一直闪"的根治点。
    * 2) 只向下追、绝不向上跟随收缩：scrollTop 不会超过 target（浏览器自动 clamp），
    *    高度收缩浏览器会一次性修正，我们不主动制造向上滚动。
+   * 3) streaming 期间永不做“最终精确贴底”：2px 级强校正会绕过死区，和状态条 /
+   *    虚拟列表测高的微幅伸缩形成 clamp → 拉回 → clamp 的高频上下震动。
    * 全程瞬时（无 smooth）：粘底就是"钉在底部"，瞬时跳转才不会被高频更新打断。
    */
-  const performAutoScroll = (options: AutoScrollOptions = {}): boolean => {
+  const performAutoScroll = (): boolean => {
     if (!autoScrollEnabledRef.current) return false;
 
     const scrollElement = parentRef.current;
@@ -186,9 +183,8 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
 
     const targetScrollTop = scrollElement.scrollHeight - scrollElement.clientHeight;
     const distance = targetScrollTop - scrollElement.scrollTop;
-    const threshold = options.precise ? PRECISE_BOTTOM_THRESHOLD : STICK_BOTTOM_DEADBAND;
     // 落后不足死区：视为已贴底，不滚动（吸收微抖）。也覆盖高度收缩后 scrollTop 被 clamp 的情形。
-    if (distance <= threshold) {
+    if (distance <= STICK_BOTTOM_DEADBAND) {
       return false;
     }
 
@@ -411,7 +407,6 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
       resizeSettledFrames = didScroll ? 0 : resizeSettledFrames + 1;
 
       if (resizeSettledFrames >= 3) {
-        performAutoScroll({ precise: true });
         return;
       }
 
@@ -479,7 +474,6 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
         settledFrames += 1;
       }
       if (settledFrames >= SETTLE_FRAME_BUDGET) {
-        performAutoScroll({ precise: true });
         rafId = 0;
         return;
       }

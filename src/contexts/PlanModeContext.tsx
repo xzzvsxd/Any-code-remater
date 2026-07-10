@@ -35,7 +35,7 @@ export interface PendingPlanApproval {
   expiresAtMs?: number;
 }
 
-export type PlanStatus = 'pending' | 'approved' | 'rejected';
+export type PlanStatus = 'pending' | 'approved' | 'rejected' | 'deferred';
 
 interface PlanModeContextValue {
   isPlanMode: boolean;
@@ -62,8 +62,10 @@ interface PlanModeContextValue {
   getPlanStatus: (planId: string) => PlanStatus;
   isPlanApproved: (planId: string) => boolean;
   isPlanRejected: (planId: string) => boolean;
+  isPlanDeferred: (planId: string) => boolean;
   approvedPlanIds: Set<string>;
   rejectedPlanIds: Set<string>;
+  deferredPlanIds: Set<string>;
   setSendPromptCallback: (callback: ((prompt: string) => void) | null) => void;
 }
 
@@ -133,6 +135,7 @@ export function PlanModeProvider({
   // 已决策集合仅存内存：刷新/重开会话应允许重新审批，避免「内容相似的 plan 被永久跳过」导致审批对话框不弹。
   const [approvedPlanIds, setApprovedPlanIds] = useState<Set<string>>(() => new Set());
   const [rejectedPlanIds, setRejectedPlanIds] = useState<Set<string>>(() => new Set());
+  const [deferredPlanIds, setDeferredPlanIds] = useState<Set<string>>(() => new Set());
 
   const sendPromptCallbackRef = useRef<((prompt: string) => void) | null>(null);
   const storageKeyRef = useRef<string | undefined>(storageKey);
@@ -182,12 +185,14 @@ export function PlanModeProvider({
   const getPlanStatus = useCallback((planId: string): PlanStatus => {
     if (approvedPlanIds.has(planId)) return 'approved';
     if (rejectedPlanIds.has(planId)) return 'rejected';
+    if (deferredPlanIds.has(planId)) return 'deferred';
     return 'pending';
-  }, [approvedPlanIds, rejectedPlanIds]);
+  }, [approvedPlanIds, rejectedPlanIds, deferredPlanIds]);
 
   const isPlanApproved = useCallback((planId: string) => approvedPlanIds.has(planId), [approvedPlanIds]);
 
   const isPlanRejected = useCallback((planId: string) => rejectedPlanIds.has(planId), [rejectedPlanIds]);
+  const isPlanDeferred = useCallback((planId: string) => deferredPlanIds.has(planId), [deferredPlanIds]);
 
   const activateOrQueueApproval = useCallback((nextApproval: PendingPlanApproval) => {
     // 不覆盖当前正在等待用户处理的计划。连续 submit_plan / ExitPlanMode
@@ -264,10 +269,24 @@ export function PlanModeProvider({
   const approvePlan = useCallback((feedback?: string) => {
     if (!pendingApproval) return;
 
-    const { planId, requestId } = pendingApproval;
+    const { plan, planId, requestId } = pendingApproval;
+    const contentPlanId = getPlanId(plan);
     setApprovedPlanIds(prev => {
       const next = new Set(prev);
       next.add(planId);
+      next.add(contentPlanId);
+      return next;
+    });
+    setRejectedPlanIds(prev => {
+      const next = new Set(prev);
+      next.delete(planId);
+      next.delete(contentPlanId);
+      return next;
+    });
+    setDeferredPlanIds(prev => {
+      const next = new Set(prev);
+      next.delete(planId);
+      next.delete(contentPlanId);
       return next;
     });
 
@@ -305,10 +324,24 @@ export function PlanModeProvider({
   const rejectPlan = useCallback((feedback?: string) => {
     if (!pendingApproval) return;
 
-    const { planId, requestId } = pendingApproval;
+    const { plan, planId, requestId } = pendingApproval;
+    const contentPlanId = getPlanId(plan);
     setRejectedPlanIds(prev => {
       const next = new Set(prev);
       next.add(planId);
+      next.add(contentPlanId);
+      return next;
+    });
+    setApprovedPlanIds(prev => {
+      const next = new Set(prev);
+      next.delete(planId);
+      next.delete(contentPlanId);
+      return next;
+    });
+    setDeferredPlanIds(prev => {
+      const next = new Set(prev);
+      next.delete(planId);
+      next.delete(contentPlanId);
       return next;
     });
 
@@ -319,9 +352,16 @@ export function PlanModeProvider({
     // 路径①：阻塞式 MCP 提交——回灌"已拒绝"唤醒被阻塞的 submit_plan，CLI 据此停下/调整，不会擅自执行。
     if (requestId) {
       const text = `用户【拒绝】了该计划。请不要执行，停下来根据用户意见修改计划后重新提交。${feedbackSuffix}`;
-      api.answerUserQuestion(requestId, text).catch((e) => {
-        console.error("[PlanMode] reject回灌失败:", e);
-      });
+      api.answerUserQuestion(requestId, text)
+        .then((hit) => {
+          if (!hit && sendPromptCallbackRef.current) {
+            sendPromptCallbackRef.current(text);
+          }
+        })
+        .catch((e) => {
+          console.error("[PlanMode] reject回灌失败:", e);
+          if (sendPromptCallbackRef.current) sendPromptCallbackRef.current(text);
+        });
     }
     // 旧路径：拒绝不发任何消息（维持原行为）。
   }, [pendingApproval, showNextQueuedApproval]);
@@ -332,14 +372,40 @@ export function PlanModeProvider({
       return;
     }
 
-    const { requestId } = activeApproval;
+    const { plan, planId, requestId } = activeApproval;
+    const contentPlanId = getPlanId(plan);
+    setDeferredPlanIds(prev => {
+      const next = new Set(prev);
+      next.add(planId);
+      next.add(contentPlanId);
+      return next;
+    });
+    setApprovedPlanIds(prev => {
+      const next = new Set(prev);
+      next.delete(planId);
+      next.delete(contentPlanId);
+      return next;
+    });
+    setRejectedPlanIds(prev => {
+      const next = new Set(prev);
+      next.delete(planId);
+      next.delete(contentPlanId);
+      return next;
+    });
 
     if (requestId) {
       const text = "用户暂时未决定是否批准该计划。请不要执行计划；先暂停，等待用户后续确认或修改意见。";
       showNextQueuedApproval();
-      api.answerUserQuestion(requestId, text).catch((e) => {
-        console.error("[PlanMode] defer回灌失败:", e);
-      });
+      api.answerUserQuestion(requestId, text)
+        .then((hit) => {
+          if (!hit && sendPromptCallbackRef.current) {
+            sendPromptCallbackRef.current(text);
+          }
+        })
+        .catch((e) => {
+          console.error("[PlanMode] defer回灌失败:", e);
+          if (sendPromptCallbackRef.current) sendPromptCallbackRef.current(text);
+        });
       return;
     }
 
@@ -384,8 +450,10 @@ export function PlanModeProvider({
     getPlanStatus,
     isPlanApproved,
     isPlanRejected,
+    isPlanDeferred,
     approvedPlanIds,
     rejectedPlanIds,
+    deferredPlanIds,
     setSendPromptCallback,
   };
 

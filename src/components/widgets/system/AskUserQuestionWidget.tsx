@@ -71,27 +71,44 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
   const isError = result?.is_error;
   const safeQuestions = useMemo(() => normalizeQuestions(questions), [questions]);
   const safeAnswers = useMemo(() => normalizeAnswers(answers), [answers]);
+  // 🆕 尝试获取 UserQuestion Context；Provider 外渲染时只展示静态 widget。
+  const userQuestionContext = useOptionalUserQuestion();
+  const triggerQuestionDialog = userQuestionContext?.triggerQuestionDialog;
+  const isQuestionAnswered = userQuestionContext?.isQuestionAnswered;
+  const getBridgeAnswerSnapshot = userQuestionContext?.getBridgeAnswerSnapshot;
   const resultAnswers = useMemo(
     () => parseAskUserAnswersFromResultContent(result?.content),
     [result?.content]
+  );
+  const bridgeAnswerSnapshot = useMemo(
+    () => bridgeMode && getBridgeAnswerSnapshot
+      ? normalizeAnswers(getBridgeAnswerSnapshot(safeQuestions) || {})
+      : {},
+    [bridgeMode, getBridgeAnswerSnapshot, safeQuestions]
   );
   const bridgeResultStatus = useMemo(
     () => bridgeMode ? resolveAskUserResultStatus(result?.content, isError) : 'pending',
     [bridgeMode, result?.content, isError]
   );
   const bridgeDeferred = bridgeMode && bridgeResultStatus === 'deferred';
+  const bridgeExpired = bridgeMode && bridgeResultStatus === 'expired';
   const parsedAnswers = useMemo(() => {
     // 如果answers不为空，直接使用
     if (Object.keys(safeAnswers).length > 0) {
       return safeAnswers;
     }
 
-    return resultAnswers;
-  }, [safeAnswers, resultAnswers]);
+    if (Object.keys(resultAnswers).length > 0) {
+      return resultAnswers;
+    }
+
+    return bridgeAnswerSnapshot;
+  }, [safeAnswers, resultAnswers, bridgeAnswerSnapshot]);
   const hasParsedAnswers = Object.keys(parsedAnswers).length > 0;
-  // 桥接模式下，优先用真实解析出的答案；只有非 defer 的未知成功结果才退化为“已回答”。
+  // 桥接模式下，优先用真实解析出的答案；只有非 defer/expired 的未知成功结果才退化为“已回答”。
   const bridgeAnswered = bridgeMode && bridgeResultStatus === 'answered';
   const hasAnswers = hasParsedAnswers || bridgeAnswered;
+  const showError = isError && !bridgeDeferred && !bridgeExpired && !hasAnswers;
 
   // 折叠状态：已回答时默认折叠，未回答时默认展开
   const [isCollapsed, setIsCollapsed] = useState(hasAnswers);
@@ -99,11 +116,6 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
   const toggleCollapse = () => {
     setIsCollapsed(!isCollapsed);
   };
-
-  // 🆕 尝试获取 UserQuestion Context；Provider 外渲染时只展示静态 widget。
-  const userQuestionContext = useOptionalUserQuestion();
-  const triggerQuestionDialog = userQuestionContext?.triggerQuestionDialog;
-  const isQuestionAnswered = userQuestionContext?.isQuestionAnswered;
 
   // 计算去重键：优先用工具调用唯一 toolId，回退到问题内容哈希
   const questionId = useMemo(() => {
@@ -179,8 +191,10 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
     <div
       className={cn(
         "rounded-lg border overflow-hidden",
-        isError
+        showError
           ? "border-destructive/20 bg-destructive/5"
+          : bridgeExpired
+            ? "border-orange-500/20 bg-orange-500/5"
           : bridgeDeferred
             ? "border-amber-500/20 bg-amber-500/5"
           : hasAnswers
@@ -203,8 +217,10 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
           <div
             className={cn(
               "h-8 w-8 rounded-full flex items-center justify-center",
-              isError
+              showError
                 ? "bg-destructive/10"
+                : bridgeExpired
+                  ? "bg-orange-500/15"
                 : bridgeDeferred
                   ? "bg-amber-500/15"
                 : hasAnswers
@@ -216,11 +232,16 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
               <CheckCircle
                 className={cn(
                   "h-4 w-4",
-                  isError ? "text-destructive" : "text-green-600"
+                  showError ? "text-destructive" : "text-green-600"
                 )}
               />
             ) : (
-              <HelpCircle className={cn("h-4 w-4", bridgeDeferred ? "text-amber-600" : "text-blue-500")} />
+              <HelpCircle
+                className={cn(
+                  "h-4 w-4",
+                  bridgeExpired ? "text-orange-600" : bridgeDeferred ? "text-amber-600" : "text-blue-500"
+                )}
+              />
             )}
           </div>
         </div>
@@ -232,8 +253,10 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
               <span
                 className={cn(
                   "text-xs font-medium",
-                  isError
+                  showError
                     ? "text-destructive"
+                    : bridgeExpired
+                      ? "text-orange-600"
                     : bridgeDeferred
                       ? "text-amber-600"
                     : hasAnswers
@@ -241,8 +264,12 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
                       : "text-blue-500"
                 )}
               >
-                {bridgeDeferred
-                  ? t('widget.answerDeferred', '暂未回答')
+                {bridgeExpired && hasAnswers
+                  ? t('widget.answerExpiredLate', '已超时后回答')
+                  : bridgeExpired
+                    ? t('widget.answerExpired', '已超时')
+                  : bridgeDeferred
+                    ? t('widget.answerDeferred', '暂未回答')
                   : hasAnswers
                     ? t('widget.userAnswered')
                     : t('widget.waitingAnswer')}
@@ -307,6 +334,11 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
           {isCollapsed && bridgeDeferred && (
             <div className="mt-1 text-xs text-muted-foreground truncate">
               {t('widget.answerDeferredDesc', '用户选择暂时不回答，Claude 将暂停或继续处理不依赖答案的部分')}
+            </div>
+          )}
+          {isCollapsed && bridgeExpired && (
+            <div className="mt-1 text-xs text-muted-foreground truncate">
+              {t('widget.answerExpiredDesc', '该请求已超时；如果已补答，答案会作为新一轮消息发送')}
             </div>
           )}
         </div>
@@ -460,7 +492,7 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
           {/* 错误信息：仅在无法再回答时显示真正的错误内容。
               避免把工具占位结果（如未回答时返回的 "Answer questions?"）当作错误文本展示，
               那种情况下应引导用户去点「回答问题」按钮，而非显示一行裸英文。 */}
-          {isError && result?.content && !canAnswerQuestion && (
+          {showError && result?.content && !canAnswerQuestion && (
             <div className="p-2 rounded bg-destructive/10 text-xs text-destructive">
               {typeof result.content === "string"
                 ? result.content

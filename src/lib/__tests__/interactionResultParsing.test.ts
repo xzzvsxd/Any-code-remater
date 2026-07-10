@@ -70,4 +70,33 @@ describe('interaction result parsing', () => {
     expect(resolvePlanResultStatus([{ text: '用户已【批准】该计划。请立即开始执行上述计划。' }], false)).toBe('approved');
     expect(resolvePlanResultStatus([{ text: '用户【拒绝】了该计划。请不要执行。' }], false)).toBe('rejected');
   });
+
+  test('marks bridge ask-user timeout text as expired instead of answered', () => {
+    const content = [{ text: 'Request timed out while waiting for user answer.' }];
+
+    expect(parseAskUserAnswersFromResultContent(content)).toEqual({});
+    expect(resolveAskUserResultStatus(content, false)).toBe('expired');
+  });
+
+  test('still renders ask-user answers when bridge result is marked as error', () => {
+    const content = [{ text: 'Question: Continue?\nAnswer: Continue' }];
+
+    expect(parseAskUserAnswersFromResultContent(content)).toEqual({
+      'Continue?': 'Continue',
+    });
+    expect(resolveAskUserResultStatus(content, true)).toBe('answered');
+  });
+
+  test('marks bridge ask-user error timeout as expired instead of pending', () => {
+    const content = [{ text: 'Request timed out: no pending request for this interaction' }];
+
+    expect(resolveAskUserResultStatus(content, true)).toBe('expired');
+  });
+
+  test('marks bridge plan timeout text as expired instead of pending', () => {
+    const content = [{ text: 'Request timed out while waiting for user plan approval.' }];
+
+    expect(resolvePlanResultStatus(content, false)).toBe('expired');
+  });
+
 });
