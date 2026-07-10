@@ -1,4 +1,4 @@
-import type { Question, UserAnswers } from "@/contexts/UserQuestionContext";
+import type { Question, QuestionOption, UserAnswers } from "@/contexts/UserQuestionContext";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -188,5 +188,47 @@ export function isOptionSelectedSafe(
   return (
     normalizedAnswer.length > 0 &&
     (label.includes(normalizedAnswer) || normalizedAnswer.includes(label))
+  );
+}
+
+function splitAnswerListText(answer: string, optionLabels: string[]): string[] {
+  const normalizedAnswer = toDisplayString(answer);
+  if (!normalizedAnswer) {
+    return [];
+  }
+
+  const parts = normalizedAnswer
+    .split(/[、\n]+/)
+    .map(part => part.trim())
+    .filter(Boolean);
+
+  if (
+    parts.length > 1 &&
+    parts.some(part => optionLabels.some(label => isOptionSelectedSafe(label, part)))
+  ) {
+    return parts;
+  }
+
+  return [normalizedAnswer];
+}
+
+export function getUnmatchedAnswerParts(
+  answer: string | string[] | undefined,
+  options: Array<Pick<QuestionOption, "label">> = [],
+): string[] {
+  if (!answer) {
+    return [];
+  }
+
+  const optionLabels = options
+    .map(option => toDisplayString(option.label))
+    .filter(Boolean);
+
+  const answerParts = Array.isArray(answer)
+    ? answer.map(part => toDisplayString(part)).filter(Boolean)
+    : splitAnswerListText(answer, optionLabels);
+
+  return answerParts.filter(part =>
+    !optionLabels.some(label => isOptionSelectedSafe(label, part))
   );
 }

@@ -101,6 +101,46 @@ struct ModelPricing {
 fn get_codex_pricing(model: &str) -> ModelPricing {
     let normalized = model.to_lowercase();
 
+    // GPT-5.6 Sol (latest flagship preview)
+    if normalized.contains("5.6-sol") || normalized.contains("5_6_sol") {
+        return ModelPricing {
+            input: 5.00,
+            output: 30.00,
+            cache_read: 0.50,
+        };
+    }
+
+    // GPT-5.6 Terra (balanced preview)
+    if normalized.contains("5.6-terra") || normalized.contains("5_6_terra") {
+        return ModelPricing {
+            input: 2.50,
+            output: 15.00,
+            cache_read: 0.25,
+        };
+    }
+
+    // GPT-5.6 Luna (efficient preview)
+    if normalized.contains("5.6-luna") || normalized.contains("5_6_luna") {
+        return ModelPricing {
+            input: 1.00,
+            output: 6.00,
+            cache_read: 0.10,
+        };
+    }
+
+    // Bare GPT-5.6 aliases default to Sol.
+    if normalized.contains("gpt-5.6")
+        || normalized.contains("gpt5.6")
+        || normalized.contains("gpt_5_6")
+        || normalized.contains("5.6")
+    {
+        return ModelPricing {
+            input: 5.00,
+            output: 30.00,
+            cache_read: 0.50,
+        };
+    }
+
     // GPT-5.5 Pro (higher-compute tier, no cached-input discount)
     if normalized.contains("5.5-pro") || normalized.contains("5_5_pro") {
         return ModelPricing {
@@ -244,7 +284,7 @@ fn get_codex_pricing(model: &str) -> ModelPricing {
         };
     }
 
-    // Default to gpt-5.5 pricing
+    // Default to gpt-5.6 Sol pricing
     ModelPricing {
         input: 5.00,
         output: 30.00,
@@ -260,6 +300,29 @@ fn calculate_cost(model: &str, input_tokens: u64, output_tokens: u64, cached_tok
     let cache_cost = (cached_tokens as f64 / 1_000_000.0) * pricing.cache_read;
 
     input_cost + output_cost + cache_cost
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_codex_pricing;
+
+    #[test]
+    fn prices_gpt_56_preview_models_without_falling_back_to_gpt_55() {
+        let sol = get_codex_pricing("gpt-5.6-sol");
+        assert_eq!(sol.input, 5.00);
+        assert_eq!(sol.output, 30.00);
+        assert_eq!(sol.cache_read, 0.50);
+
+        let terra = get_codex_pricing("gpt-5.6-terra");
+        assert_eq!(terra.input, 2.50);
+        assert_eq!(terra.output, 15.00);
+        assert_eq!(terra.cache_read, 0.25);
+
+        let luna = get_codex_pricing("gpt-5.6-luna");
+        assert_eq!(luna.input, 1.00);
+        assert_eq!(luna.output, 6.00);
+        assert_eq!(luna.cache_read, 0.10);
+    }
 }
 
 // ============================================================================

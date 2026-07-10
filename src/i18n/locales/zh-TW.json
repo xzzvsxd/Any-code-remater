@@ -1132,6 +1132,7 @@
     "multipleChoice": "多選",
     "singleChoice": "單選",
     "selected": "已選擇",
+    "customAnswer": "自訂回答",
     "failed": "失敗",
     "completed": "完成",
     "running": "執行中",

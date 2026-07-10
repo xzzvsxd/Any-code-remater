@@ -1,4 +1,5 @@
 import { ModelType, ThinkingMode, ThinkingEffort, ExecutionEngineConfig } from "./types";
+import { DEFAULT_CODEX_MODEL_ID } from "@/lib/codexModelSupport";
 
 export interface InputState {
   prompt: string;
@@ -35,7 +36,7 @@ export const initialState: InputState = {
   executionEngineConfig: {
     engine: "claude",
     codexMode: "read-only",
-    codexModel: "gpt-5.5",
+    codexModel: DEFAULT_CODEX_MODEL_ID,
     geminiModel: "gemini-3-flash",
   },
   enableProjectContext: false,

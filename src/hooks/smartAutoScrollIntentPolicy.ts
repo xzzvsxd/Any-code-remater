@@ -3,11 +3,24 @@ export interface DownwardIntentFromScrollDeltaInput {
   deadband: number;
   isProgrammatic: boolean;
   hasRecentDirectUserIntent: boolean;
+  directUserIntentDirection?: DirectUserIntentDirection;
 }
 
 export interface ReleaseAutoScrollFromScrollDeltaInput extends DownwardIntentFromScrollDeltaInput {
   distanceFromBottom: number;
 }
+
+export interface ResumeAutoScrollThresholdInput {
+  userIntentReleased: boolean;
+  userIntentDownward: boolean;
+  relaxedThreshold: number;
+  preciseThreshold: number;
+  viewportHeight?: number;
+  relaxedViewportRatio?: number;
+  maxRelaxedThreshold?: number;
+}
+
+export type DirectUserIntentDirection = 'up' | 'down' | 'unknown';
 
 /**
  * scrollTop 增大不一定代表“用户想回到底部”：
@@ -20,8 +33,14 @@ export function shouldMarkDownwardIntentFromScrollDelta({
   deadband,
   isProgrammatic,
   hasRecentDirectUserIntent,
+  directUserIntentDirection = 'unknown',
 }: DownwardIntentFromScrollDeltaInput): boolean {
-  return !isProgrammatic && hasRecentDirectUserIntent && delta > deadband;
+  return (
+    !isProgrammatic &&
+    hasRecentDirectUserIntent &&
+    directUserIntentDirection !== 'up' &&
+    delta > deadband
+  );
 }
 
 /**
@@ -43,4 +62,34 @@ export function shouldReleaseAutoScrollFromScrollDelta({
     delta < -deadband &&
     distanceFromBottom > 1
   );
+}
+
+/**
+ * 用户主动上滑后，不能仅靠“离底很近”恢复粘底，否则虚拟列表测高造成的假贴底会把用户吸回底部。
+ * 但一旦检测到明确的向下意图，就应使用更宽松的底部恢复区间；运行中最后一行/状态条持续变高时，
+ * 精确 4px 门槛太苛刻，会表现为“往底部翻却总被弹开、粘不住”。
+ */
+export function getResumeAutoScrollThreshold({
+  userIntentReleased,
+  userIntentDownward,
+  relaxedThreshold,
+  preciseThreshold,
+  viewportHeight,
+  relaxedViewportRatio = 0,
+  maxRelaxedThreshold = relaxedThreshold,
+}: ResumeAutoScrollThresholdInput): number {
+  if (!userIntentReleased) {
+    return relaxedThreshold;
+  }
+
+  if (!userIntentDownward) {
+    return preciseThreshold;
+  }
+
+  if (!viewportHeight || relaxedViewportRatio <= 0) {
+    return relaxedThreshold;
+  }
+
+  const viewportThreshold = Math.round(viewportHeight * relaxedViewportRatio);
+  return Math.max(relaxedThreshold, Math.min(maxRelaxedThreshold, viewportThreshold));
 }

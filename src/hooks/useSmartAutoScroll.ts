@@ -12,6 +12,8 @@ import {
   shouldRunStickyAutoScroll,
 } from './smartAutoScrollPolicy';
 import {
+  type DirectUserIntentDirection,
+  getResumeAutoScrollThreshold,
   shouldMarkDownwardIntentFromScrollDelta,
   shouldReleaseAutoScrollFromScrollDelta,
 } from './smartAutoScrollIntentPolicy';
@@ -35,6 +37,11 @@ interface SmartAutoScrollReturn {
 }
 
 const RESUME_AUTO_SCROLL_THRESHOLD = 80;
+// 用户已明确向下回到底部时，最后一行流式增长可能让底部在一帧内后退超过 80px。
+// 用视口比例扩展恢复区间，避免“明明往底部滚了但底部一直逃走/回弹”；只有检测到向下意图才启用，
+// 所以不会把正在上翻看历史的用户吸回底部。
+const RESUME_AUTO_SCROLL_VIEWPORT_RATIO = 0.25;
+const RESUME_AUTO_SCROLL_MAX_THRESHOLD = 260;
 // 用户主动上滑解除粘底后，只有真正回到“几乎精确贴底”才恢复自动跟随。
 // 若沿用 80px 的宽松阈值，用户在底部附近小幅上滑（落在 80px 内）会被 scroll 事件
 // 立刻判定为“已回到底部”而重新粘底，与上滑解除直接对冲 —— 这正是“吸铁石”根因。
@@ -128,8 +135,11 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
   // 自动贴底写 scrollTop 后，浏览器会派发 scroll 事件；这些事件不能反过来被当成用户意图。
   const programmaticScrollUntilRef = useRef(0);
   // 滚动条拖拽/触摸/滚轮/键盘等直接输入后的短窗口。只有这个窗口内的 scrollTop 增大，
-  // 才作为“用户想回到底部”的兜底信号；虚拟列表测高补偿不带直接输入，不能恢复粘底。
+  // 且最近输入方向不是“向上看历史”，才作为“用户想回到底部”的兜底信号。
+  // 旧逻辑只记录“最近有输入”，上滑后 1s 内 react-virtual 测高补偿产生的正 delta 会被误判为
+  // 向下意图，随后恢复粘底并把用户拽回底部；这是运行中会话回弹的核心根因之一。
   const directScrollGestureUntilRef = useRef(0);
+  const directScrollGestureDirectionRef = useRef<DirectUserIntentDirection>('unknown');
   // ResizeObserver 在 WebKitGTK 下可能一帧内触发多次；用 rAF 合并，防止 RO 回调里直接
   // 读写 scrollHeight/scrollTop 造成同步布局风暴。
   const resizeFollowFrameRef = useRef(0);
@@ -238,12 +248,15 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
       if (movingDown) userIntentDownwardRef.current = true;
     };
 
-    const markDirectScrollGesture = () => {
+    const markDirectScrollGesture = (direction: DirectUserIntentDirection) => {
       directScrollGestureUntilRef.current = performance.now() + DIRECT_SCROLL_GESTURE_WINDOW_MS;
+      directScrollGestureDirectionRef.current = direction;
     };
 
     const handleWheel = (event: WheelEvent) => {
-      if (event.deltaY !== 0) markDirectScrollGesture();
+      if (event.deltaY !== 0) {
+        markDirectScrollGesture(event.deltaY > 0 ? 'down' : 'up');
+      }
       releaseOnUserIntent(event.deltaY < 0);
       markDownwardIntent(event.deltaY > 0);
     };
@@ -251,12 +264,12 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
     let touchStartY = 0;
     const handleTouchStart = (event: TouchEvent) => {
       touchStartY = event.touches[0]?.clientY ?? 0;
-      markDirectScrollGesture();
+      markDirectScrollGesture('unknown');
     };
     const handleTouchMove = (event: TouchEvent) => {
       const currentY = event.touches[0]?.clientY ?? 0;
-      markDirectScrollGesture();
       // 手指下滑（clientY 增大）= 内容上移 = 查看历史；手指上滑（clientY 减小）= 内容下移 = 回到底部
+      markDirectScrollGesture(currentY < touchStartY ? 'down' : 'up');
       releaseOnUserIntent(currentY > touchStartY);
       markDownwardIntent(currentY < touchStartY);
     };
@@ -265,14 +278,15 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
       const upKeys = ['ArrowUp', 'PageUp', 'Home'];
       const downKeys = ['ArrowDown', 'PageDown', 'End'];
       if (upKeys.includes(event.key) || downKeys.includes(event.key)) {
-        markDirectScrollGesture();
+        markDirectScrollGesture(downKeys.includes(event.key) ? 'down' : 'up');
       }
       releaseOnUserIntent(upKeys.includes(event.key));
       markDownwardIntent(downKeys.includes(event.key));
     };
 
     const handlePointerDown = () => {
-      markDirectScrollGesture();
+      // 拖动滚动条时 pointerdown 本身没有方向；方向由后续 scroll delta 判定。
+      markDirectScrollGesture('unknown');
     };
 
     /**
@@ -308,6 +322,10 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
         deadband: STICK_BOTTOM_DEADBAND,
         isProgrammatic,
         hasRecentDirectUserIntent: now <= directScrollGestureUntilRef.current,
+        directUserIntentDirection:
+          now <= directScrollGestureUntilRef.current
+            ? directScrollGestureDirectionRef.current
+            : 'unknown',
       })) {
         userIntentDownwardRef.current = true;
       }
@@ -316,11 +334,17 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
         return;
       }
 
-      // 用户主动上滑解除过粘底：必须几乎精确贴底（≤4px）才恢复，避免 80px 区间内被立即吸回。
-      // 未经主动解除（如程序滚动后的微抖）：维持 80px 宽松阈值恢复，保证正常跟随体验。
-      const resumeThreshold = userIntentReleasedRef.current
-        ? RESUME_AT_BOTTOM_THRESHOLD
-        : RESUME_AUTO_SCROLL_THRESHOLD;
+      // 用户主动上滑解除过粘底：没有向下意图时必须几乎精确贴底（≤4px）才恢复；
+      // 一旦检测到明确向下意图，则用 80px 宽松阈值，避免运行中内容持续变高时“翻到底部却粘不住”。
+      const resumeThreshold = getResumeAutoScrollThreshold({
+        userIntentReleased: userIntentReleasedRef.current,
+        userIntentDownward: userIntentDownwardRef.current,
+        relaxedThreshold: RESUME_AUTO_SCROLL_THRESHOLD,
+        preciseThreshold: RESUME_AT_BOTTOM_THRESHOLD,
+        viewportHeight: scrollElement.clientHeight,
+        relaxedViewportRatio: RESUME_AUTO_SCROLL_VIEWPORT_RATIO,
+        maxRelaxedThreshold: RESUME_AUTO_SCROLL_MAX_THRESHOLD,
+      });
 
       if (distance > resumeThreshold) {
         cancelResumeConfirmation();
@@ -343,9 +367,15 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
       resumeConfirmFrame = requestAnimationFrame(() => {
         resumeConfirmFrame = 0;
         if (!scrollElement.isConnected) return;
-        const currentResumeThreshold = userIntentReleasedRef.current
-          ? RESUME_AT_BOTTOM_THRESHOLD
-          : RESUME_AUTO_SCROLL_THRESHOLD;
+        const currentResumeThreshold = getResumeAutoScrollThreshold({
+          userIntentReleased: userIntentReleasedRef.current,
+          userIntentDownward: userIntentDownwardRef.current,
+          relaxedThreshold: RESUME_AUTO_SCROLL_THRESHOLD,
+          preciseThreshold: RESUME_AT_BOTTOM_THRESHOLD,
+          viewportHeight: scrollElement.clientHeight,
+          relaxedViewportRatio: RESUME_AUTO_SCROLL_VIEWPORT_RATIO,
+          maxRelaxedThreshold: RESUME_AUTO_SCROLL_MAX_THRESHOLD,
+        });
         if (getDistanceFromBottom(scrollElement) <= currentResumeThreshold) {
           userIntentReleasedRef.current = false;
           userIntentDownwardRef.current = false;

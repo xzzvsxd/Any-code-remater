@@ -44,6 +44,7 @@ import { codexConverter } from '@/lib/codexConverter';
 import { convertGeminiSessionDetailToClaudeMessages } from '@/lib/geminiConverter';
 import { formatClaudeModelLabel, resolveClaudeContinuationModel } from '@/lib/claudeModelSelection';
 import { buildQueueStorageKey, loadQueuedPrompts, saveQueuedPrompts } from '@/lib/queuedPromptsStore';
+import { DEFAULT_CODEX_MODEL_ID } from '@/lib/codexModelSupport';
 import {
   getBranchPromptIndexForDisplayableMessage,
   getPromptNavigationIndexForDisplayableMessage,
@@ -322,7 +323,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     return {
       engine: 'claude',
       codexMode: 'read-only',
-      codexModel: 'gpt-5.5',
+      codexModel: DEFAULT_CODEX_MODEL_ID,
       geminiModel: 'gemini-3-flash',
     };
   });
@@ -1573,6 +1574,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
         isLoading={isLoading}
         error={error}
         parentRef={parentRef}
+        autoScrollLockedToBottom={isLoading && !userScrolled}
         executionStatus={executionStatus}
         onCancel={handleCancelExecution}
       />

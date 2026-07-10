@@ -32,10 +32,31 @@ export interface CodexModelConfig {
 const DEFAULT_CODEX_MODELS: CodexModelConfig[] = [
   {
     id: DEFAULT_CODEX_MODEL_ID,
-    name: "GPT-5.5",
-    description: "Newest flagship for coding and professional work, 1.05M context",
-    icon: <Star className="h-4 w-4 text-purple-500" />,
+    name: "GPT-5.6 Sol",
+    description: "Latest GPT-5.6 flagship preview, 1.05M context",
+    icon: <Star className="h-4 w-4 text-yellow-500" />,
     isDefault: true,
+  },
+  {
+    id: "gpt-5.6-terra",
+    name: "GPT-5.6 Terra",
+    description: "GPT-5.6 balanced preview, 1.05M context",
+    icon: <Brain className="h-4 w-4 text-emerald-500" />,
+    isDefault: false,
+  },
+  {
+    id: "gpt-5.6-luna",
+    name: "GPT-5.6 Luna",
+    description: "GPT-5.6 efficient preview, 1.05M context",
+    icon: <Zap className="h-4 w-4 text-sky-500" />,
+    isDefault: false,
+  },
+  {
+    id: "gpt-5.5",
+    name: "GPT-5.5",
+    description: "Previous flagship for coding and professional work, 1.05M context",
+    icon: <Star className="h-4 w-4 text-purple-500" />,
+    isDefault: false,
   },
   {
     id: "gpt-5.4",
@@ -101,6 +122,18 @@ const DEFAULT_CODEX_MODELS: CodexModelConfig[] = [
  */
 function getCodexModelIcon(modelId: string): React.ReactNode {
   const lower = modelId.toLowerCase();
+  if (lower.includes("5.6-sol")) {
+    return <Star className="h-4 w-4 text-yellow-500" />;
+  }
+  if (lower.includes("5.6-terra")) {
+    return <Brain className="h-4 w-4 text-emerald-500" />;
+  }
+  if (lower.includes("5.6-luna")) {
+    return <Zap className="h-4 w-4 text-sky-500" />;
+  }
+  if (lower.includes("5.6")) {
+    return <Star className="h-4 w-4 text-yellow-500" />;
+  }
   if (lower.includes("5.5-pro")) {
     return <Star className="h-4 w-4 text-red-500" />;
   }

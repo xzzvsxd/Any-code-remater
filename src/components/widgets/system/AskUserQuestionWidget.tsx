@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useOptionalUserQuestion, getQuestionId } from "@/contexts/UserQuestionContext";
 import {
+  getUnmatchedAnswerParts,
   getQuestionKey,
   isOptionSelectedSafe,
   normalizeAnswers,
@@ -322,6 +323,7 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
                 const questionKey = getQuestionKey(q);
                 const answer = questionAnswerMap.get(questionKey);
                 const hasAnswer = !!answer;
+                const customAnswerParts = getUnmatchedAnswerParts(answer, q.options || []);
 
                 return (
                   <div
@@ -350,7 +352,7 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
                     </div>
 
                     {/* 选项列表 */}
-                        {q.options && q.options.length > 0 && (
+                    {q.options && q.options.length > 0 && (
                       <div className="pl-6 space-y-1.5">
                         {q.options.map((option, optIndex) => {
                           const isSelected = isOptionSelectedSafe(option.label, answer);
@@ -416,6 +418,37 @@ export const AskUserQuestionWidget: React.FC<AskUserQuestionWidgetProps> = ({
                             <span>{t('widget.multipleChoice')}</span>
                           </div>
                         )}
+                      </div>
+                    )}
+
+                    {/* 自定义/开放式回答：答案不匹配任何预设选项时也必须显式渲染 */}
+                    {customAnswerParts.length > 0 && (
+                      <div className="pl-6 space-y-1.5">
+                        {customAnswerParts.map((customAnswer, customIndex) => (
+                          <div
+                            key={`custom-answer-${customIndex}`}
+                            className="text-xs p-2.5 rounded-md transition-all relative bg-green-500/15 border-2 border-green-500/40 shadow-md"
+                          >
+                            <div className="flex items-start gap-2.5">
+                              <div className="flex-shrink-0 h-5 w-5 rounded-full bg-green-500 flex items-center justify-center shadow-sm">
+                                <Check className="h-3.5 w-3.5 text-white font-bold" strokeWidth={3} />
+                              </div>
+                              <div className="flex-1 min-w-0 pt-0.5">
+                                <div className="flex items-center gap-2">
+                                  <div className="font-medium text-green-700 dark:text-green-300">
+                                    {t('widget.customAnswer', '自定义回答')}
+                                  </div>
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-green-500 text-white shadow-sm">
+                                    {t('widget.selected')}
+                                  </span>
+                                </div>
+                                <div className="mt-0.5 text-green-600 dark:text-green-400 whitespace-pre-wrap break-words">
+                                  {customAnswer}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>

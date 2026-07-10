@@ -127,7 +127,28 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   // Note: Codex 使用 ChatGPT 订阅时按会话限制计费，API Key 用户按 token 计费
   // ============================================================================
 
-  // GPT-5.5 - current flagship model
+  // GPT-5.6 Preview Series (Sol / Terra / Luna)
+  // Source: OpenAI API pricing (July 2026)
+  'gpt-5.6-sol': {
+    input: 5.00,
+    output: 30.00,
+    cacheWrite: 6.25,
+    cacheRead: 0.50
+  },
+  'gpt-5.6-terra': {
+    input: 2.50,
+    output: 15.00,
+    cacheWrite: 3.125,
+    cacheRead: 0.25
+  },
+  'gpt-5.6-luna': {
+    input: 1.00,
+    output: 6.00,
+    cacheWrite: 1.25,
+    cacheRead: 0.10
+  },
+
+  // GPT-5.5 - previous flagship model
   'gpt-5.5': {
     input: 5.00,
     output: 30.00,
@@ -376,7 +397,21 @@ export function getPricingForModel(model?: string, engine?: string): ModelPricin
   // Codex Models (OpenAI)
   // ============================================================================
 
-  // GPT-5.5 系列（当前旗舰）
+  // GPT-5.6 系列（Sol / Terra / Luna 预览）
+  if (normalized.includes('5.6-sol') || normalized.includes('5_6_sol')) {
+    return MODEL_PRICING['gpt-5.6-sol'];
+  }
+  if (normalized.includes('5.6-terra') || normalized.includes('5_6_terra')) {
+    return MODEL_PRICING['gpt-5.6-terra'];
+  }
+  if (normalized.includes('5.6-luna') || normalized.includes('5_6_luna')) {
+    return MODEL_PRICING['gpt-5.6-luna'];
+  }
+  if (normalized.includes('gpt-5.6') || normalized.includes('gpt5.6') || normalized.includes('gpt_5_6')) {
+    return MODEL_PRICING['gpt-5.6-sol'];
+  }
+
+  // GPT-5.5 系列（上一代旗舰）
   if (normalized.includes('5.5-pro') || normalized.includes('5_5_pro')) {
     return MODEL_PRICING['gpt-5.5-pro'];
   }
@@ -440,9 +475,9 @@ export function getPricingForModel(model?: string, engine?: string): ModelPricin
     return MODEL_PRICING['gpt-5-codex'];
   }
 
-  // 通用 Codex 匹配 - 默认使用 gpt-5.5
+  // 通用 Codex 匹配 - 默认使用 gpt-5.6-sol
   if (normalized.includes('codex')) {
-    return MODEL_PRICING['gpt-5.5'];
+    return MODEL_PRICING['gpt-5.6-sol'];
   }
 
   // ============================================================================
@@ -509,9 +544,9 @@ export function getPricingForModel(model?: string, engine?: string): ModelPricin
     return MODEL_PRICING['claude-sonnet-4.6']; // Default to latest
   }
 
-  // Codex 引擎使用 GPT-5.5 默认定价
+  // Codex 引擎使用 GPT-5.6 Sol 默认定价
   if (engine === 'codex') {
-    return MODEL_PRICING['gpt-5.5'];
+    return MODEL_PRICING['gpt-5.6-sol'];
   }
 
   // Gemini 引擎使用 Gemini 默认定价

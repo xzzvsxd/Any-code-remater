@@ -11,14 +11,26 @@ describe('virtualizer scroll adjustment policy', () => {
     })).toBe(false);
   });
 
-  test('does not preserve old anchor when already near the bottom', () => {
+  test('does not preserve old anchor when sticky bottom-follow owns the scroll position', () => {
     expect(shouldPreserveScrollAnchorOnMeasuredSizeChange({
       itemStart: 100,
       scrollOffset: 500,
       distanceFromBottom: 12,
       bottomSettleActive: false,
+      autoScrollLockedToBottom: true,
       nearBottomThresholdPx: 32,
     })).toBe(false);
+  });
+
+  test('preserves anchor near bottom while the user is manually browsing a running session', () => {
+    expect(shouldPreserveScrollAnchorOnMeasuredSizeChange({
+      itemStart: 100,
+      scrollOffset: 500,
+      distanceFromBottom: 12,
+      bottomSettleActive: false,
+      autoScrollLockedToBottom: false,
+      nearBottomThresholdPx: 32,
+    })).toBe(true);
   });
 
   test('preserves anchor for measured items above viewport while user is away from bottom', () => {

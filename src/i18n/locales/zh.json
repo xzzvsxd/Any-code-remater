@@ -1139,6 +1139,7 @@
     "multipleChoice": "多选",
     "singleChoice": "单选",
     "selected": "已选择",
+    "customAnswer": "自定义回答",
     "failed": "失败",
     "completed": "完成",
     "running": "运行中",

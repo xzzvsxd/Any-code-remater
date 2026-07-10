@@ -153,6 +153,9 @@ export const CLAUDE_CONTEXT_WINDOWS = {
 // ============================================================================
 
 export const CODEX_CONTEXT_WINDOWS = {
+  'gpt-5.6-sol': 1_050_000,
+  'gpt-5.6-terra': 1_050_000,
+  'gpt-5.6-luna': 1_050_000,
   'gpt-5.5': 1_050_000,
   'gpt-5.5-pro': 1_050_000,
   'gpt-5.4': 1_050_000,
@@ -234,6 +237,19 @@ export function getContextWindowSize(model?: string, engine?: string): number {
     // 灏濊瘯鐩存帴鍖归厤
     if (lowerModel in CODEX_CONTEXT_WINDOWS) {
       return CODEX_CONTEXT_WINDOWS[lowerModel as keyof typeof CODEX_CONTEXT_WINDOWS];
+    }
+
+    if (lowerModel.includes('5.6-sol') || lowerModel.includes('5_6_sol')) {
+      return CODEX_CONTEXT_WINDOWS['gpt-5.6-sol'];
+    }
+    if (lowerModel.includes('5.6-terra') || lowerModel.includes('5_6_terra')) {
+      return CODEX_CONTEXT_WINDOWS['gpt-5.6-terra'];
+    }
+    if (lowerModel.includes('5.6-luna') || lowerModel.includes('5_6_luna')) {
+      return CODEX_CONTEXT_WINDOWS['gpt-5.6-luna'];
+    }
+    if (lowerModel.includes('gpt-5.6') || lowerModel.includes('gpt_5_6') || lowerModel.includes('5.6')) {
+      return CODEX_CONTEXT_WINDOWS['gpt-5.6-sol'];
     }
 
     if (lowerModel.includes('5.5-pro') || lowerModel.includes('5_5_pro')) {

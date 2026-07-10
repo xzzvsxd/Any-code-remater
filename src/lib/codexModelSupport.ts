@@ -1,4 +1,4 @@
-export const DEFAULT_CODEX_MODEL_ID = 'gpt-5.5';
+export const DEFAULT_CODEX_MODEL_ID = 'gpt-5.6-sol';
 
 const UNSUPPORTED_CODEX_MODEL_FALLBACKS: Record<string, string> = {
   'gpt-5.5-pro': DEFAULT_CODEX_MODEL_ID,

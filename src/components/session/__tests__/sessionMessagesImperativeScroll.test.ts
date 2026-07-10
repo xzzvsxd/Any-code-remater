@@ -33,6 +33,13 @@ describe('SessionMessages imperative scrolling invariants', () => {
       /scrollToBottom:\s*\(\)\s*=>\s*{[\s\S]*?cancelBottomScrollLoop\(\);[\s\S]*?rowVirtualizer\.scrollToIndex\(messageGroups\.length - 1,[\s\S]*?if \(isLoading\) \{[\s\S]*?return;[\s\S]*?let rafId = 0;/,
     );
     expect(source).not.toMatch(/if \(isLoading\) return;[\s\S]{0,200}rowVirtualizer\.scrollToIndex\(messageGroups\.length - 1/);
+    expect(source).not.toContain('el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight)');
+  });
+
+  test('virtualizer measurement only disables anchor preservation while sticky bottom-follow is active', () => {
+    expect(source).toContain('autoScrollLockedToBottom?: boolean');
+    expect(source).toContain('autoScrollLockedToBottom,');
+    expect(source).toContain('autoScrollLockedToBottom,');
   });
 
   test('new imperative scroll commands cancel any pending prompt-navigation retry loop', () => {

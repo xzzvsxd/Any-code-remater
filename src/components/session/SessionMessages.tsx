@@ -82,6 +82,12 @@ interface SessionMessagesProps {
   isLoading: boolean;
   error?: string | null;
   parentRef: React.RefObject<HTMLDivElement>;
+  /**
+   * 运行中会话是否由 sticky auto-scroll 接管底部。
+   * false 表示用户正在手动浏览/尚未恢复粘底，此时虚拟列表测高必须保锚点，
+   * 即使已经接近底部，也不能用“贴底模式”关闭补偿，否则会出现底部回弹。
+   */
+  autoScrollLockedToBottom?: boolean;
   executionStatus?: ExecutionStatusInfo;
   /** 取消执行回调 - 用于CLI风格处理指示器 */
   onCancel?: () => void;
@@ -92,6 +98,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
   isLoading,
   error,
   parentRef,
+  autoScrollLockedToBottom = false,
   executionStatus,
   onCancel
 }, ref) => {
@@ -272,6 +279,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       scrollOffset,
       distanceFromBottom,
       bottomSettleActive: bottomScrollRafRef.current !== 0,
+      autoScrollLockedToBottom,
     });
   };
 
@@ -481,11 +489,6 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
           align: 'end',
           behavior: 'auto',
         });
-
-        const el = parentRef.current;
-        if (el) {
-          el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
-        }
       };
 
       alignLastRowToBottom();

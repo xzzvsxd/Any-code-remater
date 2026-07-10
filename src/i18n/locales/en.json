@@ -1139,6 +1139,7 @@
     "multipleChoice": "Multiple Choice",
     "singleChoice": "Single Choice",
     "selected": "Selected",
+    "customAnswer": "Custom answer",
     "failed": "Failed",
     "completed": "Completed",
     "running": "Running",

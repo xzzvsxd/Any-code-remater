@@ -26,6 +26,10 @@ describe('ClaudeCodeSession initial bottom scroll invariants', () => {
     expect(source).not.toContain('el.scrollTop = el.scrollHeight - el.clientHeight');
   });
 
+  test('passes sticky bottom ownership into SessionMessages for streaming measurement policy', () => {
+    expect(source).toContain('autoScrollLockedToBottom={isLoading && !userScrolled}');
+  });
+
   test('cancels stale initial bottom scroll frames when the session changes', () => {
     expect(source).toContain('const rafId = requestAnimationFrame(() => {');
     expect(source).toMatch(
