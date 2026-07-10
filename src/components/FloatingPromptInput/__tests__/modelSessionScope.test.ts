@@ -5,6 +5,7 @@ import {
   parseSessionModelForPromptInput,
   readPromptInputScopedModel,
   resolvePromptInputModelForScopeChange,
+  shouldPersistPromptInputModelForScopeTransition,
   writePromptInputScopedModel,
 } from '../modelSessionScope';
 
@@ -76,6 +77,27 @@ describe('FloatingPromptInput session-scoped model state', () => {
       userDefaultModel: 'claude-sonnet-5',
       defaultModel: 'sonnet',
     })).toBe('claude-opus-4-8[1m]');
+  });
+
+  test('keeps explicit 1M when switching to a session whose runtime model only dropped the suffix', () => {
+    expect(resolvePromptInputModelForScopeChange({
+      previousScopeKey: 'session:old',
+      nextScopeKey: 'session:new-bare-runtime',
+      currentModel: 'claude-opus-4-8[1m]',
+      sessionModel: 'claude-opus-4-8',
+      userDefaultModel: 'claude-sonnet-5',
+      defaultModel: 'sonnet',
+    })).toBe('claude-opus-4-8[1m]');
+  });
+
+  test('persists carried 1M intent into the new session scope for future restores', () => {
+    expect(shouldPersistPromptInputModelForScopeTransition({
+      previousScopeKey: 'session:old',
+      nextScopeKey: 'session:new-bare-runtime',
+      currentModel: 'claude-opus-4-8[1m]',
+      sessionModel: 'claude-opus-4-8',
+      nextModel: 'claude-opus-4-8[1m]',
+    })).toBe(true);
   });
 
   test('uses the user default only for a new empty scope without a session model', () => {

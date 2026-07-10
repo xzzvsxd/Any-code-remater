@@ -88,6 +88,28 @@ export function isPromptInputDraftToSessionPromotion(previousScopeKey: string, n
   return previousScopeKey.startsWith('draft:') && nextScopeKey.startsWith('session:');
 }
 
+export function shouldPersistPromptInputModelForScopeTransition({
+  previousScopeKey,
+  nextScopeKey,
+  currentModel,
+  sessionModel,
+  nextModel,
+}: {
+  previousScopeKey: string;
+  nextScopeKey: string;
+  currentModel: ModelType;
+  sessionModel?: string | null;
+  nextModel: ModelType;
+}): boolean {
+  if (isPromptInputDraftToSessionPromotion(previousScopeKey, nextScopeKey)) {
+    return true;
+  }
+
+  return nextScopeKey.startsWith('session:')
+    && nextModel === currentModel
+    && doesSessionModelOnlyDropOneMillion(currentModel, sessionModel);
+}
+
 export function buildPromptInputModelScopeKey({
   sessionId,
   draftTabId,
@@ -143,6 +165,17 @@ export function resolvePromptInputModelForScopeChange({
   // 这是同一个逻辑会话的身份升级，不是用户切换到了另一个会话；必须保留当前 UI
   // 选择（尤其是 claude-*- [1m]），否则真实 sessionId 回填瞬间会把 1M 按钮打掉。
   if (isPromptInputDraftToSessionPromotion(previousScopeKey, nextScopeKey)) {
+    return currentModel;
+  }
+
+  // 切换到另一个会话时，session.model 常来自 Claude runtime 回填，通常只记录裸模型
+  // （如 claude-opus-4-8），不会带 Any Code UI 的 [1m] 意图。若目标会话模型与当前
+  // UI 模型只差 [1m] 后缀，说明这是“运行时裸模型覆盖 UI 意图”的同类问题，保留当前
+  // 显式 1M 选择，并由调用方写入目标 session scope，保证下次恢复不再丢。
+  if (
+    nextScopeKey.startsWith('session:')
+    && doesSessionModelOnlyDropOneMillion(currentModel, sessionModel)
+  ) {
     return currentModel;
   }
 

@@ -23,10 +23,10 @@ import { resolveSelectedModelName } from "./resolveModelName";
 import {
   buildPromptInputModelScopeKey,
   doesSessionModelOnlyDropOneMillion,
-  isPromptInputDraftToSessionPromotion,
   parseSessionModelForPromptInput,
   readPromptInputScopedModel,
   resolvePromptInputModelForScopeChange,
+  shouldPersistPromptInputModelForScopeTransition,
   writePromptInputScopedModel,
 } from "./modelSessionScope";
 
@@ -528,7 +528,13 @@ const FloatingPromptInputInner = (
     lastModelScopeKeyRef.current = nextScopeKey;
     appliedSessionModelScopeKeyRef.current = parsedSessionModel ? nextScopeKey : '';
 
-    if (isPromptInputDraftToSessionPromotion(previousScopeKey, nextScopeKey)) {
+    if (shouldPersistPromptInputModelForScopeTransition({
+      previousScopeKey,
+      nextScopeKey,
+      currentModel: state.selectedModel,
+      sessionModel,
+      nextModel,
+    })) {
       writePromptInputScopedModel(nextScopeKey, nextModel);
     }
 

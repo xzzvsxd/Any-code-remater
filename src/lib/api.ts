@@ -789,6 +789,20 @@ export const api = {
    * Lists all projects in the ~/.claude/projects directory
    * @returns Promise resolving to an array of projects
    */
+  async listProjectsFast(): Promise<Project[]> {
+    try {
+      return await invoke<Project[]>("list_projects_fast");
+    } catch (error) {
+      console.error("Failed to list projects quickly:", error);
+      throw error;
+    }
+  },
+
+  /**
+   * Lists all projects with cross-engine session counts. This is intentionally
+   * heavier than listProjectsFast and should not block first paint/startup.
+   * @returns Promise resolving to an array of projects
+   */
   async listProjects(): Promise<Project[]> {
     try {
       return await invoke<Project[]>("list_projects");

@@ -99,6 +99,29 @@ const getCodexSessionActivitySeconds = (session: any): number => {
   return 0;
 };
 
+type IdleWindow = Window & {
+  requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
+  cancelIdleCallback?: (handle: number) => void;
+};
+
+const PROJECT_HYDRATION_IDLE_TIMEOUT_MS = 1_500;
+const PROJECT_HYDRATION_FALLBACK_DELAY_MS = 350;
+
+const scheduleDeferredProjectHydration = (callback: () => void) => {
+  const idleWindow: IdleWindow | undefined =
+    typeof window !== 'undefined' ? (window as IdleWindow) : undefined;
+
+  if (idleWindow?.requestIdleCallback) {
+    const handle = idleWindow.requestIdleCallback(callback, {
+      timeout: PROJECT_HYDRATION_IDLE_TIMEOUT_MS,
+    });
+    return () => idleWindow.cancelIdleCallback?.(handle);
+  }
+
+  const timeoutId = setTimeout(callback, PROJECT_HYDRATION_FALLBACK_DELAY_MS);
+  return () => clearTimeout(timeoutId);
+};
+
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
 
 export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -121,6 +144,8 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   const codexSessionsCacheRef = useRef<{ value: any[]; expiresAt: number } | null>(null);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshPromiseRef = useRef<Promise<void> | null>(null);
+  const projectHydrationRequestRef = useRef(0);
+  const projectHydrationCancelRef = useRef<(() => void) | null>(null);
   const sessionLoadRequestRef = useRef(0);
   const loading = projectsLoading || sessionsLoading || mutationLoading;
 
@@ -252,19 +277,22 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     };
   }, [getCachedCodexSessions, normalizeProjectPath, resolveEffectiveProject]);
 
-  const loadProjects = useCallback(async () => {
-    try {
-      setProjectsLoading(true);
-      setError(null);
-      const list = await api.listProjects();
-      const sortedList = [...list].sort((a, b) => b.created_at - a.created_at);
-      // 读 ref 最新值而非闭包捕获值，避免迟到回调用旧手动项目列表覆盖新建项目。
-      setProjects(mergeProjects(sortedList, manualProjectsRef.current));
+  const hydrateProjectMetadata = useCallback((baseProjects: Project[], requestId: number) => {
+    const runHydration = async () => {
+      if (projectHydrationRequestRef.current !== requestId) return;
 
-      getCachedCodexSessions()
-        .then(codexSessions => {
+      try {
+        const fullProjects = await api.listProjects();
+        if (projectHydrationRequestRef.current !== requestId) return;
+
+        let hydratedProjects = [...fullProjects].sort((a, b) => b.created_at - a.created_at);
+
+        try {
+          const codexSessions = await getCachedCodexSessions();
+          if (projectHydrationRequestRef.current !== requestId) return;
+
           const projectLastActive = new Map<string, number>();
-          sortedList.forEach(project => {
+          hydratedProjects.forEach(project => {
             projectLastActive.set(normalizeProjectPath(project.path), project.created_at);
           });
 
@@ -278,25 +306,58 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             }
           });
 
-          const resortedList = [...sortedList].sort((a, b) => {
+          hydratedProjects = [...hydratedProjects].sort((a, b) => {
             const timeA = projectLastActive.get(normalizeProjectPath(a.path)) || a.created_at;
             const timeB = projectLastActive.get(normalizeProjectPath(b.path)) || b.created_at;
             return timeB - timeA;
           });
-
-          // 同上：合并当下最新的手动项目，防止竞态抹除。
-          setProjects(mergeProjects(resortedList, manualProjectsRef.current));
-        })
-        .catch(e => {
+        } catch (e) {
           console.warn("Failed to refresh Codex activity for project sorting:", e);
-        });
+        }
+
+        if (projectHydrationRequestRef.current === requestId) {
+          setProjects(mergeProjects(hydratedProjects, manualProjectsRef.current));
+        }
+      } catch (e) {
+        console.warn("Failed to hydrate cross-engine project metadata:", e);
+        if (projectHydrationRequestRef.current === requestId && baseProjects.length > 0) {
+          setProjects(mergeProjects(baseProjects, manualProjectsRef.current));
+        }
+      }
+    };
+
+    projectHydrationCancelRef.current?.();
+    projectHydrationCancelRef.current = scheduleDeferredProjectHydration(() => {
+      projectHydrationCancelRef.current = null;
+      void runHydration();
+    });
+  }, [getCachedCodexSessions, mergeProjects, normalizeProjectPath]);
+
+  const loadProjects = useCallback(async () => {
+    const requestId = projectHydrationRequestRef.current + 1;
+    projectHydrationRequestRef.current = requestId;
+    projectHydrationCancelRef.current?.();
+    projectHydrationCancelRef.current = null;
+
+    try {
+      setProjectsLoading(true);
+      setError(null);
+      const list = await api.listProjectsFast();
+      const sortedList = [...list].sort((a, b) => b.created_at - a.created_at);
+      // 读 ref 最新值而非闭包捕获值，避免迟到回调用旧手动项目列表覆盖新建项目。
+      if (projectHydrationRequestRef.current === requestId) {
+        setProjects(mergeProjects(sortedList, manualProjectsRef.current));
+        hydrateProjectMetadata(sortedList, requestId);
+      }
     } catch (err) {
       console.error("Failed to load projects:", err);
       setError(t('common.loadingProjects'));
     } finally {
-      setProjectsLoading(false);
+      if (projectHydrationRequestRef.current === requestId) {
+        setProjectsLoading(false);
+      }
     }
-  }, [getCachedCodexSessions, mergeProjects, normalizeProjectPath, t]);
+  }, [hydrateProjectMetadata, mergeProjects, t]);
 
   const selectProject = useCallback(async (project: Project) => {
     const requestId = sessionLoadRequestRef.current + 1;
@@ -559,6 +620,9 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   useEffect(() => {
     return () => {
+      projectHydrationRequestRef.current += 1;
+      projectHydrationCancelRef.current?.();
+      projectHydrationCancelRef.current = null;
       if (refreshTimerRef.current) {
         clearTimeout(refreshTimerRef.current);
       }

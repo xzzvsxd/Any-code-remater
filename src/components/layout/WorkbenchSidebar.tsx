@@ -596,6 +596,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
 
   const toggleProject = useCallback(async (project: Project) => {
     const willExpand = !expandedProjects.has(project.id);
+    const hasCachedSessions = sessionsByProject[project.id] !== undefined;
     // 多项目展开：增量展开/收起，不再收起其它项目（数据层已按项目缓存会话，互不抢占）。
     setExpandedProjects((prev) => {
       const next = new Set(prev);
@@ -603,14 +604,16 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
       return next;
     });
     if (willExpand) {
-      // 加载该项目会话到按项目缓存（不强制改 selectedProject，其它展开项目不受影响）。
-      loadProjectSessions(project).catch(() => { /* ignore */ });
-      // 同时把它设为"当前选中"用于高亮（selectProject 不再破坏其它展开项目）。
       if (selectedProject?.id !== project.id) {
+        // 选中项目时 selectProject 本身会加载并写入 sessionsByProject；
+        // 不要再并行 loadProjectSessions，否则同一个大项目会被双重扫描。
         try { await selectProject(project); } catch { /* ignore */ }
+      } else if (!hasCachedSessions) {
+        // 已是当前项目但缓存缺失时，才单独补一次按项目缓存。
+        loadProjectSessions(project).catch(() => { /* ignore */ });
       }
     }
-  }, [expandedProjects, selectedProject, selectProject, loadProjectSessions]);
+  }, [expandedProjects, sessionsByProject, selectedProject, selectProject, loadProjectSessions]);
 
   // 工作区理念：同时「打开(聚焦)」的只有一个会话。切换到另一个会话时，关闭上一个——
   // 但若上一个正在运行(streaming)，则保留它继续后台跑，不关闭(关闭会触发 cleanup 杀进程)。

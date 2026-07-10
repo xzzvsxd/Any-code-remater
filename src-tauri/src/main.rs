@@ -52,6 +52,7 @@ use commands::claude::{
     list_directory_contents,
     list_hidden_projects,
     list_projects,
+    list_projects_fast,
     list_running_claude_sessions,
     load_session_history,
     open_new_session,
@@ -403,6 +404,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             // Claude & Project Management
+            list_projects_fast,
             list_projects,
             get_project_sessions,
             delete_session,

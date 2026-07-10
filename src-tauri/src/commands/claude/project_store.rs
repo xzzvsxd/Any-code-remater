@@ -32,6 +32,7 @@ pub(crate) struct SessionSummary {
 
 const MAX_SESSION_SUMMARY_SCAN_LINES: usize = 200;
 const MAX_PROJECT_PATH_SCAN_FILES: usize = 20;
+const MAX_FAST_PROJECT_PATH_SCAN_FILES: usize = 3;
 const MAX_PROJECT_PATH_SCAN_LINES: usize = 10;
 
 pub(crate) fn is_displayable_user_text(text: &str) -> bool {
@@ -189,6 +190,94 @@ impl ProjectStore {
     #[cfg(test)]
     pub fn from_claude_dir_for_tests(claude_dir: PathBuf) -> Self {
         Self { claude_dir }
+    }
+
+    pub fn list_projects_fast(&self) -> Result<Vec<Project>, String> {
+        log::info!("Quick listing project shells from ~/.claude/projects");
+
+        let mut all_projects = Vec::new();
+        let projects_dir = self.projects_dir();
+        let mut hidden_projects = self.load_hidden_projects()?;
+
+        if projects_dir.exists() {
+            let entries: Vec<_> = fs::read_dir(&projects_dir)
+                .map_err(|e| format!("Failed to read projects directory: {}", e))?
+                .filter_map(|e| e.ok())
+                .collect();
+
+            let total_project_count = entries.iter().filter(|e| e.path().is_dir()).count();
+
+            if total_project_count > 0 && hidden_projects.len() >= total_project_count {
+                log::warn!(
+                    "Safety check triggered during fast listing: hidden_projects ({}) >= total projects ({}). Clearing hidden list to prevent all projects from being hidden.",
+                    hidden_projects.len(),
+                    total_project_count
+                );
+                if let Err(e) = self.save_hidden_projects(&[]) {
+                    log::error!("Failed to clear hidden projects file: {}", e);
+                }
+                hidden_projects.clear();
+            }
+
+            for entry in entries {
+                let path = entry.path();
+
+                if !path.is_dir() {
+                    continue;
+                }
+
+                let dir_name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .ok_or_else(|| "Invalid directory name".to_string())?;
+
+                if hidden_projects.contains(&dir_name.to_string()) {
+                    log::debug!("Skipping hidden project during fast listing: {}", dir_name);
+                    continue;
+                }
+
+                let metadata = fs::metadata(&path)
+                    .map_err(|e| format!("Failed to read directory metadata: {}", e))?;
+
+                let created_at = metadata
+                    .modified()
+                    .or_else(|_| metadata.created())
+                    .unwrap_or(SystemTime::UNIX_EPOCH)
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+
+                let project_path = match get_project_path_from_sessions_fast(&path) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        log::debug!(
+                            "Fast project path scan failed for {}: {}, falling back to decode",
+                            dir_name,
+                            e
+                        );
+                        decode_project_path(dir_name)
+                    }
+                };
+
+                // 首屏 fast shell 只返回项目本身，不枚举所有 JSONL 会话、也不填会话标题。
+                // 会话数/精确活跃时间由后台 full list_projects 补齐；会话标题在展开项目时加载。
+                all_projects.push(Project {
+                    id: dir_name.to_string(),
+                    path: project_path,
+                    sessions: Vec::new(),
+                    created_at,
+                    session_counts: super::models::SessionCounts {
+                        claude: 0,
+                        codex: 0,
+                        gemini: 0,
+                    },
+                });
+            }
+        } else {
+            log::warn!("Projects directory does not exist: {:?}", projects_dir);
+        }
+
+        self.deduplicate_projects(all_projects, hidden_projects.len())
     }
 
     pub fn list_projects(&self) -> Result<Vec<Project>, String> {
@@ -842,6 +931,83 @@ impl ProjectStore {
     }
 }
 
+fn normalize_project_cwd(cwd: &str) -> String {
+    let cleaned_cwd = cwd.replace("\\\\", "\\");
+
+    // On macOS, avoid canonicalize() as it resolves symlinks and can cause
+    // path mismatches (e.g., /tmp -> /private/tmp, /var -> /private/var)
+    // Also, canonicalize() fails if the path doesn't exist (project moved/deleted)
+    #[cfg(target_os = "macos")]
+    {
+        normalize_macos_path(&cleaned_cwd)
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let path_str = Path::new(&cleaned_cwd)
+            .canonicalize()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| cleaned_cwd.clone());
+
+        // Remove Windows long path prefix (\\?\)
+        if path_str.starts_with("\\\\?\\") {
+            path_str[4..].to_string()
+        } else {
+            path_str
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        cleaned_cwd
+    }
+}
+
+fn read_project_cwd_from_session_file(path: &Path) -> Option<String> {
+    let file = fs::File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    for line in reader
+        .lines()
+        .map_while(Result::ok)
+        .take(MAX_PROJECT_PATH_SCAN_LINES)
+    {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
+            if let Some(cwd) = json.get("cwd").and_then(|v| v.as_str()) {
+                return Some(normalize_project_cwd(cwd));
+            }
+        }
+    }
+    None
+}
+
+fn get_project_path_from_sessions_fast(project_dir: &Path) -> Result<String, String> {
+    let mut scanned_jsonl = 0usize;
+    let entries = fs::read_dir(project_dir)
+        .map_err(|e| format!("Failed to read project directory: {}", e))?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !(path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("jsonl")) {
+            continue;
+        }
+
+        scanned_jsonl += 1;
+        if let Some(cwd) = read_project_cwd_from_session_file(&path) {
+            return Ok(cwd);
+        }
+
+        if scanned_jsonl >= MAX_FAST_PROJECT_PATH_SCAN_FILES {
+            break;
+        }
+    }
+
+    if let Some(path) = project_dir.file_name().and_then(|name| name.to_str()) {
+        Ok(decode_project_path(path))
+    } else {
+        Err("Could not determine project path from session files".to_string())
+    }
+}
+
 fn get_project_path_from_sessions(project_dir: &Path) -> Result<String, String> {
     let mut jsonl_paths: Vec<(PathBuf, u64)> = fs::read_dir(project_dir)
         .map_err(|e| format!("Failed to read project directory: {}", e))?
@@ -864,44 +1030,8 @@ fn get_project_path_from_sessions(project_dir: &Path) -> Result<String, String> 
     jsonl_paths.sort_by(|a, b| b.1.cmp(&a.1));
 
     for (path, _) in jsonl_paths.into_iter().take(MAX_PROJECT_PATH_SCAN_FILES) {
-        if let Ok(file) = fs::File::open(&path) {
-            let reader = BufReader::new(file);
-            for line in reader
-                .lines()
-                .map_while(Result::ok)
-                .take(MAX_PROJECT_PATH_SCAN_LINES)
-            {
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
-                    if let Some(cwd) = json.get("cwd").and_then(|v| v.as_str()) {
-                        let cleaned_cwd = cwd.replace("\\\\", "\\");
-
-                        // On macOS, avoid canonicalize() as it resolves symlinks and can cause
-                        // path mismatches (e.g., /tmp -> /private/tmp, /var -> /private/var)
-                        // Also, canonicalize() fails if the path doesn't exist (project moved/deleted)
-                        #[cfg(target_os = "macos")]
-                        let normalized_cwd = normalize_macos_path(&cleaned_cwd);
-
-                        #[cfg(target_os = "windows")]
-                        let normalized_cwd = Path::new(&cleaned_cwd)
-                            .canonicalize()
-                            .map(|p| {
-                                let path_str = p.to_string_lossy().to_string();
-                                // Remove Windows long path prefix (\\?\)
-                                if path_str.starts_with("\\\\?\\") {
-                                    path_str[4..].to_string()
-                                } else {
-                                    path_str
-                                }
-                            })
-                            .unwrap_or_else(|_| cleaned_cwd.clone());
-
-                        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-                        let normalized_cwd = cleaned_cwd.clone();
-
-                        return Ok(normalized_cwd);
-                    }
-                }
-            }
+        if let Some(cwd) = read_project_cwd_from_session_file(&path) {
+            return Ok(cwd);
         }
     }
 
@@ -967,6 +1097,35 @@ mod tests {
 
         assert_eq!(projects.len(), 1);
         assert_eq!(projects[0].sessions, vec!["session-1".to_string()]);
+    }
+
+    #[test]
+    fn list_projects_fast_returns_shell_without_session_enumeration() {
+        let tmp = tempfile::tempdir().unwrap();
+        let claude_dir = tmp.path().join(".claude");
+        let project_dir = claude_dir.join("projects").join("demo-fast");
+        fs::create_dir_all(&project_dir).unwrap();
+
+        fs::write(
+            project_dir.join("session-1.jsonl"),
+            r#"{"type":"user","cwd":"/tmp/demo-fast","timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"real first prompt"}}"#,
+        )
+        .unwrap();
+
+        let store = ProjectStore::from_claude_dir_for_tests(claude_dir);
+        let fast_projects = store.list_projects_fast().unwrap();
+        let full_projects = store.list_projects().unwrap();
+
+        assert_eq!(fast_projects.len(), 1);
+        assert_eq!(fast_projects[0].path, "/tmp/demo-fast");
+        assert!(fast_projects[0].sessions.is_empty());
+        assert_eq!(fast_projects[0].session_counts.claude, 0);
+        assert_eq!(fast_projects[0].session_counts.codex, 0);
+        assert_eq!(fast_projects[0].session_counts.gemini, 0);
+
+        assert_eq!(full_projects.len(), 1);
+        assert_eq!(full_projects[0].sessions, vec!["session-1".to_string()]);
+        assert_eq!(full_projects[0].session_counts.claude, 1);
     }
 
     #[test]

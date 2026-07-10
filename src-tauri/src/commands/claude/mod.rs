@@ -73,6 +73,24 @@ static SCAN_CONCURRENCY: once_cell::sync::Lazy<tokio::sync::Semaphore> =
     once_cell::sync::Lazy::new(|| tokio::sync::Semaphore::new(2));
 
 #[tauri::command]
+pub async fn list_projects_fast() -> Result<Vec<Project>, String> {
+    // 首屏快速路径：只枚举 Claude 项目目录和少量 cwd 线索，立即返回项目树 shell。
+    // 不在这里 fan out 到 Codex/Gemini，也不枚举所有 JSONL 会话/标题；那些跨引擎
+    // 计数与会话标题由前端后台 hydration 或展开项目时按需加载。
+    let _permit = SCAN_CONCURRENCY
+        .acquire()
+        .await
+        .map_err(|e| format!("scan concurrency gate closed: {}", e))?;
+
+    tokio::task::spawn_blocking(|| {
+        let store = ProjectStore::new()?;
+        store.list_projects_fast()
+    })
+    .await
+    .map_err(|e| format!("list_projects_fast task failed: {}", e))?
+}
+
+#[tauri::command]
 pub async fn list_projects() -> Result<Vec<Project>, String> {
     // 限流：等待扫描配额，避免与其它扫描/轮询同时压垮磁盘与线程池。
     let _permit = SCAN_CONCURRENCY
