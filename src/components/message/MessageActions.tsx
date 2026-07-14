@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Copy, Check, RefreshCw, Edit2, AlertCircle } from "lucide-react";
+import { Copy, Check, RefreshCw, Edit2, AlertCircle, GitBranch, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -13,6 +13,8 @@ import { clipboardService } from "@/lib/clipboard";
 
 interface MessageActionsProps {
   content: string;
+  branchPromptIndex?: number;
+  onBranch?: (promptIndex: number) => void | Promise<void>;
   onRegenerate?: () => void;
   onEdit?: () => void;
   className?: string;
@@ -20,12 +22,28 @@ interface MessageActionsProps {
 
 export const MessageActions: React.FC<MessageActionsProps> = ({
   content,
+  branchPromptIndex = -1,
+  onBranch,
   onRegenerate,
   onEdit,
   className,
 }) => {
   const { t } = useTranslation();
   const [copyState, setCopyState] = useState<"idle" | "success" | "error">("idle");
+  const [branchBusy, setBranchBusy] = useState(false);
+  const canBranch = branchPromptIndex >= 0 && Boolean(onBranch);
+
+  const handleBranch = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    if (!canBranch || branchBusy || !onBranch) return;
+
+    try {
+      setBranchBusy(true);
+      await onBranch(branchPromptIndex);
+    } finally {
+      setBranchBusy(false);
+    }
+  };
 
   const handleCopy = async () => {
     try {
@@ -52,9 +70,35 @@ export const MessageActions: React.FC<MessageActionsProps> = ({
         "flex items-center gap-1 bg-background/80 backdrop-blur-sm border border-border/50 rounded-md shadow-sm p-1 transition-all",
         className
       )}>
+        {canBranch && (
+          <>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={handleBranch}
+                  disabled={branchBusy}
+                  className="h-6 w-6 text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-60"
+                >
+                  {branchBusy ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <GitBranch className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("message.branchFromHere", "从这里分支")}</TooltipContent>
+            </Tooltip>
+            <div aria-hidden="true" className="h-4 w-px bg-border/70" />
+          </>
+        )}
+
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
+              type="button"
               variant="ghost"
               size="icon-xs"
               onClick={handleCopy}
@@ -76,6 +120,7 @@ export const MessageActions: React.FC<MessageActionsProps> = ({
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
+                type="button"
                 variant="ghost"
                 size="icon-xs"
                 onClick={onRegenerate}
@@ -92,6 +137,7 @@ export const MessageActions: React.FC<MessageActionsProps> = ({
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
+                type="button"
                 variant="ghost"
                 size="icon-xs"
                 onClick={onEdit}

@@ -1,7 +1,6 @@
 import React, { useImperativeHandle, forwardRef, useEffect, useRef, useCallback, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { StreamMessageV2 } from "@/components/message";
-import { MessageBranchButton } from "@/components/message/MessageBranchButton";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import type { MessageGroup } from "@/lib/subagentGrouping";
 import { useSession } from "@/contexts/SessionContext";
@@ -841,50 +840,40 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
                   measureElement={rowVirtualizer.measureElement}
                   className="relative w-full"
                 >
-                  {/* group 容器：hover 时在右上角显示分支按钮，不打断现有消息渲染 */}
-                  <div className="relative group/msg">
-                    {/* ✅ 防白屏：单条消息 / 单个工具渲染异常只能降级当前行，不能击穿整个会话窗口 */}
-                    <ErrorBoundary
-                      resetKeys={[
-                        getGroupKey(messageGroup, virtualItem.index),
-                        getMessageGroupRenderRevision(messageGroup, virtualItem.index),
-                        isStreaming,
-                      ]}
-                      fallback={(error) => (
-                        <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
-                          <div className="font-medium">消息渲染失败，已跳过此条以防止会话白屏。</div>
-                          {error?.message && (
-                            <pre className="mt-2 max-h-24 overflow-auto whitespace-pre-wrap break-words text-[11px] opacity-80">
-                              {error.message}
-                            </pre>
-                          )}
-                        </div>
-                      )}
-                    >
-                      {/* ✅ 架构优化: StreamMessageV2 现在从 SessionContext 获取数据 */}
-                      <StreamMessageV2
-                        messageGroup={messageGroup}
-                        onLinkDetected={onLinkDetected}
-                        claudeSettings={settings}
-                        isStreaming={isStreaming}
-                        promptIndex={promptIndex}
-                        promptNavigationIndex={promptNavigationIndex}
-                        sessionId={sessionId ?? undefined}
-                        projectId={projectId ?? undefined}
-                        projectPath={projectPath}
-                        onRevert={onRevert}
-                      />
-                    </ErrorBoundary>
-                    {/* 分支按钮：仅可分支节点显示，且像复制按钮一样 hover 才浮现 */}
-                    {!isStreaming && branchPromptIndex >= 0 && (
-                      <div className="absolute top-1 right-1 z-20 opacity-0 group-hover/msg:opacity-100 transition-opacity">
-                        <MessageBranchButton
-                          branchPromptIndex={branchPromptIndex}
-                          onBranch={onBranch}
-                        />
+                  {/* message actions share the message component hover toolbar */}
+                  <ErrorBoundary
+                    resetKeys={[
+                      getGroupKey(messageGroup, virtualItem.index),
+                      getMessageGroupRenderRevision(messageGroup, virtualItem.index),
+                      isStreaming,
+                    ]}
+                    fallback={(error) => (
+                      <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+                        <div className="font-medium">消息渲染失败，已跳过此条以防止会话白屏。</div>
+                        {error?.message && (
+                          <pre className="mt-2 max-h-24 overflow-auto whitespace-pre-wrap break-words text-[11px] opacity-80">
+                            {error.message}
+                          </pre>
+                        )}
                       </div>
                     )}
-                  </div>
+                  >
+                    {/* ✅ 架构优化: StreamMessageV2 现在从 SessionContext 获取数据 */}
+                    <StreamMessageV2
+                      messageGroup={messageGroup}
+                      onLinkDetected={onLinkDetected}
+                      claudeSettings={settings}
+                      isStreaming={isStreaming}
+                      promptIndex={promptIndex}
+                      promptNavigationIndex={promptNavigationIndex}
+                      sessionId={sessionId ?? undefined}
+                      projectId={projectId ?? undefined}
+                      projectPath={projectPath}
+                      onRevert={onRevert}
+                      branchPromptIndex={!isStreaming ? branchPromptIndex : -1}
+                      onBranch={onBranch}
+                    />
+                  </ErrorBoundary>
                 </MeasurableItem>
               );
             })}

@@ -23,6 +23,8 @@ interface StreamMessageV2Props {
   projectId?: string;
   projectPath?: string;
   onRevert?: (promptIndex: number, mode: RewindMode) => void;
+  branchPromptIndex?: number;
+  onBranch?: (promptIndex: number) => void | Promise<void>;
 }
 
 // Message renderer strategy map
@@ -64,7 +66,9 @@ const StreamMessageV2Component: React.FC<StreamMessageV2Props> = ({
   sessionId,
   projectId,
   projectPath,
-  onRevert
+  onRevert,
+  branchPromptIndex,
+  onBranch
 }) => {
   // 如果提供了 messageGroup，优先使用分组渲染
   if (messageGroup) {
@@ -229,12 +233,18 @@ const StreamMessageV2Component: React.FC<StreamMessageV2Props> = ({
     sessionId,
     projectId,
     projectPath,
-    onRevert
+    onRevert,
+    branchPromptIndex,
+    onBranch
   } : messageType === 'assistant' ? {
     isStreaming,
-    onLinkDetected
+    onLinkDetected,
+    branchPromptIndex,
+    onBranch
   } : messageType === 'system' ? {
-    claudeSettings
+    claudeSettings,
+    branchPromptIndex,
+    onBranch
   } : {};
 
   return <Renderer {...commonProps} {...specificProps} />;
@@ -399,6 +409,8 @@ export const StreamMessageV2 = React.memo(
         prevProps.promptNavigationIndex === nextProps.promptNavigationIndex &&
         prevProps.sessionId === nextProps.sessionId &&
         prevProps.projectId === nextProps.projectId &&
+        prevProps.branchPromptIndex === nextProps.branchPromptIndex &&
+        prevProps.onBranch === nextProps.onBranch &&
         prevProps.claudeSettings?.showSystemInitialization === nextProps.claudeSettings?.showSystemInitialization
       );
     }
@@ -417,6 +429,8 @@ export const StreamMessageV2 = React.memo(
       prevProps.sessionId === nextProps.sessionId &&
       prevProps.projectId === nextProps.projectId &&
       prevProps.projectPath === nextProps.projectPath &&
+      prevProps.branchPromptIndex === nextProps.branchPromptIndex &&
+      prevProps.onBranch === nextProps.onBranch &&
       prevProps.claudeSettings?.showSystemInitialization === nextProps.claudeSettings?.showSystemInitialization
       // Note: onLinkDetected and onRevert are assumed to be stable via useCallback
     );

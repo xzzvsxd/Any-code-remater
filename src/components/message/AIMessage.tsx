@@ -23,6 +23,8 @@ interface AIMessageProps {
   className?: string;
   /** 链接检测回调 */
   onLinkDetected?: (url: string) => void;
+  branchPromptIndex?: number;
+  onBranch?: (promptIndex: number) => void | Promise<void>;
 }
 
 /**
@@ -38,7 +40,9 @@ export const AIMessage: React.FC<AIMessageProps> = ({
   message,
   isStreaming = false,
   className,
-  onLinkDetected
+  onLinkDetected,
+  branchPromptIndex,
+  onBranch
 }) => {
   const contentParts = getRenderableAiContentParts(message);
   const {
@@ -116,7 +120,11 @@ export const AIMessage: React.FC<AIMessageProps> = ({
           <div className="flex-1 min-w-0 space-y-1 relative">
             {/* Actions Toolbar - Visible on Hover */}
             <div className="absolute -top-2 right-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
-              <MessageActions content={text || thinkingContent} />
+              <MessageActions
+                content={text || thinkingContent}
+                branchPromptIndex={branchPromptIndex}
+                onBranch={onBranch}
+              />
             </div>
 
             {/* Main Content */}

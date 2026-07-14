@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { toolRegistry } from "@/lib/toolRegistry";
 import { shouldRenderStructuredCommandOutputAsPlainText } from "@/lib/markdownRenderSafety";
 import { LargePlainTextContent } from "./MessageContent";
+import { MessageActions } from "./MessageActions";
 import type { ClaudeStreamMessage } from "@/types/claude";
 
 /**
@@ -125,6 +126,8 @@ interface SystemMessageProps {
   message: ClaudeStreamMessage;
   className?: string;
   claudeSettings?: { showSystemInitialization?: boolean };
+  branchPromptIndex?: number;
+  onBranch?: (promptIndex: number) => void | Promise<void>;
 }
 
 const formatTimestamp = (timestamp: string | undefined): string => {
@@ -204,6 +207,8 @@ export const SystemMessage: React.FC<SystemMessageProps> = ({
   message,
   className,
   claudeSettings,
+  branchPromptIndex,
+  onBranch,
 }) => {
   const subtype = message.subtype;
 
@@ -249,7 +254,14 @@ export const SystemMessage: React.FC<SystemMessageProps> = ({
   }
 
   if (subtype === "execution-complete" || subtype === "execution-cancelled" || subtype === "execution-error") {
-    return <ExecutionStatusMessage message={message} className={className} />;
+    return (
+      <ExecutionStatusMessage
+        message={message}
+        className={className}
+        branchPromptIndex={branchPromptIndex}
+        onBranch={onBranch}
+      />
+    );
   }
 
   // 🆕 处理斜杠命令错误（如 "Unknown slash command: help"）
@@ -326,9 +338,16 @@ export const SystemMessage: React.FC<SystemMessageProps> = ({
 
 SystemMessage.displayName = "SystemMessage";
 
-const ExecutionStatusMessage: React.FC<{ message: ClaudeStreamMessage; className?: string }> = ({
+const ExecutionStatusMessage: React.FC<{
+  message: ClaudeStreamMessage;
+  className?: string;
+  branchPromptIndex?: number;
+  onBranch?: (promptIndex: number) => void | Promise<void>;
+}> = ({
   message,
   className,
+  branchPromptIndex,
+  onBranch,
 }) => {
   const content = (message as any).result || extractMessageContent(message);
   if (!content) return null;
@@ -341,7 +360,16 @@ const ExecutionStatusMessage: React.FC<{ message: ClaudeStreamMessage; className
   const Icon = isComplete ? Info : isCancelled ? Terminal : AlertCircle;
 
   return (
-    <div className={cn("my-4", className)}>
+    <div className={cn("group relative my-4", className)}>
+      {branchPromptIndex !== undefined && branchPromptIndex >= 0 && onBranch && (
+        <div className="absolute -top-2 right-0 z-10 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+          <MessageActions
+            content={content}
+            branchPromptIndex={branchPromptIndex}
+            onBranch={onBranch}
+          />
+        </div>
+      )}
       <div
         className={cn(
           "rounded-lg border px-4 py-3 text-sm",

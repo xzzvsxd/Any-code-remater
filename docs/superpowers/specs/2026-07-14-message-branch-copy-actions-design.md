@@ -1,4 +1,4 @@
-﻿# 消息分支与复制操作合并设计
+# 消息分支与复制操作合并设计
 
 日期：2026-07-14
 
@@ -31,7 +31,7 @@
 
 ### 采用：扩展 `MessageActions`
 
-`MessageActions` 增加可选的 `branchPromptIndex` 与 `onBranch` 参数，并在复制按钮之前渲染分支操作。分支资格由现有 `SessionMessages` 继续计算，通过 `StreamMessageV2` 传递到最终的用户消息或 AI 消息组件。
+`MessageActions` accepts optional `branchPromptIndex` and `onBranch` props and renders branch before copy. `SessionMessages` remains the eligibility source, and `StreamMessageV2` forwards the action to user, assistant, or eligible execution-interruption messages.
 
 优点：
 
@@ -69,11 +69,11 @@
 
 ### `StreamMessageV2`
 
-接收并向真正承载复制工具条的消息组件传递分支参数。仅普通主会话消息获得这些参数；子代理对话和其他直接复用 `AIMessage` / `UserMessage` 的调用方不传参数，因此行为不变。
+Receives branch props for ordinary main-session messages and forwards them to the concrete message renderer. Subagent groups and unrelated direct component consumers remain unchanged.
 
-### `UserMessage` 与 `AIMessage`
+### `UserMessage`, `AIMessage`, and `SystemMessage`
 
-接收可选分支参数并传给 `MessageActions`。现有工具条定位和显隐样式保持不变。
+User and assistant messages forward branch props into their existing `MessageActions` toolbar. `SystemMessage` adds the same toolbar only for eligible execution-cancelled or execution-error nodes, preserving interruption branching while pairing it with copy; other system messages do not gain a toolbar.
 
 ### `SessionMessages`
 
@@ -94,7 +94,7 @@
 1. `SessionMessages` 根据消息组计算 `branchPromptIndex`。
 2. 流式消息将有效分支索引降级为不可分支状态。
 3. `SessionMessages` 将索引和 `onBranch` 传给 `StreamMessageV2`。
-4. `StreamMessageV2` 只向当前实际渲染的 `UserMessage` 或 `AIMessage` 继续传递。
+4. `StreamMessageV2` forwards them to the active `UserMessage`, `AIMessage`, or eligible execution-interruption `SystemMessage`.
 5. 消息组件把参数交给 `MessageActions`。
 6. `MessageActions` 在同一 hover 工具条内按“分支、分隔线、复制”的顺序渲染。
 

@@ -34,6 +34,8 @@ interface UserMessageProps {
   projectPath?: string;
   /** 撤回回调 */
   onRevert?: (promptIndex: number, mode: RewindMode) => void;
+  branchPromptIndex?: number;
+  onBranch?: (promptIndex: number) => void | Promise<void>;
 }
 
 /**
@@ -274,7 +276,9 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   sessionId,
   projectId,
   projectPath,
-  onRevert
+  onRevert,
+  branchPromptIndex,
+  onBranch
 }) => {
   const { t } = useTranslation();
   const engine = (message as any).engine || 'claude';
@@ -408,7 +412,11 @@ export const UserMessage: React.FC<UserMessageProps> = ({
           {/* Actions Toolbar - Visible on Hover (Left side for User messages) */}
           {!isSkills && !isCommandOutput && (
             <div className="absolute -top-2 left-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
-              <MessageActions content={text} />
+              <MessageActions
+                content={text}
+                branchPromptIndex={branchPromptIndex}
+                onBranch={onBranch}
+              />
             </div>
           )}
 

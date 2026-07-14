@@ -1,4 +1,4 @@
-﻿# Merge Message Branch and Copy Actions Implementation Plan
+# Merge Message Branch and Copy Actions Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -16,6 +16,7 @@
 - Modify `src/components/message/MessageActions.tsx`: add the optional branch action, busy state, tooltip, and divider.
 - Modify `src/components/message/AIMessage.tsx`: accept optional branch props and forward them to `MessageActions`.
 - Modify `src/components/message/UserMessage.tsx`: accept optional branch props and forward them to `MessageActions`.
+- Modify `src/components/message/SystemMessage.tsx`: render the shared toolbar for branchable execution interruption messages.
 - Modify `src/components/message/StreamMessageV2.tsx`: carry branch props only into normal branchable message renderers.
 - Modify `src/components/session/SessionMessages.tsx`: pass branch props into `StreamMessageV2` and remove the separate overlay.
 - Delete `src/components/message/MessageBranchButton.tsx`: remove the obsolete independent floating implementation after confirming no remaining imports.
@@ -176,6 +177,7 @@ Do not commit until prop threading in Task 3 compiles.
 **Files:**
 - Modify: `src/components/message/AIMessage.tsx`
 - Modify: `src/components/message/UserMessage.tsx`
+- Modify: `src/components/message/SystemMessage.tsx`
 - Modify: `src/components/message/StreamMessageV2.tsx`
 - Modify: `src/components/session/SessionMessages.tsx`
 
@@ -198,7 +200,7 @@ Destructure them and forward into each existing toolbar:
 />
 ```
 
-For `UserMessage`, preserve the existing conditions around `MessageActions` and pass `content={text}`.
+For `UserMessage`, preserve the existing conditions around `MessageActions` and pass `content={text}`. For `SystemMessage`, pass the props only into `ExecutionStatusMessage` and render `MessageActions` only when the branch index is valid, so execution-cancelled and execution-error nodes retain branching and gain the paired copy action without changing other system messages.
 
 - [ ] **Step 2: Add the prop path to `StreamMessageV2`**
 
@@ -209,7 +211,7 @@ branchPromptIndex?: number;
 onBranch?: (promptIndex: number) => void | Promise<void>;
 ```
 
-Forward both props to normal user and assistant rendering paths. Do not pass them into `SubagentMessageGroup`, aggregated technical groups, system initialization, result, summary, or unrelated direct consumers.
+Forward both props to normal user, assistant, and system rendering paths. `SystemMessage` itself restricts the toolbar to eligible execution interruption nodes. Do not pass them into `SubagentMessageGroup`, aggregated technical groups, system initialization, result, summary, or unrelated direct consumers.
 
 - [ ] **Step 3: Replace the external overlay in `SessionMessages`**
 

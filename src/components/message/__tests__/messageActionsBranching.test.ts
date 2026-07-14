@@ -1,4 +1,4 @@
-﻿import { readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
 
 const readSource = (relativePath: string) =>
@@ -20,11 +20,14 @@ describe('merged message branch and copy actions', () => {
     const streamSource = readSource('../StreamMessageV2.tsx');
     const aiSource = readSource('../AIMessage.tsx');
     const userSource = readSource('../UserMessage.tsx');
+    const systemSource = readSource('../SystemMessage.tsx');
 
     expect(streamSource).toContain('branchPromptIndex?: number');
     expect(streamSource).toContain('onBranch?: (promptIndex: number) => void | Promise<void>');
     expect(aiSource).toContain('branchPromptIndex={branchPromptIndex}');
     expect(userSource).toContain('branchPromptIndex={branchPromptIndex}');
+    expect(systemSource).toContain('branchPromptIndex={branchPromptIndex}');
+    expect(systemSource).toContain('<MessageActions');
   });
 
   test('removes the independent SessionMessages branch overlay', () => {
