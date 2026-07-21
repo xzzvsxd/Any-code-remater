@@ -1262,6 +1262,7 @@
       "duplicate": "复制会话",
       "rename": "重命名",
       "aiRename": "AI 重命名",
+      "aiRenaming": "AI 正在命名…",
       "aiRenamed": "已重命名为「{{title}}」",
       "aiRenameFailed": "AI 重命名失败",
       "aiRenameNoContent": "无可用会话内容，无法生成标题",

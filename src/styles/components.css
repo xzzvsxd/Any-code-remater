@@ -416,3 +416,65 @@ code:hover::-webkit-scrollbar-thumb,
   border-color: oklch(0.82 0.005 240) !important;
   box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.15), 0 4px 6px -2px rgba(0, 0, 0, 0.08) !important;
 }
+
+/* AI 会话重命名：只绘制文字和图标，不改变会话行尺寸。 */
+@keyframes ai-rename-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes ai-rename-text-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes ai-rename-title-enter {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ai-rename-spinner {
+  animation: ai-rename-spin 1.1s linear infinite;
+}
+
+.ai-rename-shimmer-text {
+  color: transparent;
+  background: linear-gradient(
+    90deg,
+    var(--color-muted-foreground),
+    var(--color-primary),
+    var(--color-muted-foreground)
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  animation: ai-rename-text-shimmer 1.4s ease-in-out infinite;
+}
+
+.ai-rename-title-enter {
+  animation: ai-rename-title-enter 180ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-rename-spinner,
+  .ai-rename-shimmer-text,
+  .ai-rename-title-enter {
+    animation: none;
+  }
+
+  .ai-rename-shimmer-text {
+    color: var(--color-primary);
+    background: none;
+  }
+}

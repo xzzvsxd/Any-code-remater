@@ -1251,6 +1251,7 @@
       "duplicate": "複製對話",
       "rename": "重新命名",
       "aiRename": "AI 重新命名",
+      "aiRenaming": "AI 正在命名…",
       "aiRenamed": "已重新命名為「{{title}}」",
       "aiRenameFailed": "AI 重新命名失敗",
       "aiRenameNoContent": "無可用工作階段內容，無法產生標題",

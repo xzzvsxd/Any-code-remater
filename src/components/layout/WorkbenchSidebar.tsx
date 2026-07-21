@@ -62,6 +62,7 @@ import {
 } from '@/components/ui/tooltip';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
 import { UnifiedEngineStatus } from '@/components/UnifiedEngineStatus';
+import { SessionAIRenameStatus } from './SessionAIRenameStatus';
 import { useTabs } from '@/hooks/useTabs';
 import { useProject } from '@/contexts/ProjectContext';
 import { useNavigation } from '@/contexts/NavigationContext';
@@ -169,6 +170,9 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
   const [sessionTitles, setSessionTitles] = useState<Record<string, string>>({});
   // 正在进行 AI 重命名的会话 id（用于菜单项 loading 态与防重复触发）
   const [aiRenamingSessionId, setAiRenamingSessionId] = useState<string | null>(null);
+  // 标题写入成功后的短暂淡入态；独立于请求态，避免 loading 清除时标题生硬跳变。
+  const [recentlyAIRenamedSessionId, setRecentlyAIRenamedSessionId] = useState<string | null>(null);
+  const aiRenameSuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 会话自定义排序（{ "engine:project_id": [session_id...] }）
   const [sessionOrder, setSessionOrder] = useState<Record<string, string[]>>({});
   // 项目手动拖拽顺序（项目 id 列表）；非空即"用户已手动排序"，锁定顺序、不再自动置顶。
@@ -182,6 +186,12 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     try {
       setDraftSessions(await api.listDraftSessions());
     } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => () => {
+    if (aiRenameSuccessTimerRef.current) {
+      clearTimeout(aiRenameSuccessTimerRef.current);
+    }
   }, []);
 
   // 挂载时加载草稿；并监听草稿变更事件，发送/保存草稿后即时刷新侧栏。
@@ -770,6 +780,14 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
             updateTabTitle(tab.id, title);
           }
         });
+        if (aiRenameSuccessTimerRef.current) {
+          clearTimeout(aiRenameSuccessTimerRef.current);
+        }
+        setRecentlyAIRenamedSessionId(session.id);
+        aiRenameSuccessTimerRef.current = setTimeout(() => {
+          setRecentlyAIRenamedSessionId((current) => current === session.id ? null : current);
+          aiRenameSuccessTimerRef.current = null;
+        }, 600);
         toast(t('workbench.ctx.aiRenamed', { title }));
       } else {
         toast(t('workbench.ctx.aiRenameFailed'), 'error');
@@ -956,6 +974,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
         onRenameSession={renameSession}
         onAIRenameSession={aiRenameSession}
         aiRenamingSessionId={aiRenamingSessionId}
+        recentlyAIRenamedSessionId={recentlyAIRenamedSessionId}
         sessionOrder={sessionOrder}
         onReorderSessions={reorderSessions}
         onReorderProjects={reorderProjects}
@@ -1202,6 +1221,7 @@ interface ProjectTreeProps {
   onRenameSession: (session: Session, title: string) => void;
   onAIRenameSession: (session: Session) => void;
   aiRenamingSessionId: string | null;
+  recentlyAIRenamedSessionId: string | null;
   sessionOrder: Record<string, string[]>;
   onReorderSessions: (engine: string, projectId: string, orderedIds: string[]) => void;
   onReorderProjects: (orderedIds: string[]) => void;
@@ -1217,7 +1237,7 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
   openTabSessionsByProjectId, draftSessionsByProjectId, runningCountByProjectId,
   onToggleProject, onOpenSession,
   onNewSession, onNewSessionInProject, onRefreshProject, onOpenInExplorer, onCopyText, onDuplicateSession, onExportSession,
-  sessionTitles, onRenameSession, onAIRenameSession, aiRenamingSessionId, sessionOrder, onReorderSessions, onReorderProjects,
+  sessionTitles, onRenameSession, onAIRenameSession, aiRenamingSessionId, recentlyAIRenamedSessionId, sessionOrder, onReorderSessions, onReorderProjects,
   onRequestDeleteSession, onRequestRemoveProject, onRequestPurgeProject,
 }) => {
   const { t } = useTranslation();
@@ -1455,6 +1475,8 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
                           ? truncateText(getFirstLine(session.first_message), 40)
                           : session.id.slice(0, 8);
                       const isRenaming = renamingId === session.id;
+                      const isAIRenaming = aiRenamingSessionId === session.id;
+                      const didJustAIRename = recentlyAIRenamedSessionId === session.id;
                       return (
                         <div
                           onClick={() => { if (!isRenaming) onOpenSession(session); }}
@@ -1492,16 +1514,18 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
                               <GripVertical className="h-3 w-3" />
                             </SortableDragHandle>
                           )}
-                          {/* 草稿用红色文档图标；运行中用旋转 loading；否则引擎图标。 */}
-                          <span className="flex items-center justify-center flex-shrink-0">
-                            {isDraft ? (
-                              <FileText className="h-3.5 w-3.5 text-red-500" />
-                            ) : isRunning ? (
-                              <Loader2 className="h-3.5 w-3.5 text-amber-500 animate-spin" />
-                            ) : (
-                              <EngineDot engine={session.engine} active={isActive} />
-                            )}
-                          </span>
+                          {/* AI 命名态自带星芒；其余状态继续使用草稿/运行/引擎图标。 */}
+                          {!isAIRenaming && (
+                            <span className="flex items-center justify-center flex-shrink-0">
+                              {isDraft ? (
+                                <FileText className="h-3.5 w-3.5 text-red-500" />
+                              ) : isRunning ? (
+                                <Loader2 className="h-3.5 w-3.5 text-amber-500 animate-spin" />
+                              ) : (
+                                <EngineDot engine={session.engine} active={isActive} />
+                              )}
+                            </span>
+                          )}
                           {isRenaming ? (
                             <input
                               autoFocus
@@ -1515,17 +1539,23 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
                               }}
                               className="flex-1 min-w-0 px-1 py-0.5 rounded bg-background border border-primary/50 text-[11px] outline-none"
                             />
+                          ) : isAIRenaming ? (
+                            <SessionAIRenameStatus />
                           ) : (
                             <span
                               onDoubleClick={(e) => { e.stopPropagation(); setRenameDraft(customTitle || preview); setRenamingId(session.id); }}
-                              className={cn('flex-1 truncate text-[11px] leading-relaxed', (isActive || isDraft) && 'font-medium')}
+                              className={cn(
+                                'flex-1 truncate text-[11px] leading-relaxed',
+                                (isActive || isDraft) && 'font-medium',
+                                didJustAIRename && 'ai-rename-title-enter',
+                              )}
                             >
                               {preview || (isDraft ? t('workbench.draftUntitled') : '')}
                             </span>
                           )}
 
                           {/* 草稿徽章：红色「草稿」小标签，明确区分未发送草稿 */}
-                          {isDraft && !isRenaming && (
+                          {isDraft && !isRenaming && !isAIRenaming && (
                             <span className="flex-shrink-0 px-1 py-0.5 rounded text-[9px] font-bold bg-red-500/20 text-red-600 dark:text-red-400">
                               {t('workbench.draftBadge')}
                             </span>
@@ -1572,13 +1602,15 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
                                   <Pencil className="h-4 w-4 mr-2" />{t('workbench.ctx.rename')}
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  disabled={aiRenamingSessionId === session.id}
+                                  disabled={Boolean(aiRenamingSessionId)}
                                   onClick={() => onAIRenameSession(session)}
                                 >
                                   {aiRenamingSessionId === session.id
                                     ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                                     : <Wand2 className="h-4 w-4 mr-2" />}
-                                  {t('workbench.ctx.aiRename')}
+                                  {t(aiRenamingSessionId === session.id
+                                    ? 'workbench.ctx.aiRenaming'
+                                    : 'workbench.ctx.aiRename')}
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem

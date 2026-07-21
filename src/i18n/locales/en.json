@@ -1230,6 +1230,7 @@
       "duplicate": "Duplicate session",
       "rename": "Rename",
       "aiRename": "AI Rename",
+      "aiRenaming": "AI is naming…",
       "aiRenamed": "Renamed to \"{{title}}\"",
       "aiRenameFailed": "AI rename failed",
       "aiRenameNoContent": "No session content available to generate a title",
