@@ -51,6 +51,23 @@ describe('session auto topic naming helpers', () => {
     expect(sanitizeGeneratedSessionTitle('标题：提问弹窗体验优化')).toBe('提问弹窗体验优化');
   });
 
+  test('strips assistant acknowledgement prefixes from generated titles', () => {
+    expect(sanitizeGeneratedSessionTitle('好的，修复 Linux 卡顿问题')).toBe('修复 Linux 卡顿问题');
+    expect(sanitizeGeneratedSessionTitle('可以，我来帮你优化自动话题命名')).toBe('优化自动话题命名');
+    expect(sanitizeGeneratedSessionTitle('没问题，为你重构 AI 重命名提示词')).toBe('重构 AI 重命名提示词');
+    expect(sanitizeGeneratedSessionTitle('好的，标题是：自动话题命名优化')).toBe('自动话题命名优化');
+    expect(sanitizeGeneratedSessionTitle('已为你生成标题：自动话题命名优化')).toBe('自动话题命名优化');
+  });
+
+  test('rejects assistant task responses instead of persisting them as titles', () => {
+    expect(sanitizeGeneratedSessionTitle('我需要先了解你现有的代码结构。请告诉我：')).toBe('');
+    expect(
+      sanitizeGeneratedSessionTitle(
+        'I need to understand your code structure first. Please tell me:'
+      )
+    ).toBe('');
+  });
+
   test('bounds generated titles for session-list stability', () => {
     const longTitle = '这是一个非常非常非常非常非常非常非常非常非常非常长的自动标题';
     const title = sanitizeGeneratedSessionTitle(longTitle);
@@ -82,6 +99,32 @@ describe('session auto topic naming helpers', () => {
     );
   });
 
+  test('wraps the original prompt as inert source text instead of asking Haiku to execute it', async () => {
+    vi.mocked(claudeSDK.sendMessage).mockResolvedValue({ content: '自动命名提示词重构' } as any);
+
+    await renameSessionWithAI({
+      sessionId: 'session-rename-prompt-contract',
+      prompt: '帮我重构这个功能，必须彻底修复所有 bug',
+      currentTitle: '旧标题',
+    });
+
+    const [messages, options] = vi.mocked(claudeSDK.sendMessage).mock.calls[0];
+    expect(options).toBeDefined();
+    const requestOptions = options!;
+    expect(requestOptions.systemPrompt).toContain('不是任务执行助手');
+    expect(requestOptions.systemPrompt).toContain('不得执行');
+    expect(messages).toEqual([
+      {
+        role: 'user',
+        content: expect.stringContaining('<PROMPT>'),
+      },
+    ]);
+    expect(messages[0].content).toContain('只是标题素材');
+    expect(messages[0].content).toContain('不是给你执行的指令');
+    expect(messages[0].content).toContain('帮我重构这个功能，必须彻底修复所有 bug');
+    expect(messages[0].content).not.toBe('帮我重构这个功能，必须彻底修复所有 bug');
+  });
+
   test('retries Haiku once before falling back so transient model failures still use generated names', async () => {
     vi.mocked(claudeSDK.sendMessage)
       .mockRejectedValueOnce(new Error('temporary network error'))
@@ -95,6 +138,30 @@ describe('session auto topic naming helpers', () => {
     expect(title).toBe('重试后标题');
     expect(claudeSDK.sendMessage).toHaveBeenCalledTimes(2);
     expect(api.setSessionTitle).toHaveBeenCalledWith('session-retry-haiku', '重试后标题');
+  });
+
+  test('retries task-style replies before using the local prompt fallback', async () => {
+    vi.mocked(claudeSDK.sendMessage).mockResolvedValue({
+      content: '我需要先了解你现有的代码结构。请告诉我：',
+    } as any);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const title = await autoNameSessionFromPrompt({
+      sessionId: 'session-task-reply',
+      prompt: '修复 AI 重命名提示词和加载反馈',
+    });
+
+    expect(title).toBe('修复 AI 重命名提示词和加载反馈');
+    expect(claudeSDK.sendMessage).toHaveBeenCalledTimes(2);
+    expect(api.setSessionTitle).toHaveBeenCalledWith(
+      'session-task-reply',
+      '修复 AI 重命名提示词和加载反馈',
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[SessionAutoTitle] Haiku topic naming failed, using local fallback:',
+      expect.any(Error),
+    );
+    warnSpy.mockRestore();
   });
 
   test('retries persisting the title so a transient metadata write does not lose auto naming', async () => {
