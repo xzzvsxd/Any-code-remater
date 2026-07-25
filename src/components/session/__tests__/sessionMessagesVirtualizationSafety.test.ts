@@ -5,7 +5,7 @@ import { describe, expect, test } from 'vitest';
 const sessionMessagesSource = readFileSync(
   resolve(process.cwd(), 'src/components/session/SessionMessages.tsx'),
   'utf8',
-);
+).replace(/\r\n/g, '\n');
 
 const thinkingBlockSource = readFileSync(
   resolve(process.cwd(), 'src/components/message/ThinkingBlock.tsx'),
