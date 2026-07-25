@@ -59,4 +59,14 @@ describe('SessionMessages imperative scrolling invariants', () => {
     expect(source).toContain('safeEstimateMessageGroupHeight(messageGroups[index])');
     expect(source).toContain('overscan: SESSION_MESSAGES_OVERSCAN');
   });
+
+  test('prompt navigation retries are bounded and suppress redundant scroll writes', () => {
+    expect(source).toContain('getPromptScrollRetryAction');
+    expect(source).toContain('targetVirtualized');
+    expect(source).toContain('maxAttempts = 12');
+    expect(source).toContain("action === 'scroll'");
+    expect(source).toContain("action === 'wait' || action === 'scroll'");
+    expect(source).not.toContain('pollInterval = 100');
+    expect(source).not.toContain('maxAttempts = 24');
+  });
 });
