@@ -624,7 +624,7 @@ empty-window paddingBottom equals the sanitized total size
 Run it against:
 
 ```powershell
-node .history-scroll-stress.mjs "C:\Users\admin\.claude\projects\D--Any-code-remater\aa24694a-5dbc-43a2-955a-620b38edc319.jsonl"
+node .history-scroll-stress.mjs "C:/Users/admin/.claude/projects/D--Any-code-remater/aa24694a-5dbc-43a2-955a-620b38edc319.jsonl"
 ```
 
 Expected: exit code 0 with aggregate row/event counts only. Delete `.history-scroll-stress.mjs` immediately afterward so no local path or session-derived data enters Git.
