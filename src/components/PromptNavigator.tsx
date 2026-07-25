@@ -217,11 +217,14 @@ export const PromptNavigator: React.FC<PromptNavigatorProps> = ({
 
   return (
     <div
+      aria-hidden={!isOpen}
       className={cn(
-        "h-full bg-background flex flex-col transition-all duration-300 ease-in-out",
-        isOpen ? "w-80 border-l shadow-lg" : "w-0"
+        "absolute inset-y-0 right-0 z-50 w-80 bg-background flex flex-col overflow-hidden border-l shadow-lg",
+        "transition-[transform,opacity] duration-300 ease-in-out",
+        isOpen
+          ? "translate-x-0 opacity-100"
+          : "translate-x-full opacity-0 pointer-events-none",
       )}
-      style={{ overflow: 'hidden' }}
       onKeyDown={handleKeyDown}
     >
       {isOpen && (

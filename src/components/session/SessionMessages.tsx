@@ -24,7 +24,11 @@ import {
   SESSION_MESSAGE_LAYOUT_CHANGED_EVENT,
   type SessionMessageLayoutChangedDetail,
 } from "./sessionMessageLayoutEvents";
+import { getPromptScrollRetryAction } from "./promptScrollRetryPolicy";
+import { getVirtualTrackLayout } from "./virtualTrackLayout";
 import { isNavigableUserPrompt } from "@/lib/promptIndex";
+
+const EMPTY_WINDOW_RECOVERY_MAX_FRAMES = 8;
 
 /**
  * 虚拟列表行。
@@ -133,7 +137,6 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
   const measuredHeightsRef = useRef<Map<string, number>>(new Map());
   const bottomScrollRafRef = useRef<number>(0);
   const promptScrollRafRef = useRef<number>(0);
-  const promptScrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const topScrollTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const topScrollRafsRef = useRef<number[]>([]);
   const promptScrollSearchTokenRef = useRef(0);
@@ -155,10 +158,6 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
     if (promptScrollRafRef.current) {
       cancelAnimationFrame(promptScrollRafRef.current);
       promptScrollRafRef.current = 0;
-    }
-    if (promptScrollTimeoutRef.current) {
-      clearTimeout(promptScrollTimeoutRef.current);
-      promptScrollTimeoutRef.current = null;
     }
   };
   const cancelTopScrollFollowUps = () => {
@@ -634,36 +633,54 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
         behavior: 'auto',
       });
 
-      // Step 2: Robust element finding with rAF + retry mechanism.
-      // The virtualizer needs time to measure and render the target row
-      // after the scroll position changes.
+      // Step 2: 在有限帧内按“是否真正取得进展”决定下一步。
+      // 目标行已经进入 virtual window 后不再重复写 scrollTop，给 React/测高一帧完成挂载；
+      // 只有目标仍在窗口外才重发 scrollToIndex，避免旧的 24 × 100ms 循环持续和测高打架。
       let attempts = 0;
-      const maxAttempts = 24; // 提高重试预算至 ~2.4s，覆盖大会话加载/高度重测的慢路径
-      const pollInterval = 100; // ms between retries
+      const maxAttempts = 12;
+
+      const centerElementInScrollContainer = (element: HTMLElement) => {
+        const parent = parentRef.current;
+        if (!parent) return;
+
+        const parentRect = parent.getBoundingClientRect();
+        const elementRect = element.getBoundingClientRect();
+        const targetTop =
+          parent.scrollTop
+          + (elementRect.top - parentRect.top)
+          - Math.max(0, (parent.clientHeight - elementRect.height) / 2);
+        parent.scrollTo({
+          top: Math.max(0, targetTop),
+          behavior: 'auto',
+        });
+      };
 
       const tryFindAndHighlight = () => {
+        promptScrollRafRef.current = 0;
         if (promptScrollSearchTokenRef.current !== searchToken) return;
-        attempts++;
-        const element = document.getElementById(`prompt-${promptIndex}`);
+        attempts += 1;
 
-        if (element) {
+        const element = document.getElementById(`prompt-${promptIndex}`) as HTMLElement | null;
+        const targetRow = parentRef.current?.querySelector<HTMLElement>(
+          `[data-index="${targetGroupIndex}"]`,
+        ) ?? null;
+        const targetVirtualized = rowVirtualizer
+          .getVirtualItems()
+          .some(item => item.index === targetGroupIndex);
+        const action = getPromptScrollRetryAction({
+          anchorFound: Boolean(element),
+          rowFound: Boolean(targetRow),
+          targetVirtualized,
+          attempt: attempts,
+          maxAttempts,
+        });
+
+        if (action === 'center-anchor' && element) {
           // 命中后用“容器内精确 delta 校正”对齐真实 DOM 锚点。
           // 只用 virtualizer.scrollToIndex 时，长消息/折叠工具/图片等动态高度可能让目标
           // 停在偏上位置；直接 element.scrollIntoView 又会和虚拟列表的窗口滚动互相打架。
           // 因此这里不调用浏览器全局滚动，而是在父滚动容器内按元素真实 rect 微调到居中。
-          const parent = parentRef.current;
-          if (parent) {
-            const parentRect = parent.getBoundingClientRect();
-            const elementRect = element.getBoundingClientRect();
-            const targetTop =
-              parent.scrollTop
-              + (elementRect.top - parentRect.top)
-              - Math.max(0, (parent.clientHeight - elementRect.height) / 2);
-            parent.scrollTo({
-              top: Math.max(0, targetTop),
-              behavior: 'auto',
-            });
-          }
+          centerElementInScrollContainer(element);
 
           try {
             element.animate(
@@ -679,31 +696,29 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
           return;
         }
 
-        if (attempts < maxAttempts) {
-          // 每次未命中都重新 scrollToIndex，把目标行"顶"进渲染窗口（而非每 3 次一次）。
-          // 这是大会话定位需点多遍的根因之一：目标 DOM 长期不在窗口内，轮询白白耗尽。
+        // 行已经挂载但内部锚点暂不可用时，以行作为稳定降级定位并停止写 scrollTop。
+        if (action === 'center-row' && targetRow) {
+          centerElementInScrollContainer(targetRow);
+          return;
+        }
+
+        if (action === 'scroll') {
           rowVirtualizer.scrollToIndex(targetGroupIndex, {
             align: 'center',
             behavior: 'auto',
           });
-          promptScrollTimeoutRef.current = setTimeout(() => {
-            promptScrollTimeoutRef.current = null;
-            tryFindAndHighlight();
-          }, pollInterval);
-        } else {
-          console.warn(`[Prompt Navigation] Element #prompt-${promptIndex} not found after ${maxAttempts} attempts`);
         }
+
+        if (action === 'wait' || action === 'scroll') {
+          promptScrollRafRef.current = requestAnimationFrame(tryFindAndHighlight);
+          return;
+        }
+
+        console.warn(`[Prompt Navigation] Element #prompt-${promptIndex} not found after ${maxAttempts} attempts`);
       };
 
-      // Wait for two animation frames to let the virtualizer process
-      // the scroll and render the target area before searching for the element
-      promptScrollRafRef.current = requestAnimationFrame(() => {
-        if (promptScrollSearchTokenRef.current !== searchToken) return;
-        promptScrollRafRef.current = requestAnimationFrame(() => {
-          promptScrollRafRef.current = 0;
-          tryFindAndHighlight();
-        });
-      });
+      // 先让初始 scrollToIndex 进入一帧布局，再检查真实 anchor/row/virtual window。
+      promptScrollRafRef.current = requestAnimationFrame(tryFindAndHighlight);
     },
     remeasureViewport: () => {
       // 标签页从 display:none 切回可见：隐藏期间 clientHeight=0，虚拟列表窗口塌缩，
@@ -741,15 +756,43 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
   }));
 
   const virtualItems = rowVirtualizer.getVirtualItems();
-  const firstVirtualItem = virtualItems[0];
-  const lastVirtualItem = virtualItems[virtualItems.length - 1];
-  const virtualTotalSize = Math.max(rowVirtualizer.getTotalSize(), 100);
-  const virtualPaddingTop = firstVirtualItem
-    ? Math.max(0, firstVirtualItem.start)
-    : 0;
-  const virtualPaddingBottom = lastVirtualItem
-    ? Math.max(0, virtualTotalSize - lastVirtualItem.end)
-    : 0;
+  const virtualTrackLayout = getVirtualTrackLayout(
+    rowVirtualizer.getTotalSize(),
+    virtualItems,
+    messageGroups.length,
+  );
+  const virtualPaddingTop = virtualTrackLayout.paddingTop;
+  const virtualPaddingBottom = virtualTrackLayout.paddingBottom;
+  const shouldRecover = virtualTrackLayout.shouldRecover;
+
+  // TanStack Virtual 在视口隐藏、缩放或快速重测的瞬态可能返回空 window。
+  // spacer 已先保住完整 scrollHeight；这里仅在该异常态运行有限 rAF，等视口恢复正高度后
+  // 触发一次 measure()。正常滚动没有轮询、DOM 查询或额外测高。
+  useEffect(() => {
+    if (!shouldRecover) return;
+
+    let recoveryRafId = 0;
+    let frames = 0;
+    const recoverEmptyWindow = () => {
+      recoveryRafId = 0;
+      frames += 1;
+      const scrollElement = parentRef.current;
+
+      if (!scrollElement || scrollElement.clientHeight <= 0) {
+        if (frames < EMPTY_WINDOW_RECOVERY_MAX_FRAMES) {
+          recoveryRafId = requestAnimationFrame(recoverEmptyWindow);
+        }
+        return;
+      }
+
+      rowVirtualizer.measure();
+    };
+
+    recoveryRafId = requestAnimationFrame(recoverEmptyWindow);
+    return () => {
+      if (recoveryRafId) cancelAnimationFrame(recoveryRafId);
+    };
+  }, [parentRef, rowVirtualizer, shouldRecover]);
 
   return (
     // ✅ 重构布局: 移除固定 paddingBottom，因为输入框不再使用 fixed 定位
@@ -838,7 +881,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
                   itemKey={virtualItem.key}
                   measurementKey={measurementKey}
                   measureElement={rowVirtualizer.measureElement}
-                  className="relative w-full"
+                  className="relative flow-root w-full"
                 >
                   {/* message actions share the message component hover toolbar */}
                   <ErrorBoundary
