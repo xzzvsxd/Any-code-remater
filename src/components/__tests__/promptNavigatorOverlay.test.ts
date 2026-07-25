@@ -12,10 +12,13 @@ const sessionSource = readFileSync(
 );
 
 describe('Prompt Navigator overlay geometry', () => {
-  test('animates a fixed-width absolute drawer without resizing the message viewport', () => {
+  test('slides an opaque fixed-width drawer without resizing the message viewport', () => {
     expect(navigatorSource).toContain('absolute inset-y-0 right-0 z-50 w-80');
-    expect(navigatorSource).toContain('transition-[transform,opacity]');
-    expect(navigatorSource).toContain('translate-x-full opacity-0 pointer-events-none');
+    expect(navigatorSource).toContain('w-80 bg-background');
+    expect(navigatorSource).toContain('transition-transform duration-300');
+    expect(navigatorSource).toContain('translate-x-full pointer-events-none');
+    expect(navigatorSource).not.toContain('transition-[transform,opacity]');
+    expect(navigatorSource).not.toMatch(/translate-x-(?:0|full) opacity-/);
     expect(navigatorSource).not.toContain('transition-all duration-300');
     expect(navigatorSource).not.toContain('isOpen ? "w-80');
     expect(sessionSource).toContain('"relative flex h-full bg-background"');

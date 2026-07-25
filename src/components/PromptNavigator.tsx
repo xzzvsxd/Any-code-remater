@@ -220,10 +220,10 @@ export const PromptNavigator: React.FC<PromptNavigatorProps> = ({
       aria-hidden={!isOpen}
       className={cn(
         "absolute inset-y-0 right-0 z-50 w-80 bg-background flex flex-col overflow-hidden border-l shadow-lg",
-        "transition-[transform,opacity] duration-300 ease-in-out",
+        "transition-transform duration-300 ease-in-out",
         isOpen
-          ? "translate-x-0 opacity-100"
-          : "translate-x-full opacity-0 pointer-events-none",
+          ? "translate-x-0"
+          : "translate-x-full pointer-events-none",
       )}
       onKeyDown={handleKeyDown}
     >
