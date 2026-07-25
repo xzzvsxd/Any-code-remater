@@ -1636,7 +1636,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   }
 
   return (
-    <div className={cn("flex h-full bg-background", className)}>
+    <div className={cn("relative flex h-full bg-background", className)}>
       {/* Main Content Area - 重构布局：使用 Flexbox 实现消息区域与输入区域的完全分离 */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* 消息展示区域容器 - flex-1 占据剩余空间，min-h-0 防止 flex 子元素溢出 */}
