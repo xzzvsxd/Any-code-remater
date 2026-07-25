@@ -17,7 +17,7 @@ import type { ClaudeStreamMessage } from '@/types/claude';
 
 // Claude 的 Auto-compact buffer 动态预留量
 // 不再写死 45k：按上下文窗口大小按比例预留，并钳制下限，
-// 使其同时适配 200K 与 1M（claude-opus-4-8[1m]）等不同窗口。
+// 使其同时适配 200K 与原生 1M（claude-opus-5）等不同窗口。
 // 比例 0.225 = 45000 / 200000，保证 200K 窗口仍预留 45k（向后兼容），1M 窗口则自动扩展到约 225k。
 const AUTO_COMPACT_BUFFER_RATIO = 0.225;
 const MIN_AUTO_COMPACT_BUFFER = 13000;

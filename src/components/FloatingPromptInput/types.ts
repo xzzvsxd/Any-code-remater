@@ -26,7 +26,7 @@ export interface ClaudeModelVersion {
   description: string;
   /** 是否可切换 1M 上下文（追加 "[1m]" 后缀）。原生 1M 的型号此项为 false */
   supports1m: boolean;
-  /** 原生自带 1M（Sonnet 5 / Fable 5）：UI 标注"原生 1M"，无需也无法通过后缀开关 */
+  /** 原生自带 1M（Sonnet 5 / Opus 5 / Fable 5）：UI 标注"原生 1M"，无需也无法通过后缀开关 */
   native1m?: boolean;
   /** 家族内推荐/最新版，默认高亮 */
   isLatest?: boolean;

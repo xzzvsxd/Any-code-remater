@@ -5,7 +5,7 @@
  * Claude 定价：https://platform.claude.com/docs/en/about-claude/pricing
  * Codex 定价：https://platform.openai.com/docs/pricing (codex-mini-latest)
  * 价格单位：美元/百万 tokens
- * Last Updated: May 2026
+ * Last Updated: July 2026
  */
 
 export interface ModelPricing {
@@ -30,6 +30,12 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     output: 50.0,
     cacheWrite: 12.5,
     cacheRead: 1.0
+  },
+  'claude-opus-5': {
+    input: 5.0,
+    output: 25.0,
+    cacheWrite: 6.25,
+    cacheRead: 0.50
   },
 
   // Claude 4.8 / 4.7 / 4.6 Series
@@ -533,12 +539,25 @@ export function getPricingForModel(model?: string, engine?: string): ModelPricin
     return MODEL_PRICING['claude-opus-4.1'];
   }
 
+  // Opus 5（claude-opus-5 / opus-5 / opus5 / 裸 opus 别名）。
+  // opus1m 保留历史语义，继续按 Opus 4.8 + 1M 处理。
+  if (normalized === 'opus1m') {
+    return MODEL_PRICING['claude-opus-4.8'];
+  }
+  if (
+    normalized === 'opus' ||
+    /opus-?5\b/.test(normalized) ||
+    /claude-opus-5/.test(normalized)
+  ) {
+    return MODEL_PRICING['claude-opus-5'];
+  }
+
   // Generic family detection (fallback - MUST match backend)
   if (normalized.includes('haiku')) {
     return MODEL_PRICING['claude-haiku-4.5']; // Default to latest
   }
   if (normalized.includes('opus')) {
-    return MODEL_PRICING['claude-opus-4.8']; // Default to latest
+    return MODEL_PRICING['claude-opus-5']; // Default to latest
   }
   if (normalized.includes('sonnet')) {
     return MODEL_PRICING['claude-sonnet-4.6']; // Default to latest

@@ -36,5 +36,7 @@ expectEqual(
 
 expectEqual(formatClaudeModelLabel('claude-opus-4-8-20260601'), 'Claude Opus 4.8', 'full model label');
 expectEqual(formatClaudeModelLabel('opus1m'), 'Claude Opus 4.8 1M', 'alias model label');
+expectEqual(formatClaudeModelLabel('claude-opus-5'), 'Claude Opus 5', 'Opus 5 full model label');
+expectEqual(formatClaudeModelLabel('opus'), 'Claude Opus 5', 'Opus latest alias label');
 expectEqual(formatClaudeModelLabel('fable'), 'Claude Fable 5', 'fable alias label');
 expectEqual(formatClaudeModelLabel('my-custom-model'), 'my-custom-model', 'custom model label');

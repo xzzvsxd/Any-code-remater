@@ -23,7 +23,7 @@ describe('Claude Fable model support', () => {
     });
   });
 
-  it('uses current Opus 4.8 pricing for frontend aliases and exact model IDs', () => {
+  it('uses the shared current rate for Opus 5 aliases and explicit Opus 4.8 IDs', () => {
     const expectedPricing = {
       input: 5,
       output: 25,
@@ -32,10 +32,11 @@ describe('Claude Fable model support', () => {
     };
 
     expect(getPricingForModel('opus', 'claude')).toEqual(expectedPricing);
+    expect(getPricingForModel('claude-opus-5', 'claude')).toEqual(expectedPricing);
     expect(getPricingForModel('claude-opus-4-8-20260601', 'claude')).toEqual(expectedPricing);
   });
 
-  it('keeps token-counter Opus pricing in sync with frontend pricing', () => {
+  it('keeps token-counter Opus 5 pricing in sync with frontend pricing', () => {
     expect(getModelPricing('opus')).toMatchObject({
       input: 5,
       output: 25,

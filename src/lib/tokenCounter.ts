@@ -14,7 +14,7 @@ import { api } from './api';
 // 鈿狅笍 WARNING: This pricing table MUST be kept in sync with:
 //    src-tauri/src/commands/usage.rs::ModelPricing
 // Source: https://docs.claude.com/en/docs/about-claude/models/overview
-// Last Updated: June 2026
+// Last Updated: July 2026
 // ============================================================================
 
 export const CLAUDE_PRICING = {
@@ -25,7 +25,13 @@ export const CLAUDE_PRICING = {
     cache_write: 12.5,
     cache_read: 1.0,
   },
-  // Claude 4.8 Series (Latest - 2026)
+  'claude-opus-5': {
+    input: 5.0,
+    output: 25.0,
+    cache_write: 6.25,
+    cache_read: 0.50,
+  },
+  // Claude 4.8 Series
   'claude-opus-4-8': {
     input: 5.0,
     output: 25.0,
@@ -120,6 +126,8 @@ export const CLAUDE_PRICING = {
 export const CLAUDE_CONTEXT_WINDOWS = {
   // Claude 5 Series
   'claude-fable-5': 1000000,
+  // Opus 5 原生自带 1M 上下文，无需 [1m] 后缀。
+  'claude-opus-5': 1000000,
   // Sonnet 5 原生自带 1M 上下文（无 [1m] 后缀），必须显式登记，
   // 否则通用 [1m] 后缀正则抓不到，会误回落到 default=200000。
   'claude-sonnet-5': 1000000,
@@ -321,21 +329,27 @@ export function getContextWindowSize(model?: string, engine?: string): number {
   // Claude 寮曟搸锛堥粯璁わ級
   if (!model) return CLAUDE_CONTEXT_WINDOWS['default'];
 
+  // 统一 Claude API、Bedrock 与 Vertex AI 型号格式。
+  const normalizedClaudeModel = model
+    .toLowerCase()
+    .replace('anthropic.', '')
+    .replace('-v1:0', '')
+    .split('@')[0];
+
   // 灏濊瘯鐩存帴鍖归厤
-  if (model in CLAUDE_CONTEXT_WINDOWS) {
-    return CLAUDE_CONTEXT_WINDOWS[model as keyof typeof CLAUDE_CONTEXT_WINDOWS];
+  if (normalizedClaudeModel in CLAUDE_CONTEXT_WINDOWS) {
+    return CLAUDE_CONTEXT_WINDOWS[normalizedClaudeModel as keyof typeof CLAUDE_CONTEXT_WINDOWS];
   }
 
   // 灏濊瘯閫氳繃鍒悕鍖归厤
-  const normalizedModel = MODEL_ALIASES[model as keyof typeof MODEL_ALIASES];
+  const normalizedModel = MODEL_ALIASES[normalizedClaudeModel as keyof typeof MODEL_ALIASES];
   if (normalizedModel && normalizedModel in CLAUDE_CONTEXT_WINDOWS) {
     return CLAUDE_CONTEXT_WINDOWS[normalizedModel as keyof typeof CLAUDE_CONTEXT_WINDOWS];
   }
 
   // 通用 [1m] / 1m 后缀检测：任何显式声明 1M 上下文的 Claude 模型（如 claude-opus-4-8[1m]）
   // 不依赖逐个版本硬编码，未来新型号只要带此后缀即可自动识别为 1M
-  const lowerModel = model.toLowerCase();
-  if (/\[1m\]|[-_]1m\b|\b1m\b/.test(lowerModel)) {
+  if (/\[1m\]|[-_]1m\b|\b1m\b/.test(normalizedClaudeModel)) {
     return 1000000;
   }
 
@@ -343,8 +357,10 @@ export function getContextWindowSize(model?: string, engine?: string): number {
 }
 export const MODEL_ALIASES = {
   'fable': 'claude-fable-5',
-  'opus': 'claude-opus-4-8',
+  'opus': 'claude-opus-5',
   'opus1m': 'claude-opus-4-8[1m]',
+  'opus5': 'claude-opus-5',
+  'opus-5': 'claude-opus-5',
   'opus4.8': 'claude-opus-4-8',
   'opus-4.8': 'claude-opus-4-8',
   'opus4.7': 'claude-opus-4-7',
@@ -565,12 +581,24 @@ export class TokenCounterService {
       return 'claude-opus-4-1';
     }
 
+    // 历史 1M 别名固定在 Opus 4.8；裸 opus 与 Opus 5 变体指向最新版。
+    if (normalized === 'opus1m') {
+      return 'claude-opus-4-8';
+    }
+    if (
+      normalized === 'opus' ||
+      /opus-?5\b/.test(normalized) ||
+      normalized.includes('claude-opus-5')
+    ) {
+      return 'claude-opus-5';
+    }
+
     // Generic family detection (fallback - MUST match backend)
     if (normalized.includes('haiku')) {
       return 'claude-haiku-4-5'; // Default to latest
     }
     if (normalized.includes('opus')) {
-      return 'claude-opus-4-8'; // Default to latest
+      return 'claude-opus-5'; // Default to latest
     }
     if (normalized.includes('sonnet')) {
       return 'claude-sonnet-4-6'; // Default to latest

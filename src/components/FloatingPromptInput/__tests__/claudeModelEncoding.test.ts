@@ -21,6 +21,23 @@ describe('Claude model encode/decode', () => {
     expect(encodeClaudeModel('claude-sonnet-5', true)).toBe('claude-sonnet-5');
   });
 
+  it('exposes Opus 5 as the latest native-1M Opus version', () => {
+    const opus = getModelFamilies().find((family) => family.key === 'opus');
+
+    expect(opus?.versions[0]).toMatchObject({
+      id: 'claude-opus-5',
+      label: 'Opus 5',
+      supports1m: false,
+      native1m: true,
+      isLatest: true,
+    });
+    expect(opus?.versions.filter((version) => version.isLatest)).toHaveLength(1);
+  });
+
+  it('never appends [1m] to Opus 5 because 1M is native', () => {
+    expect(encodeClaudeModel('claude-opus-5', true)).toBe('claude-opus-5');
+  });
+
   it('never appends [1m] to Fable 5 (native 1M)', () => {
     expect(encodeClaudeModel('claude-fable-5', true)).toBe('claude-fable-5');
   });
@@ -39,6 +56,13 @@ describe('Claude model encode/decode', () => {
   it('decodes legacy alias sonnet to latest (Sonnet 5)', () => {
     expect(decodeClaudeModel('sonnet')).toEqual({
       versionId: 'claude-sonnet-5',
+      oneMillion: false,
+    });
+  });
+
+  it('decodes the opus alias to Opus 5', () => {
+    expect(decodeClaudeModel('opus')).toEqual({
+      versionId: 'claude-opus-5',
       oneMillion: false,
     });
   });

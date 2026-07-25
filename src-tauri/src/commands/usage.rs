@@ -58,6 +58,31 @@ mod tests {
     }
 
     #[test]
+    fn opus5_pricing_matches_current_claude_model_table() {
+        let pricing = ModelPricing::for_family(ModelFamily::Opus5);
+
+        assert_eq!(pricing.input, 5.0);
+        assert_eq!(pricing.output, 25.0);
+        assert_eq!(pricing.cache_write, 6.25);
+        assert_eq!(pricing.cache_read, 0.50);
+    }
+
+    #[test]
+    fn opus5_model_formats_resolve_without_reclassifying_opus48() {
+        for model in [
+            "claude-opus-5",
+            "anthropic.claude-opus-5",
+            "claude-opus-5@20260724",
+            "opus",
+        ] {
+            assert_eq!(parse_model_family(model), ModelFamily::Opus5);
+        }
+
+        assert_eq!(parse_model_family("claude-opus-4-8"), ModelFamily::Opus48);
+        assert_eq!(parse_model_family("opus1m"), ModelFamily::Opus48);
+    }
+
+    #[test]
     fn fable5_pricing_matches_current_claude_model_table() {
         let pricing = ModelPricing::for_family(ModelFamily::Fable5);
 
@@ -134,7 +159,7 @@ pub struct ProjectUsage {
 // ============================================================================
 // Claude Model Pricing - Single Source of Truth
 // Source: https://platform.claude.com/docs/en/about-claude/pricing
-// Last Updated: May 2026
+// Last Updated: July 2026
 // ============================================================================
 
 /// Model pricing structure (prices per million tokens)
@@ -150,6 +175,7 @@ struct ModelPricing {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ModelFamily {
     Fable5,   // Claude Fable 5
+    Opus5,    // Claude Opus 5
     Opus48,   // Claude 4.8 Opus
     Opus47,   // Claude 4.7 Opus
     Opus46,   // Claude 4.6 Opus
@@ -172,7 +198,13 @@ impl ModelPricing {
                 cache_write: 12.5,
                 cache_read: 1.0,
             },
-            // Claude 4.8 Series (Latest - 2026)
+            ModelFamily::Opus5 => ModelPricing {
+                input: 5.0,
+                output: 25.0,
+                cache_write: 6.25,
+                cache_read: 0.50,
+            },
+            // Claude 4.8 Series
             ModelFamily::Opus48 => ModelPricing {
                 input: 5.0,
                 output: 25.0,
@@ -296,12 +328,22 @@ fn parse_model_family(model: &str) -> ModelFamily {
         return ModelFamily::Opus41;
     }
 
+    // Keep the historical explicit 1M alias pinned to Opus 4.8.
+    if normalized == "opus1m" {
+        return ModelFamily::Opus48;
+    }
+
+    // Claude Opus 5 and its current short alias.
+    if normalized == "opus" || normalized.contains("opus5") || normalized.contains("opus-5") {
+        return ModelFamily::Opus5;
+    }
+
     // Generic family detection (fallback)
     if normalized.contains("haiku") {
         return ModelFamily::Haiku45; // Default to latest Haiku
     }
     if normalized.contains("opus") {
-        return ModelFamily::Opus48; // Default to latest Opus
+        return ModelFamily::Opus5; // Default to latest Opus
     }
     if normalized.contains("sonnet") {
         return ModelFamily::Sonnet46; // Default to latest Sonnet

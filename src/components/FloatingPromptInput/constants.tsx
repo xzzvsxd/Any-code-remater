@@ -5,8 +5,8 @@ import { ModelConfig, ThinkingModeConfig, ClaudeModelFamily } from "./types";
  * Claude 模型家族数据源（UI 与解析的单一事实来源，DRY）。
  *
  * 版本 model ID 依据官方文档（platform.claude.com 模型总览 / code.claude.com 模型配置）：
- * - `sonnet` 别名现解析到 Sonnet 5，`opus` → Opus 4.8。要钉具体版本须用完整 model ID。
- * - Sonnet 5 与 Fable 5 原生自带 1M 上下文，对其使用 `[1m]` 后缀无效（故 supports1m=false, native1m=true）。
+ * - `sonnet` 别名现解析到 Sonnet 5，`opus` → Opus 5。要钉具体版本须用完整 model ID。
+ * - Sonnet 5、Opus 5 与 Fable 5 原生自带 1M 上下文，对其使用 `[1m]` 后缀无效（故 supports1m=false, native1m=true）。
  * - 1M 开关仅对 Sonnet 4.6 / Opus 4.6/4.7/4.8 有实际意义。Haiku 仅 200K，不支持 1M。
  *
  * 启用 1M 时发送 `id + "[1m]"`，与既有 `claude-opus-4-8[1m]` 约定一致。
@@ -53,11 +53,18 @@ export const CLAUDE_MODEL_FAMILIES: ClaudeModelFamily[] = [
     icon: <Sparkles className="h-4 w-4" />,
     versions: [
       {
+        id: "claude-opus-5",
+        label: "Opus 5",
+        description: "For complex agentic coding and enterprise work",
+        supports1m: false,
+        native1m: true,
+        isLatest: true,
+      },
+      {
         id: "claude-opus-4-8",
         label: "Opus 4.8",
         description: "For complex agentic coding and enterprise work",
         supports1m: true,
-        isLatest: true,
       },
       {
         id: "claude-opus-4-7",
@@ -166,6 +173,9 @@ export function decodeClaudeModel(
   // 0) 旧别名 sonnet1m / opus1m 的历史语义：sonnet1m→Sonnet 4.6+1M（sonnet 现指向 5），opus1m→Opus 4.8+1M
   if (lower === "sonnet" && /sonnet1m/i.test(raw)) {
     return { versionId: "claude-sonnet-4-6", oneMillion: true };
+  }
+  if (lower === "opus" && /opus1m/i.test(raw)) {
+    return { versionId: "claude-opus-4-8", oneMillion: true };
   }
 
   // 1) 完整 model ID 直接命中

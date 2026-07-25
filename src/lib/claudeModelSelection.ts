@@ -15,7 +15,7 @@ interface ResolveClaudeContinuationModelOptions {
 const DEFAULT_BUILT_IN_LABELS: Record<string, string> = {
   fable: 'Claude Fable 5',
   sonnet: 'Claude Sonnet 4.6',
-  opus: 'Claude Opus 4.8',
+  opus: 'Claude Opus 5',
 };
 
 const normalizeModel = (model: ClaudeModelInput): string | null => {
@@ -89,8 +89,12 @@ export function formatClaudeModelLabel(model: ClaudeModelInput): string {
     return cached[lower] || DEFAULT_BUILT_IN_LABELS[lower];
   }
 
-  if (lower === 'sonnet1m' || lower === 'opus1m') {
-    const family = lower.startsWith('opus') ? 'opus' : 'sonnet';
+  if (lower === 'opus1m') {
+    return 'Claude Opus 4.8 1M';
+  }
+
+  if (lower === 'sonnet1m') {
+    const family = 'sonnet';
     const cached = getCachedModelNames();
     return `${cached[family] || DEFAULT_BUILT_IN_LABELS[family]} 1M`;
   }

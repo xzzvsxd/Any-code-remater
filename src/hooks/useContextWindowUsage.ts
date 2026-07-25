@@ -272,7 +272,7 @@ export function useContextWindowUsage(
 
     // Claude/Gemini: 优先用消息流里的"运行时真实模型"决定窗口大小。
     // UI 传入的 model 是下拉别名（如 opus/opus1m），可能与 CLI 实际运行的模型不一致
-    // （例如 UI 选普通 opus，但 CLI 实际跑 claude-opus-4-8[1m]）。
+    // （例如 UI 选普通 opus，但 CLI 实际跑原生 1M 的 claude-opus-5）。
     // 仅当运行时模型算出的窗口更大时才采用，避免误把窗口缩小。
     if (engine === 'claude' || engine === 'gemini') {
       const runtimeModel = getRuntimeModelFromMessages(mainMessages);
