@@ -49,7 +49,9 @@ pub(super) fn map_model_to_claude_alias(model: &str) -> String {
         "fable" => "fable".to_string(),
         "sonnet1m" => "sonnet[1m]".to_string(),
         "sonnet" => "sonnet".to_string(),
-        "opus1m" => "opus[1m]".to_string(),
+        // Historical UI alias: keep the concrete Opus 4.8 model instead of
+        // following the moving `opus` alias, which now resolves to Opus 5.
+        "opus1m" => "claude-opus-4-8[1m]".to_string(),
         // Use 'opus' alias which automatically resolves to latest Opus.
         "opus" => "opus".to_string(),
         // 自动模式别名：default = 由 Claude Code 决定；opusplan = 计划用 Opus / 执行用 Sonnet。
@@ -58,6 +60,16 @@ pub(super) fn map_model_to_claude_alias(model: &str) -> String {
         "opusplan" => "opusplan".to_string(),
         // Pass through any other model names unchanged (for future compatibility)
         _ => model.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::map_model_to_claude_alias;
+
+    #[test]
+    fn legacy_opus1m_stays_pinned_to_opus48() {
+        assert_eq!(map_model_to_claude_alias("opus1m"), "claude-opus-4-8[1m]");
     }
 }
 
