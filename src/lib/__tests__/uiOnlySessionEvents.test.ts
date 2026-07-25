@@ -30,6 +30,79 @@ const terminalEvent = (text: string, timestamp: string): ClaudeStreamMessage => 
 });
 
 describe('ui-only session event merging', () => {
+  test('keeps real JSONL rows fixed when regressing timestamps surround UI-only events', () => {
+    const laterPhysicalRow = assistant('physical row 0', '2026-01-01T00:00:02.000Z');
+    const earlierPhysicalRow = assistant('physical row 1', '2026-01-01T00:00:01.000Z');
+    const beforeHistory = terminalEvent('before history', '2026-01-01T00:00:00.000Z');
+    const afterLastEligibleRow = terminalEvent('after last eligible row', '2026-01-01T00:00:01.000Z');
+
+    const merged = mergeUiOnlySessionMessages(
+      [laterPhysicalRow, earlierPhysicalRow],
+      [beforeHistory, afterLastEligibleRow],
+    );
+
+    expect(merged).toEqual([
+      expect.objectContaining({ result: 'before history' }),
+      laterPhysicalRow,
+      earlierPhysicalRow,
+      expect.objectContaining({ result: 'after last eligible row' }),
+    ]);
+    expect(merged.filter(message => message.uiOnly !== true)).toEqual([
+      laterPhysicalRow,
+      earlierPhysicalRow,
+    ]);
+  });
+
+  test('places equal-time events stably and missing-time events at the end', () => {
+    const first = assistant('first', '2026-01-01T00:00:01.000Z');
+    const second = assistant('second', '2026-01-01T00:00:01.000Z');
+    const equalA = terminalEvent('equal-a', '2026-01-01T00:00:01.000Z');
+    const equalB = terminalEvent('equal-b', '2026-01-01T00:00:01.000Z');
+    const missingTime = {
+      ...terminalEvent('missing-time', '2026-01-01T00:00:02.000Z'),
+      timestamp: undefined,
+      receivedAt: undefined,
+    } as ClaudeStreamMessage;
+
+    const merged = mergeUiOnlySessionMessages(
+      [first, second],
+      [equalA, equalB, missingTime],
+    );
+
+    expect(merged).toEqual([
+      first,
+      second,
+      expect.objectContaining({ result: 'equal-a' }),
+      expect.objectContaining({ result: 'equal-b' }),
+      expect.objectContaining({ result: 'missing-time' }),
+    ]);
+  });
+
+  test('deduplicates UI-only events without moving a 10000-row history backbone', () => {
+    const history = Array.from({ length: 10_000 }, (_, index) => (
+      index % 2 === 0
+        ? user(
+            `prompt-${index}`,
+            new Date(Date.UTC(2026, 0, 1, 0, 0, 10_000 - index)).toISOString(),
+          )
+        : assistant(
+            `answer-${index}`,
+            new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+          )
+    ));
+    const events = Array.from({ length: 50 }, (_, index) => terminalEvent(
+      `event-${index}`,
+      new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+    ));
+
+    const merged = mergeUiOnlySessionMessages(history, [...events, events[0]]);
+    const mergedHistory = merged.filter(message => message.uiOnly !== true);
+
+    expect(merged).toHaveLength(10_050);
+    expect(mergedHistory).toHaveLength(history.length);
+    expect(mergedHistory.every((message, index) => message === history[index])).toBe(true);
+  });
+
   test('keeps a locally submitted prompt when a late history load is missing it', () => {
     const history = [
       assistant('previous answer', '2026-06-23T01:00:00.000Z'),

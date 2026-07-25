@@ -253,41 +253,79 @@ export function mergeUiOnlySessionMessages(
   uiOnlyMessages: ClaudeStreamMessage[],
 ): ClaudeStreamMessage[] {
   if (uiOnlyMessages.length === 0) return historyMessages;
-  if (historyMessages.length === 0) return uiOnlyMessages.map(normalizeUiOnlySessionMessage);
 
-  const merged = [...historyMessages];
-  const seen = new Set(merged.map(getMessageIdentity));
+  const seen = new Set(historyMessages.map(getMessageIdentity));
+  const uniqueUiMessages: Array<{
+    message: ClaudeStreamMessage;
+    time: number;
+    order: number;
+  }> = [];
 
-  for (const message of uiOnlyMessages.map(normalizeUiOnlySessionMessage)) {
+  for (const sourceMessage of uiOnlyMessages) {
+    const message = normalizeUiOnlySessionMessage(sourceMessage);
     const identity = getMessageIdentity(message);
     if (seen.has(identity)) continue;
     seen.add(identity);
-    merged.push(message);
+    uniqueUiMessages.push({
+      message,
+      time: getMessageTime(message),
+      order: uniqueUiMessages.length,
+    });
   }
 
-  // 稳定排序：核心原则——真实历史消息(非 uiOnly)之间一律保持原始物理顺序(JSONL 行序)，
-  // 绝不因时间戳重排。
-  //
-  // 为什么(修复撤回错位/吞消息)：前端 promptIndex 按 messages 数组顺序计数，后端按 JSONL 物理
-  // 行序计数。若此处按时间戳重排打乱了两条真实用户消息的相对顺序(时间戳因时钟/补写不一致很常见)，
-  // 前端给某条消息算出的 promptIndex 就与后端不一致 → 撤回定位到错误的消息、吞掉中间几条。
-  // 也是历史消息「堆叠到顶部」的根因。故真实消息只认 index，仅 UI-only 事件按时间戳找插入位。
-  const indexOf = new Map<ClaudeStreamMessage, number>();
-  merged.forEach((message, index) => indexOf.set(message, index));
+  if (uniqueUiMessages.length === 0) return historyMessages;
+  if (historyMessages.length === 0) {
+    return uniqueUiMessages.map(entry => entry.message);
+  }
 
-  return [...merged].sort((a, b) => {
-    // 两条都是真实历史消息：严格按原始顺序，不比时间戳（防止重排打乱 JSONL 物理序）。
-    if (!isUiOnly(a) && !isUiOnly(b)) {
-      return (indexOf.get(a) ?? 0) - (indexOf.get(b) ?? 0);
+  // JSONL 物理行序是不可移动的骨架。真实历史里普遍存在时间戳回退、相同或缺失，
+  // 因此不能用一个“真实消息比 index、混合消息比 timestamp”的非传递 comparator
+  // 对整表排序；那会让 UI-only 事件跨过错误的真实行，并让提示词索引看起来乱序。
+  //
+  // UI-only 事件上限为 50。逐事件扫描骨架既保留精确物理顺序，又把最坏工作量
+  // 限定为 O(history × 50)，无需复制或排序真实历史。
+  const historyTimes = historyMessages.map(getMessageTime);
+  const buckets: Array<Array<typeof uniqueUiMessages[number]>> = Array.from(
+    { length: historyMessages.length + 1 },
+    () => [],
+  );
+
+  for (const entry of uniqueUiMessages) {
+    // 无有效时间的 UI-only 事件稳定追加到时间线末尾。
+    let bucketIndex = historyMessages.length;
+    if (Number.isFinite(entry.time)) {
+      bucketIndex = 0;
+      // 插到物理顺序中“最后一个时间 <= 事件时间”的消息后面。
+      // 即使中间时间戳回退，也绝不移动任何已有消息。
+      for (let index = 0; index < historyTimes.length; index += 1) {
+        const historyTime = historyTimes[index];
+        if (Number.isFinite(historyTime) && historyTime <= entry.time) {
+          bucketIndex = index + 1;
+        }
+      }
     }
-    // 至少一方是 UI-only 事件：按时间戳决定插入位置；时间相等/缺失时回退原始顺序。
-    const left = getMessageTime(a);
-    const right = getMessageTime(b);
-    if (!Number.isFinite(left) || !Number.isFinite(right) || left === right) {
-      return (indexOf.get(a) ?? 0) - (indexOf.get(b) ?? 0);
-    }
-    return left - right;
+    buckets[bucketIndex].push(entry);
+  }
+
+  // 同一物理插入位内按有效时间 + 原 UI-only 顺序稳定排列。
+  for (const bucket of buckets) {
+    bucket.sort((left, right) => {
+      const leftHasTime = Number.isFinite(left.time);
+      const rightHasTime = Number.isFinite(right.time);
+      if (leftHasTime && rightHasTime && left.time !== right.time) {
+        return left.time - right.time;
+      }
+      if (leftHasTime !== rightHasTime) return leftHasTime ? -1 : 1;
+      return left.order - right.order;
+    });
+  }
+
+  const merged: ClaudeStreamMessage[] = [];
+  merged.push(...buckets[0].map(entry => entry.message));
+  historyMessages.forEach((message, index) => {
+    merged.push(message, ...buckets[index + 1].map(entry => entry.message));
   });
+  return merged;
 }
 
 export function mergePendingLocalSubmittedPrompts(
