@@ -59,6 +59,18 @@ describe('session message virtualization safety', () => {
     expect(sessionMessagesSource).not.toContain('top: virtualItem.start');
   });
 
+  test('keeps a non-empty virtual track intact and schedules bounded recovery', () => {
+    expect(sessionMessagesSource).toContain('getVirtualTrackLayout');
+    expect(sessionMessagesSource).toContain('shouldRecover');
+    expect(sessionMessagesSource).toContain('EMPTY_WINDOW_RECOVERY_MAX_FRAMES');
+    expect(sessionMessagesSource).toContain('rowVirtualizer.measure()');
+    expect(sessionMessagesSource).toContain('cancelAnimationFrame(recoveryRafId)');
+  });
+
+  test('contains descendant margins inside each measured virtual row', () => {
+    expect(sessionMessagesSource).toContain('className="relative flow-root w-full"');
+  });
+
   test('virtualized message rows do not replay framer-motion enter animations while scrolling history', () => {
     expect(messageBubbleSource).not.toContain('from "framer-motion"');
     expect(messageBubbleSource).not.toContain('<motion.div');

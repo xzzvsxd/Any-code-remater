@@ -25,7 +25,10 @@ import {
   type SessionMessageLayoutChangedDetail,
 } from "./sessionMessageLayoutEvents";
 import { getPromptScrollRetryAction } from "./promptScrollRetryPolicy";
+import { getVirtualTrackLayout } from "./virtualTrackLayout";
 import { isNavigableUserPrompt } from "@/lib/promptIndex";
+
+const EMPTY_WINDOW_RECOVERY_MAX_FRAMES = 8;
 
 /**
  * 虚拟列表行。
@@ -753,15 +756,43 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
   }));
 
   const virtualItems = rowVirtualizer.getVirtualItems();
-  const firstVirtualItem = virtualItems[0];
-  const lastVirtualItem = virtualItems[virtualItems.length - 1];
-  const virtualTotalSize = Math.max(rowVirtualizer.getTotalSize(), 100);
-  const virtualPaddingTop = firstVirtualItem
-    ? Math.max(0, firstVirtualItem.start)
-    : 0;
-  const virtualPaddingBottom = lastVirtualItem
-    ? Math.max(0, virtualTotalSize - lastVirtualItem.end)
-    : 0;
+  const virtualTrackLayout = getVirtualTrackLayout(
+    rowVirtualizer.getTotalSize(),
+    virtualItems,
+    messageGroups.length,
+  );
+  const virtualPaddingTop = virtualTrackLayout.paddingTop;
+  const virtualPaddingBottom = virtualTrackLayout.paddingBottom;
+  const shouldRecover = virtualTrackLayout.shouldRecover;
+
+  // TanStack Virtual 在视口隐藏、缩放或快速重测的瞬态可能返回空 window。
+  // spacer 已先保住完整 scrollHeight；这里仅在该异常态运行有限 rAF，等视口恢复正高度后
+  // 触发一次 measure()。正常滚动没有轮询、DOM 查询或额外测高。
+  useEffect(() => {
+    if (!shouldRecover) return;
+
+    let recoveryRafId = 0;
+    let frames = 0;
+    const recoverEmptyWindow = () => {
+      recoveryRafId = 0;
+      frames += 1;
+      const scrollElement = parentRef.current;
+
+      if (!scrollElement || scrollElement.clientHeight <= 0) {
+        if (frames < EMPTY_WINDOW_RECOVERY_MAX_FRAMES) {
+          recoveryRafId = requestAnimationFrame(recoverEmptyWindow);
+        }
+        return;
+      }
+
+      rowVirtualizer.measure();
+    };
+
+    recoveryRafId = requestAnimationFrame(recoverEmptyWindow);
+    return () => {
+      if (recoveryRafId) cancelAnimationFrame(recoveryRafId);
+    };
+  }, [parentRef, rowVirtualizer, shouldRecover]);
 
   return (
     // ✅ 重构布局: 移除固定 paddingBottom，因为输入框不再使用 fixed 定位
@@ -850,7 +881,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
                   itemKey={virtualItem.key}
                   measurementKey={measurementKey}
                   measureElement={rowVirtualizer.measureElement}
-                  className="relative w-full"
+                  className="relative flow-root w-full"
                 >
                   {/* message actions share the message component hover toolbar */}
                   <ErrorBoundary
