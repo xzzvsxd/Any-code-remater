@@ -601,9 +601,10 @@ export function initializeToolRegistry(): void {
       description: 'Model Context Protocol 工具（通用）',
     },
 
-    // Task - 子代理工具（Claude Code 特有）
+    // Task / Agent - 子代理工具（Claude Code 新旧版本别名）
     {
       name: 'task',
+      pattern: /^(?:task|agent)$/i,
       render: createToolAdapter(TaskWidget, (props) => ({
         description: props.input?.description ?? props.result?.content?.description,
         prompt: props.input?.prompt ?? props.result?.content?.prompt,

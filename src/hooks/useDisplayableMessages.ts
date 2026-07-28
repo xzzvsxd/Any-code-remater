@@ -93,6 +93,7 @@ function isWarmupMessage(message: ClaudeStreamMessage): boolean {
 
 const TOOLS_WITH_DEDICATED_WIDGETS = new Set([
   'task',
+  'agent',
   'edit',
   'multiedit',
   'todowrite',

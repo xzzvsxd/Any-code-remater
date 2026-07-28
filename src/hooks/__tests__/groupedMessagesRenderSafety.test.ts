@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { updateGroupedMessagesCache } from '../useGroupedMessages';
+import { groupMessages } from '@/lib/subagentGrouping';
 import type { ClaudeStreamMessage } from '@/types/claude';
 
 const groupedMessagesSource = readFileSync(
@@ -57,6 +58,43 @@ describe('grouped messages render safety', () => {
   test('falls back to full grouping for subagent messages that can rewrite earlier groups', () => {
     expect(groupedMessagesSource).toContain('isSubagentMessage(message)');
     expect(groupedMessagesSource).toContain('return null');
+  });
+
+  test('groups the Claude Agent alias and keeps the complete custom subagent type', () => {
+    const agentCall: ClaudeStreamMessage = {
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [{
+          type: 'tool_use',
+          id: 'tool-agent-1',
+          name: 'Agent',
+          input: {
+            description: 'Run the playbook',
+            subagent_type: 'ai_playbook_agent',
+          },
+        }],
+      },
+    };
+    const subagentReply = {
+      type: 'assistant',
+      parent_tool_use_id: 'tool-agent-1',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'done' }],
+      },
+    } as ClaudeStreamMessage;
+
+    const groups = groupMessages([agentCall, subagentReply]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({
+      type: 'subagent',
+      group: {
+        taskToolUseId: 'tool-agent-1',
+        subagentType: 'ai_playbook_agent',
+        subagentMessages: [subagentReply],
+      },
+    });
   });
 
   test('exports technical message classifier for safe incremental aggregation', () => {

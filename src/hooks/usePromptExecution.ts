@@ -1663,39 +1663,13 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
           clearClaudeResultWatchdog();
           if (!terminalEventGate.tryStart('complete')) return;
           const completedSessionId = currentSessionId || effectiveSession?.id || claudeSessionId || null;
+          const completedProjectId = effectiveSession?.project_id
+            || extractedSessionInfo?.projectId
+            || projectPath.replace(/[^a-zA-Z0-9]/g, '-');
 
-
-          // 🔧 FIX: Wait for pending prompt recording to complete (race condition fix)
-          if (pendingClaudePromptRecordingPromise) {
-            await pendingClaudePromptRecordingPromise;
-            pendingClaudePromptRecordingPromise = null;
-          }
-
-          // Mark prompt as completed (record Git state after completion)
-          if (recordedPromptIndex >= 0) {
-            // Use currentSessionId and extractedSessionInfo for new sessions
-            // 优先使用本轮运行里最新拿到的 session_id。
-            // Claude 在 plan/continue/resume 场景下可能返回新的会话 ID，
-            // 如果这里继续使用旧的 effectiveSession.id，会导致记录写到旧会话里。
-            const sessionId = currentSessionId || effectiveSession?.id;
-            const projectId = effectiveSession?.project_id || extractedSessionInfo?.projectId || projectPath.replace(/[^a-zA-Z0-9]/g, '-');
-
-            if (sessionId && projectId) {
-              api.markPromptCompleted(
-                sessionId,
-                projectId,
-                projectPath,
-                recordedPromptIndex,
-                prompt
-              ).then(() => {
-              }).catch(err => {
-                console.error('[Prompt Revert] Failed to mark completed:', err);
-              });
-            } else {
-              console.warn('[Prompt Revert] Cannot mark completed: missing sessionId or projectId');
-            }
-          }
-
+          // 终态是运行时事实，必须先同步释放 UI、取消通道和监听器。
+          // 提示词回滚记录属于可选持久化；磁盘繁忙或 invoke 卡住时，不得让已收到 complete/result
+          // 的会话继续显示“正在执行”，也不得阻塞下一条队列提示词。
           setIsLoading(false);
           hasActiveSessionRef.current = false;
           bindCancelSessionId(null);
@@ -1707,6 +1681,35 @@ export function usePromptExecution(config: UsePromptExecutionConfig): UsePromptE
 
           // Reset currentSessionId to allow detection of new session_id
           currentSessionId = null;
+
+          // 提示词记录在后台按原顺序完成：先等 sent 索引落盘，再写 completed 快照。
+          // 这里有意不 await 整个任务，避免非关键记账反向阻塞终态释放和队列推进。
+          const finalizeClaudePromptTracking = async () => {
+            if (pendingClaudePromptRecordingPromise) {
+              await pendingClaudePromptRecordingPromise;
+              pendingClaudePromptRecordingPromise = null;
+            }
+
+            if (recordedPromptIndex < 0) return;
+            if (!completedSessionId || !completedProjectId) {
+              console.warn('[Prompt Revert] Cannot mark completed: missing sessionId or projectId');
+              return;
+            }
+
+            try {
+              await api.markPromptCompleted(
+                completedSessionId,
+                completedProjectId,
+                projectPath,
+                recordedPromptIndex,
+                prompt,
+              );
+            } catch (err) {
+              console.error('[Prompt Revert] Failed to mark completed:', err);
+            }
+          };
+          void finalizeClaudePromptTracking();
+
           await notifyCompletionIfIdle('claude', completedSessionId);
           // 结束消息消费循环（已入队的消息会被消费完后自然退出）
           claudeTaskQueue.done();

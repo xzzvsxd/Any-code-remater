@@ -39,6 +39,16 @@ export type MessageGroup =
   | { type: 'subagent'; group: SubagentGroup }
   | { type: 'aggregated'; messages: ClaudeStreamMessage[]; index: number }; // 新增：聚合消息组
 
+const SUBAGENT_TASK_TOOL_NAMES = new Set(['task', 'agent']);
+
+/**
+ * Claude Code 新旧版本分别使用 Task / Agent 表示子代理调用。
+ * 两者协议语义相同，必须走同一套分组和专用渲染链路。
+ */
+export function isSubagentTaskToolName(name: unknown): boolean {
+  return typeof name === 'string' && SUBAGENT_TASK_TOOL_NAMES.has(name.trim().toLowerCase());
+}
+
 /**
  * 检查消息是否包含 Task 工具调用
  */
@@ -50,7 +60,7 @@ export function hasTaskToolCall(message: ClaudeStreamMessage): boolean {
   
   return content.some((item: any) => 
     item.type === 'tool_use' && 
-    item.name?.toLowerCase() === 'task'
+    isSubagentTaskToolName(item.name)
   );
 }
 
@@ -62,7 +72,7 @@ export function extractTaskToolUseIds(message: ClaudeStreamMessage): string[] {
 
   const content = getMessageContent(message) as any[];
   return content
-    .filter((item: any) => item.type === 'tool_use' && item.name?.toLowerCase() === 'task')
+    .filter((item: any) => item.type === 'tool_use' && isSubagentTaskToolName(item.name))
     .map((item: any) => item.id)
     .filter(Boolean);
 }
@@ -77,7 +87,7 @@ export function extractTaskToolDetails(message: ClaudeStreamMessage): Map<string
 
   const content = getMessageContent(message) as any[];
   content
-    .filter((item: any) => item.type === 'tool_use' && item.name?.toLowerCase() === 'task')
+    .filter((item: any) => item.type === 'tool_use' && isSubagentTaskToolName(item.name))
     .forEach((item: any) => {
       if (item.id) {
         details.set(item.id, {

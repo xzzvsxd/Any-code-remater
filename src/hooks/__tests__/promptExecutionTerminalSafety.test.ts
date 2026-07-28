@@ -28,4 +28,18 @@ describe('prompt execution terminal event safety', () => {
     // 看门狗必须在权威收尾/错误收尾时被清理，避免重复触发或定时器泄漏。
     expect(promptExecutionSource).toContain('clearClaudeResultWatchdog');
   });
+
+  test('releases Claude runtime state before optional prompt bookkeeping can stall', () => {
+    const completionStart = promptExecutionSource.indexOf('const processComplete = async () =>');
+    const completionEnd = promptExecutionSource.indexOf('const processClaudeError', completionStart);
+    const completionSource = promptExecutionSource.slice(completionStart, completionEnd);
+    const loadingReleaseIndex = completionSource.indexOf('setIsLoading(false)');
+    const promptBookkeepingAwaitIndex = completionSource.indexOf('await pendingClaudePromptRecordingPromise');
+
+    expect(completionStart).toBeGreaterThanOrEqual(0);
+    expect(completionEnd).toBeGreaterThan(completionStart);
+    expect(loadingReleaseIndex).toBeGreaterThanOrEqual(0);
+    expect(promptBookkeepingAwaitIndex).toBeGreaterThanOrEqual(0);
+    expect(loadingReleaseIndex).toBeLessThan(promptBookkeepingAwaitIndex);
+  });
 });

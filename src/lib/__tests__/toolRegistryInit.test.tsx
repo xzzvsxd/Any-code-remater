@@ -27,6 +27,22 @@ describe('tool registry initialization', () => {
     expect(toolRegistry.getRenderer('update_plan')?.name).toBe('update_plan');
   });
 
+  test('renders the Claude Agent alias with the Task widget and preserves the full custom agent name', () => {
+    const renderer = toolRegistry.getRenderer('Agent');
+    expect(renderer?.name).toBe('task');
+
+    const element = renderer!.render({
+      toolName: 'Agent',
+      input: {
+        description: 'Run the playbook',
+        subagent_type: 'ai_playbook_agent',
+      },
+    });
+
+    expect(isValidElement(element)).toBe(true);
+    expect((element as ReactElement<any>).props.subagentType).toBe('ai_playbook_agent');
+  });
+
   test('normalizes singular request_user_input payloads for visual rendering', () => {
     const renderer = toolRegistry.getRenderer('request_user_input');
     expect(renderer?.name).toBe('askuserquestion');
