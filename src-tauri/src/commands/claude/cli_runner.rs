@@ -16,6 +16,8 @@ use super::config::get_claude_execution_config;
 use super::paths::{encode_project_path, get_claude_dir};
 use super::platform;
 
+const CLAUDE_PRINT_BG_WAIT_CEILING_ENV: &str = "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS";
+
 /// Global state to track current Claude process
 pub struct ClaudeProcessState {
     pub current_process: Arc<Mutex<Option<Child>>>,
@@ -65,11 +67,38 @@ pub(super) fn map_model_to_claude_alias(model: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::map_model_to_claude_alias;
+    use std::ffi::OsStr;
+
+    use super::{
+        create_windows_command, map_model_to_claude_alias, CLAUDE_PRINT_BG_WAIT_CEILING_ENV,
+    };
 
     #[test]
     fn legacy_opus1m_stays_pinned_to_opus48() {
         assert_eq!(map_model_to_claude_alias("opus1m"), "claude-opus-4-8[1m]");
+    }
+
+    #[test]
+    fn claude_execution_disables_the_print_background_wait_ceiling() {
+        let previous_value = std::env::var_os(CLAUDE_PRINT_BG_WAIT_CEILING_ENV);
+        std::env::set_var(CLAUDE_PRINT_BG_WAIT_CEILING_ENV, "600000");
+
+        let command_result = create_windows_command("claude", Vec::new(), ".", None);
+
+        match previous_value {
+            Some(value) => std::env::set_var(CLAUDE_PRINT_BG_WAIT_CEILING_ENV, value),
+            None => std::env::remove_var(CLAUDE_PRINT_BG_WAIT_CEILING_ENV),
+        }
+
+        let command = command_result.expect("Claude execution command should be constructible");
+        let configured_ceiling = command
+            .as_std()
+            .get_envs()
+            .find(|(key, _)| *key == OsStr::new(CLAUDE_PRINT_BG_WAIT_CEILING_ENV))
+            .and_then(|(_, value)| value)
+            .and_then(OsStr::to_str);
+
+        assert_eq!(configured_ceiling, Some("0"));
     }
 }
 
@@ -220,6 +249,12 @@ fn create_windows_command(
     model: Option<&str>,
 ) -> Result<Command, String> {
     let mut cmd = create_command_with_env(claude_path);
+
+    // Any Code exposes explicit run cancellation, so Claude's print-mode safety ceiling must not
+    // silently terminate legitimate long-running background agents. Apply this after loading the
+    // parent process and ~/.claude/settings.json environments so every execution mode has the same
+    // final policy, even when an inherited value still contains Claude Code's 600-second default.
+    cmd.env(CLAUDE_PRINT_BG_WAIT_CEILING_ENV, "0");
 
     // 🔥 仅为「自定义完整模型 ID」设置 ANTHROPIC_MODEL 环境变量。
     // 内置别名（sonnet/opus/haiku/fable、[1m] 变体、default/opusplan）已通过 --model 参数传递，
