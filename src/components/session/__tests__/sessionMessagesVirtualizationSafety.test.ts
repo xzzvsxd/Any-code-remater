@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { Virtualizer } from '@tanstack/react-virtual';
 import { describe, expect, test } from 'vitest';
 
 const sessionMessagesSource = readFileSync(
@@ -65,6 +66,42 @@ describe('session message virtualization safety', () => {
     expect(sessionMessagesSource).toContain('EMPTY_WINDOW_RECOVERY_MAX_FRAMES');
     expect(sessionMessagesSource).toContain('rowVirtualizer.measure()');
     expect(sessionMessagesSource).toContain('cancelAnimationFrame(recoveryRafId)');
+  });
+
+  test('refreshes the observed viewport rect before recovering a first-load empty window', () => {
+    expect(sessionMessagesSource).toContain('createRefreshableElementRectObserver');
+    expect(sessionMessagesSource).toContain('observeElementRect: observeSessionMessageViewportRect');
+    expect(sessionMessagesSource).toContain('viewportRectObserverRef');
+    expect(sessionMessagesSource).toMatch(
+      /const recoverEmptyWindow = \(\) => \{[\s\S]*?viewportRectObserverRef\.current\?\.refresh\(\)[\s\S]*?rowVirtualizer\.measure\(\);/,
+    );
+    expect(sessionMessagesSource).toMatch(
+      /remeasureViewport: \(\) => \{[\s\S]*?viewportRectObserverRef\.current\?\.refresh\(\)[\s\S]*?rowVirtualizer\.measure\(\);/,
+    );
+    expect(sessionMessagesSource).toMatch(
+      /scrollToBottom: \(\) => \{[\s\S]*?viewportRectObserverRef\.current\?\.refresh\(\)[\s\S]*?rowVirtualizer\.scrollToIndex\(messageGroups\.length - 1/,
+    );
+  });
+
+  test('documents that TanStack measure alone cannot recover a stale zero-height viewport', () => {
+    const virtualizer = new Virtualizer({
+      count: 3,
+      getScrollElement: () => null,
+      estimateSize: () => 100,
+      scrollToFn: () => {},
+      observeElementRect: () => () => {},
+      observeElementOffset: () => () => {},
+    });
+
+    virtualizer.scrollRect = { width: 800, height: 0 };
+    expect(virtualizer.getVirtualItems()).toEqual([]);
+
+    virtualizer.measure();
+    expect(virtualizer.getVirtualItems()).toEqual([]);
+
+    virtualizer.scrollRect = { width: 800, height: 600 };
+    virtualizer.measure();
+    expect(virtualizer.getVirtualItems()).toHaveLength(3);
   });
 
   test('contains descendant margins inside each measured virtual row', () => {

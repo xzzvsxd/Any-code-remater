@@ -25,6 +25,10 @@ import {
   type SessionMessageLayoutChangedDetail,
 } from "./sessionMessageLayoutEvents";
 import { getPromptScrollRetryAction } from "./promptScrollRetryPolicy";
+import {
+  createRefreshableElementRectObserver,
+  type RefreshableElementRectObserver,
+} from "./refreshableElementRectObserver";
 import { getVirtualTrackLayout } from "./virtualTrackLayout";
 import { isNavigableUserPrompt } from "@/lib/promptIndex";
 
@@ -61,7 +65,7 @@ export interface SessionMessagesRef {
    * 重新测量视口并重算虚拟窗口。
    * 用于标签页从 display:none 切回可见：隐藏期间滚动容器 clientHeight=0，
    * 虚拟列表只渲染顶部 overscan 行；切回后 WebKitGTK 的 ResizeObserver 不一定可靠地
-   * 感知尺寸恢复，导致长会话停在顶部、下方留白。这里主动 measure() 触发重算。
+   * 感知尺寸恢复，导致长会话停在顶部、下方留白。这里主动同步真实 rect 后触发重算。
    */
   remeasureViewport: () => void;
 }
@@ -147,6 +151,10 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
   const pendingRemeasureItemIndexesRef = useRef<Set<number>>(new Set());
   const pendingFullRemeasureRef = useRef(false);
   const pendingPruneStaleMeasurementsRef = useRef(false);
+  const viewportRectObserverRef = useRef<RefreshableElementRectObserver<HTMLDivElement, HTMLElement> | null>(null);
+  if (!viewportRectObserverRef.current) {
+    viewportRectObserverRef.current = createRefreshableElementRectObserver();
+  }
   const cancelBottomScrollLoop = () => {
     if (bottomScrollRafRef.current) {
       cancelAnimationFrame(bottomScrollRafRef.current);
@@ -203,13 +211,18 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
     }
   }, [getMeasurementCacheKey, messageGroups]);
 
+  // Reuse TanStack's own ResizeObserver while retaining a low-cost imperative
+  // rect refresh for first history load and hidden->visible tab activation.
+  const observeSessionMessageViewportRect = viewportRectObserverRef.current.observeElementRect;
+
   /**
    * ✅ OPTIMIZED: Virtual list configuration for improved performance
    */
-  const rowVirtualizer = useVirtualizer({
+  const rowVirtualizer = useVirtualizer<HTMLDivElement, HTMLElement>({
     count: messageGroups.length,
     getItemKey: (index) => getGroupKey(messageGroups[index], index),
     getScrollElement: () => parentRef.current,
+    observeElementRect: observeSessionMessageViewportRect,
     paddingStart: SESSION_MESSAGES_PADDING_START,
     paddingEnd: SESSION_MESSAGES_PADDING_END,
     estimateSize: (index) => {
@@ -481,6 +494,10 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       cancelPromptScrollSearch();
       cancelTopScrollFollowUps();
 
+      // 初次历史到达可能早于 ResizeObserver 的非零尺寸回调；先同步真实视口，
+      // 否则 scrollToIndex 会继续基于 stale height=0 计算并保持空 virtual window。
+      viewportRectObserverRef.current?.refresh();
+
       // Use virtualizer's scrollToIndex for reliable scrolling to the last item
       const alignLastRowToBottom = () => {
         rowVirtualizer.scrollToIndex(messageGroups.length - 1, {
@@ -733,14 +750,19 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
         const scrollElement = parentRef.current;
         if (!scrollElement) return;
 
+        // measure() 本身不会读取 clientHeight；必须先把当前 DOM rect 经 observer callback
+        // 同步给 virtualizer，才能让 calculateRange 从 null 恢复为真实可见区间。
+        const viewportReady = viewportRectObserverRef.current?.refresh() ?? false;
+
         // 视口仍未恢复（display:none 摘除后布局未稳）：再等一帧，避免 0 高度下重算窗口。
-        if (scrollElement.clientHeight <= 0 && attempts < MAX_ATTEMPTS) {
+        if ((!viewportReady || scrollElement.clientHeight <= 0) && attempts < MAX_ATTEMPTS) {
           attempts += 1;
           virtualizerRemeasureRafRef.current = requestAnimationFrame(runRemeasure);
           return;
         }
+        if (!viewportReady || scrollElement.clientHeight <= 0) return;
 
-        // 重算虚拟窗口：measure() 会按当前真实视口尺寸重新计算可见区间，
+        // scrollRect 已在上方同步为真实视口；再清理 stale itemSizeCache 并通知重算，
         // 修正隐藏期间塌缩出的重叠/重复虚拟项。
         rowVirtualizer.measure();
         // 用可见 DOM 行的真实高度回填 itemSizeCache，消除塌缩期间的估算误差。
@@ -767,7 +789,7 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
 
   // TanStack Virtual 在视口隐藏、缩放或快速重测的瞬态可能返回空 window。
   // spacer 已先保住完整 scrollHeight；这里仅在该异常态运行有限 rAF，等视口恢复正高度后
-  // 触发一次 measure()。正常滚动没有轮询、DOM 查询或额外测高。
+  // 主动同步 observer rect 并触发一次 measure()。正常滚动没有轮询、DOM 查询或额外测高。
   useEffect(() => {
     if (!shouldRecover) return;
 
@@ -777,8 +799,9 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       recoveryRafId = 0;
       frames += 1;
       const scrollElement = parentRef.current;
+      const viewportReady = viewportRectObserverRef.current?.refresh() ?? false;
 
-      if (!scrollElement || scrollElement.clientHeight <= 0) {
+      if (!scrollElement || !viewportReady || scrollElement.clientHeight <= 0) {
         if (frames < EMPTY_WINDOW_RECOVERY_MAX_FRAMES) {
           recoveryRafId = requestAnimationFrame(recoverEmptyWindow);
         }
