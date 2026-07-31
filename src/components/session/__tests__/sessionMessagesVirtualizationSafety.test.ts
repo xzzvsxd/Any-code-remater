@@ -55,6 +55,7 @@ describe('session message virtualization safety', () => {
     expect(sessionMessagesSource).toContain('const virtualPaddingBottom');
     expect(sessionMessagesSource).toContain('data-virtual-padding="top"');
     expect(sessionMessagesSource).toContain('data-virtual-padding="bottom"');
+    expect(sessionMessagesSource).toContain('minHeight: `${virtualTrackLayout.totalSize}px`');
     expect(sessionMessagesSource).not.toContain('transform: `translateY(${virtualItem.start}px)`');
     expect(sessionMessagesSource).not.toContain('className="absolute inset-x-4 top-0"');
     expect(sessionMessagesSource).not.toContain('top: virtualItem.start');

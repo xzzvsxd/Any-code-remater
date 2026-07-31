@@ -839,7 +839,12 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
         <div
           className="relative w-full max-w-5xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-[85%] mx-auto px-4"
           style={{
-            minHeight: '100px',
+            // 正常流 spacer 只为离屏行占位；新挂载的历史行在 WebView 布局/测高回填前
+            // 可能短暂小于 virtualItem.size。若轨道跟着 DOM 行高度收缩，浏览器会 clamp
+            // scrollTop，而 TanStack 仍按旧 offset 渲染非空窗口，最终整窗行落在视口外。
+            // 始终保留 virtual totalSize 作为最小轨道高度即可阻断该链路；不清测高缓存、
+            // 不加 observer，也不在滚动热路径做额外 DOM 查询。
+            minHeight: `${virtualTrackLayout.totalSize}px`,
           }}
         >
           {virtualPaddingTop > 0 && (
