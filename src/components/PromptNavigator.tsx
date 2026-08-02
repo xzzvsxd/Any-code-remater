@@ -219,7 +219,7 @@ export const PromptNavigator: React.FC<PromptNavigatorProps> = ({
     <div
       aria-hidden={!isOpen}
       className={cn(
-        "absolute inset-y-0 right-0 z-50 w-80 bg-background flex flex-col overflow-hidden border-l shadow-lg",
+        "prompt-navigator-surface absolute inset-y-0 right-0 z-50 w-80 flex flex-col overflow-hidden border-l shadow-lg",
         "transition-transform duration-300 ease-in-out",
         isOpen
           ? "translate-x-0"

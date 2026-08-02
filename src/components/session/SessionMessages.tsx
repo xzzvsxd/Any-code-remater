@@ -783,12 +783,10 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
     virtualItems,
     messageGroups.length,
   );
-  const virtualPaddingTop = virtualTrackLayout.paddingTop;
-  const virtualPaddingBottom = virtualTrackLayout.paddingBottom;
   const shouldRecover = virtualTrackLayout.shouldRecover;
 
   // TanStack Virtual 在视口隐藏、缩放或快速重测的瞬态可能返回空 window。
-  // spacer 已先保住完整 scrollHeight；这里仅在该异常态运行有限 rAF，等视口恢复正高度后
+  // 固定高度轨道已先保住完整 scrollHeight；这里仅在该异常态运行有限 rAF，等视口恢复正高度后
   // 主动同步 observer rect 并触发一次 measure()。正常滚动没有轮询、DOM 查询或额外测高。
   useEffect(() => {
     if (!shouldRecover) return;
@@ -839,25 +837,12 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
         <div
           className="relative w-full max-w-5xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-[85%] mx-auto px-4"
           style={{
-            // 正常流 spacer 只为离屏行占位；新挂载的历史行在 WebView 布局/测高回填前
-            // 可能短暂小于 virtualItem.size。若轨道跟着 DOM 行高度收缩，浏览器会 clamp
-            // scrollTop，而 TanStack 仍按旧 offset 渲染非空窗口，最终整窗行落在视口外。
-            // 始终保留 virtual totalSize 作为最小轨道高度即可阻断该链路；不清测高缓存、
-            // 不加 observer，也不在滚动热路径做额外 DOM 查询。
-            minHeight: `${virtualTrackLayout.totalSize}px`,
+            // TanStack Virtual 的 start/end 是绝对轨道坐标。轨道本身只负责提供完整
+            // scrollHeight；每一行独立 translate 到 start，真实高度变化不会在文档流里
+            // 被二次累积，也就不会把整批可见行推到视口外形成大片空白。
+            height: `${virtualTrackLayout.totalSize}px`,
           }}
         >
-          {virtualPaddingTop > 0 && (
-            <div
-              data-virtual-padding="top"
-              aria-hidden="true"
-              style={{
-                height: `${virtualPaddingTop}px`,
-                flexShrink: 0,
-              }}
-            />
-          )}
-
           {virtualItems.map((virtualItem) => {
             const messageGroup = messageGroups[virtualItem.index];
 
@@ -909,7 +894,10 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
                   itemKey={virtualItem.key}
                   measurementKey={measurementKey}
                   measureElement={rowVirtualizer.measureElement}
-                  className="relative flow-root w-full"
+                  className="absolute inset-x-4 top-0 flow-root"
+                  style={{
+                    transform: `translateY(${virtualItem.start}px)`,
+                  }}
                 >
                   {/* message actions share the message component hover toolbar */}
                   <ErrorBoundary
@@ -948,17 +936,6 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
                 </MeasurableItem>
               );
             })}
-
-          {virtualPaddingBottom > 0 && (
-            <div
-              data-virtual-padding="bottom"
-              aria-hidden="true"
-              style={{
-                height: `${virtualPaddingBottom}px`,
-                flexShrink: 0,
-              }}
-            />
-          )}
         </div>
 
         {/* CLI风格的处理状态指示器 - 显示在消息列表底部 */}

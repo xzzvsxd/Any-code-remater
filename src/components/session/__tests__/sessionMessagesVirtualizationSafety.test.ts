@@ -50,14 +50,14 @@ describe('session message virtualization safety', () => {
     expect(sessionMessagesSource).toContain('useAnimationFrameWithResizeObserver: true');
   });
 
-  test('positions virtual rows in normal document flow with spacers instead of overlapping absolute transforms', () => {
-    expect(sessionMessagesSource).toContain('const virtualPaddingTop');
-    expect(sessionMessagesSource).toContain('const virtualPaddingBottom');
-    expect(sessionMessagesSource).toContain('data-virtual-padding="top"');
-    expect(sessionMessagesSource).toContain('data-virtual-padding="bottom"');
-    expect(sessionMessagesSource).toContain('minHeight: `${virtualTrackLayout.totalSize}px`');
-    expect(sessionMessagesSource).not.toContain('transform: `translateY(${virtualItem.start}px)`');
-    expect(sessionMessagesSource).not.toContain('className="absolute inset-x-4 top-0"');
+  test('anchors every virtual row to TanStack coordinates instead of accumulating document-flow height drift', () => {
+    expect(sessionMessagesSource).not.toContain('const virtualPaddingTop');
+    expect(sessionMessagesSource).not.toContain('const virtualPaddingBottom');
+    expect(sessionMessagesSource).not.toContain('data-virtual-padding="top"');
+    expect(sessionMessagesSource).not.toContain('data-virtual-padding="bottom"');
+    expect(sessionMessagesSource).toContain('height: `${virtualTrackLayout.totalSize}px`');
+    expect(sessionMessagesSource).toContain('transform: `translateY(${virtualItem.start}px)`');
+    expect(sessionMessagesSource).toContain('className="absolute inset-x-4 top-0 flow-root"');
     expect(sessionMessagesSource).not.toContain('top: virtualItem.start');
   });
 
@@ -106,7 +106,7 @@ describe('session message virtualization safety', () => {
   });
 
   test('contains descendant margins inside each measured virtual row', () => {
-    expect(sessionMessagesSource).toContain('className="relative flow-root w-full"');
+    expect(sessionMessagesSource).toContain('className="absolute inset-x-4 top-0 flow-root"');
   });
 
   test('virtualized message rows do not replay framer-motion enter animations while scrolling history', () => {

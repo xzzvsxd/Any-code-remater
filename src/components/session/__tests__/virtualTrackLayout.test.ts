@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { getVirtualTrackLayout } from '../virtualTrackLayout';
 
 describe('getVirtualTrackLayout', () => {
-  test('calculates normal document-flow spacers', () => {
+  test('keeps only the canonical virtual track height for a populated window', () => {
     expect(getVirtualTrackLayout(
       1_000,
       [
@@ -12,8 +12,6 @@ describe('getVirtualTrackLayout', () => {
       10,
     )).toEqual({
       totalSize: 1_000,
-      paddingTop: 200,
-      paddingBottom: 500,
       shouldRecover: false,
     });
   });
@@ -21,8 +19,6 @@ describe('getVirtualTrackLayout', () => {
   test('preserves the full track when a non-empty list has an empty virtual window', () => {
     expect(getVirtualTrackLayout(84_000, [], 1_001)).toEqual({
       totalSize: 84_000,
-      paddingTop: 0,
-      paddingBottom: 84_000,
       shouldRecover: true,
     });
   });
@@ -30,8 +26,6 @@ describe('getVirtualTrackLayout', () => {
   test('retains a nonzero recovery track when total size is temporarily invalid', () => {
     expect(getVirtualTrackLayout(Number.NaN, [], 20)).toEqual({
       totalSize: 100,
-      paddingTop: 0,
-      paddingBottom: 100,
       shouldRecover: true,
     });
   });
@@ -48,8 +42,6 @@ describe('getVirtualTrackLayout', () => {
 
     expect(result).toEqual({
       totalSize: 150,
-      paddingTop: 0,
-      paddingBottom: 0,
       shouldRecover: false,
     });
     expect(Object.values(result).filter(value => typeof value === 'number').every(
@@ -60,8 +52,6 @@ describe('getVirtualTrackLayout', () => {
   test('expands total size to contain an item end beyond a stale total', () => {
     expect(getVirtualTrackLayout(300, [{ start: 400, end: 625 }], 5)).toEqual({
       totalSize: 625,
-      paddingTop: 400,
-      paddingBottom: 0,
       shouldRecover: false,
     });
   });
@@ -69,8 +59,6 @@ describe('getVirtualTrackLayout', () => {
   test('does not recover an actually empty session', () => {
     expect(getVirtualTrackLayout(50_000, [], 0)).toEqual({
       totalSize: 0,
-      paddingTop: 0,
-      paddingBottom: 0,
       shouldRecover: false,
     });
   });

@@ -5,8 +5,6 @@ export interface VirtualTrackItemGeometry {
 
 export interface VirtualTrackLayout {
   totalSize: number;
-  paddingTop: number;
-  paddingBottom: number;
   shouldRecover: boolean;
 }
 
@@ -15,12 +13,17 @@ const finiteNonNegative = (value: number): number => (
 );
 
 /**
- * Converts TanStack Virtual's current window into document-flow spacer sizes.
+ * Keeps TanStack Virtual's canonical absolute-positioned scroll track stable.
  *
  * A non-empty list may briefly expose no virtual items while its scroll element
  * is hidden, resized, or being remeasured. The scroll track must retain its full
  * height during that frame; otherwise the browser clamps scrollTop and the list
  * can reopen on an unrelated or blank range.
+ *
+ * Row placement deliberately stays out of this helper. Each rendered row must
+ * use its own `virtualItem.start`; converting those coordinates back into normal
+ * document flow makes earlier rows' real heights accumulate a second time and
+ * can place the entire rendered window outside the viewport.
  */
 export function getVirtualTrackLayout(
   rawTotalSize: number,
@@ -30,8 +33,6 @@ export function getVirtualTrackLayout(
   if (itemCount <= 0) {
     return {
       totalSize: 0,
-      paddingTop: 0,
-      paddingBottom: 0,
       shouldRecover: false,
     };
   }
@@ -42,22 +43,19 @@ export function getVirtualTrackLayout(
     const totalSize = Math.max(100, baseTotalSize);
     return {
       totalSize,
-      paddingTop: 0,
-      paddingBottom: totalSize,
       shouldRecover: true,
     };
   }
 
-  const firstStart = finiteNonNegative(virtualItems[0].start);
-  const lastItem = virtualItems[virtualItems.length - 1];
-  const lastStart = finiteNonNegative(lastItem.start);
-  const lastEnd = Math.max(lastStart, finiteNonNegative(lastItem.end));
-  const totalSize = Math.max(baseTotalSize, firstStart, lastEnd);
+  const largestItemBoundary = virtualItems.reduce((largest, item) => {
+    const start = finiteNonNegative(item.start);
+    const end = Math.max(start, finiteNonNegative(item.end));
+    return Math.max(largest, start, end);
+  }, 0);
+  const totalSize = Math.max(baseTotalSize, largestItemBoundary);
 
   return {
     totalSize,
-    paddingTop: Math.min(firstStart, totalSize),
-    paddingBottom: Math.max(0, totalSize - lastEnd),
     shouldRecover: false,
   };
 }

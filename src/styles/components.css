@@ -304,6 +304,14 @@ code:hover::-webkit-scrollbar-thumb,
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
 }
 
+/* Prompt navigation is a solid drawer, not a glass overlay. */
+.prompt-navigator-surface {
+  background-color: var(--color-background) !important;
+  background-image: none !important;
+  opacity: 1 !important;
+  isolation: isolate;
+}
+
 /* Dark theme specific enhancements - Medium Gray */
 .dark .floating-element {
   background-color: oklch(0.23 0.003 260 / 0.95);
