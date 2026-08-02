@@ -580,6 +580,11 @@
   "generalSettings": {
     "showSystemInit": "顯示系統初始化資訊",
     "showSystemInitDescription": "在對話開始時顯示Session ID、Model、工作目錄和可用工具資訊",
+    "autoCompactEnabled": "Claude 自動壓縮",
+    "autoCompactEnabledDescription": "由 Claude Code 原生管理上下文壓縮，避免重複執行和狀態衝突",
+    "autoCompactWindow": "自動壓縮視窗",
+    "autoCompactWindowDescription": "Claude 會在上下文接近該視窗時自動壓縮，可設定 100K 到 1000K（預設 256K）",
+    "autoCompactEnvironmentOverride": "環境變數 CLAUDE_CODE_AUTO_COMPACT_WINDOW={{value}} 目前優先生效",
     "hideWarmup": "隱藏 Warmup 訊息",
     "hideWarmupDescription": "在對話訊息中隱藏自動傳送的 Warmup 訊息及其回覆（啟動時的預熱訊息）",
     "includeCoauthored": "包含 \"Co-authored by Claude\"",
@@ -1502,7 +1507,25 @@
     "cacheCreation": "快取建立",
     "cacheRead": "快取讀取",
     "criticalWarning": "上下文視窗接近上限，建議開始新對話",
-    "highWarning": "上下文使用率較高"
+    "highWarning": "上下文使用率較高",
+    "autoCompactWindow": "Auto-compact Window",
+    "configuredWindow": "設定視窗",
+    "tokensUntilWindow": "距離視窗",
+    "compactWindowReached": "已進入視窗",
+    "compactWindowReachedDescription": "已進入設定視窗，Claude 將立即按原生邏輯處理壓縮。",
+    "compactWindowNear": "即將壓縮：上下文使用量已接近設定視窗。",
+    "compactWindowDescription": "Claude 會在上下文使用量接近該視窗時按原生邏輯自動壓縮。"
+  },
+  "compactLifecycle": {
+    "auto": "自動壓縮",
+    "manual": "手動壓縮",
+    "unknown": "上下文壓縮",
+    "scheduled": "正在觸發",
+    "preparing": "正在準備",
+    "running": "壓縮中",
+    "completed": "壓縮完成",
+    "failed": "壓縮失敗",
+    "released": "釋放"
   },
   "systemInit": {
     "title": "系統初始化",

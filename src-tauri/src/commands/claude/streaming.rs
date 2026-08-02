@@ -209,16 +209,21 @@ pub async fn execute_claude_streaming(
                 }
 
                 // emit 输出：普通行进批处理器攒批，降低 IPC 频率（修复 Linux 前端卡死）。
-                // result 行是「单轮结束」控制消息，前端据此结束 streaming，必须即时送达。
+                // result 和压缩生命周期是控制消息，必须即时送达，避免压缩状态被批处理延迟。
                 let sess_event = sid_out
                     .lock()
                     .unwrap()
                     .as_ref()
                     .map(|sid| format!("claude-output:{}", sid));
-                let is_control =
-                    mtype == "result" || (mtype == "system" && msg["subtype"] == "init");
+                let is_control = mtype == "result"
+                    || mtype == "compact_progress"
+                    || (mtype == "system"
+                        && matches!(
+                            msg["subtype"].as_str(),
+                            Some("init" | "status" | "compact_boundary")
+                        ));
                 if is_control {
-                    // 先排空缓冲再立即单独 emit init/result，保证零延迟、不被攒批拖住。
+                    // 先排空缓冲再立即单独 emit 控制消息，保证零延迟、不被攒批拖住。
                     // init 必须继续走 global 控制事件：前端正是靠它拿到真实 session_id，
                     // 然后才能 attach `claude-output:<sid>` 隔离监听器。
                     batcher.flush_with(sess_event.as_deref(), &line);

@@ -1,5 +1,6 @@
 import type { MessageGroup } from "@/lib/subagentGrouping";
 import type { ClaudeStreamMessage } from "@/types/claude";
+import { normalizeCompactLifecycleMessage } from "@/lib/compactLifecycle";
 
 // 虚拟列表上下额外预渲染的行数。
 // 锁在 4：这是既有 Linux 顶部滚动性能约束——调大会让顶部滚动一次挂载过多重型行，
@@ -223,6 +224,8 @@ const estimateSystemInitHeight = (message: ClaudeStreamMessage): number => {
 
 const estimateNormalMessageHeight = (message: ClaudeStreamMessage | undefined): number => {
   if (!message) return DEFAULT_ESTIMATE;
+
+  if (normalizeCompactLifecycleMessage(message)) return 96;
 
   if (message.type === 'system') {
     if ((message as any).subtype === 'init') {

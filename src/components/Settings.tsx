@@ -35,6 +35,7 @@ import { GeneralSettings } from "./settings/GeneralSettings";
 import { PermissionsSettings } from "./settings/PermissionsSettings";
 import { EnvironmentSettings } from "./settings/EnvironmentSettings";
 import { HooksSettings } from "./settings/HooksSettings";
+import { CLAUDE_AUTO_COMPACT_SETTINGS_CHANGED_EVENT } from "@/lib/claudeAutoCompact";
 
 interface SettingsProps {
   /**
@@ -227,6 +228,10 @@ export const Settings: React.FC<SettingsProps> = ({
       };
 
       await api.saveClaudeSettings(updatedSettings);
+      window.dispatchEvent(new CustomEvent(
+        CLAUDE_AUTO_COMPACT_SETTINGS_CHANGED_EVENT,
+        { detail: { settings: updatedSettings } },
+      ));
       setSettings(updatedSettings);
 
       // Save execution config if changed

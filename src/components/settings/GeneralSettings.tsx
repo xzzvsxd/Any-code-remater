@@ -11,6 +11,13 @@ import { LanguageSelector } from "../LanguageSelector";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useTranslation } from "@/hooks/useTranslation";
 import { api, type ClaudeSettings } from "@/lib/api";
+import {
+  DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW,
+  MAX_CLAUDE_AUTO_COMPACT_WINDOW,
+  MIN_CLAUDE_AUTO_COMPACT_WINDOW,
+  clampClaudeAutoCompactWindow,
+  parseClaudeAutoCompactWindow,
+} from "@/lib/claudeAutoCompact";
 
 interface GeneralSettingsProps {
   settings: ClaudeSettings | null;
@@ -33,6 +40,29 @@ export const GeneralSettings: React.FC<GeneralSettingsProps> = ({
 }) => {
   const { t } = useTranslation();
   const { themeMode, setThemeMode } = useTheme();
+  const [autoCompactWindowK, setAutoCompactWindowK] = useState(
+    String(DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW / 1000)
+  );
+
+  useEffect(() => {
+    const configuredWindow = parseClaudeAutoCompactWindow(settings?.autoCompactWindow);
+    setAutoCompactWindowK(String(
+      (typeof configuredWindow === 'number'
+        ? configuredWindow
+        : DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW) / 1000
+    ));
+  }, [settings?.autoCompactWindow]);
+
+  const environmentAutoCompactWindow = parseClaudeAutoCompactWindow(
+    settings?.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+  );
+
+  const commitAutoCompactWindow = () => {
+    const parsedK = Number(autoCompactWindowK);
+    const nextWindow = clampClaudeAutoCompactWindow(parsedK * 1000);
+    setAutoCompactWindowK(String(nextWindow / 1000));
+    updateSetting("autoCompactWindow", nextWindow);
+  };
 
   // Custom Claude path state
   const [customClaudePath, setCustomClaudePath] = useState<string>("");
@@ -304,6 +334,68 @@ export const GeneralSettings: React.FC<GeneralSettingsProps> = ({
               checked={settings?.showSystemInitialization !== false}
               onCheckedChange={(checked) => updateSetting("showSystemInitialization", checked)}
             />
+          </div>
+
+          <div className="border-t pt-4 space-y-3">
+            <div className="flex items-center justify-between gap-4">
+              <div className="space-y-0.5 flex-1">
+                <Label htmlFor="autoCompactEnabled">
+                  {t('generalSettings.autoCompactEnabled')}
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {t('generalSettings.autoCompactEnabledDescription')}
+                </p>
+              </div>
+              <Switch
+                id="autoCompactEnabled"
+                checked={settings?.autoCompactEnabled !== false}
+                onCheckedChange={(checked) => updateSetting("autoCompactEnabled", checked)}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-4">
+                <div className="space-y-0.5 flex-1">
+                  <Label htmlFor="autoCompactWindow">
+                    {t('generalSettings.autoCompactWindow')}
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    {t('generalSettings.autoCompactWindowDescription')}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="autoCompactWindow"
+                    type="number"
+                    min={MIN_CLAUDE_AUTO_COMPACT_WINDOW / 1000}
+                    max={MAX_CLAUDE_AUTO_COMPACT_WINDOW / 1000}
+                    step="1"
+                    inputMode="numeric"
+                    value={autoCompactWindowK}
+                    onChange={(event) => setAutoCompactWindowK(event.target.value)}
+                    onBlur={commitAutoCompactWindow}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        commitAutoCompactWindow();
+                        event.currentTarget.blur();
+                      }
+                    }}
+                    className="w-24 text-right font-mono"
+                  />
+                  <span className="text-sm text-muted-foreground">K</span>
+                </div>
+              </div>
+              {environmentAutoCompactWindow !== null && (
+                <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300">
+                  <AlertCircle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+                  <span>
+                    {t('generalSettings.autoCompactEnvironmentOverride', {
+                      value: settings?.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+                    })}
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Hide Warmup Messages */}

@@ -23,6 +23,58 @@ use crate::commands::permission_config::{
 const CLAUDE_CODE_EFFORT_LEVEL_ENV: &str = "CLAUDE_CODE_EFFORT_LEVEL";
 const LEGACY_CLAUDE_CODE_THINKING_EFFORT_ENV: &str = "CLAUDE_CODE_THINKING_EFFORT";
 const LEGACY_MAX_THINKING_TOKENS_ENV: &str = "MAX_THINKING_TOKENS";
+const DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW: u64 = 256_000;
+
+fn apply_auto_compact_defaults(settings: &mut serde_json::Value) -> bool {
+    if !settings.is_object() {
+        *settings = serde_json::json!({});
+    }
+
+    let settings_obj = settings.as_object_mut().unwrap();
+    let mut changed = false;
+    if !settings_obj.contains_key("autoCompactEnabled") {
+        settings_obj.insert("autoCompactEnabled".to_string(), serde_json::json!(true));
+        changed = true;
+    }
+    if !settings_obj.contains_key("autoCompactWindow") {
+        settings_obj.insert(
+            "autoCompactWindow".to_string(),
+            serde_json::json!(DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW),
+        );
+        changed = true;
+    }
+
+    changed
+}
+
+pub fn ensure_claude_auto_compact_defaults() -> Result<(), String> {
+    let claude_dir = get_claude_dir().map_err(|e| e.to_string())?;
+    fs::create_dir_all(&claude_dir)
+        .map_err(|e| format!("Failed to create Claude directory: {}", e))?;
+    let settings_path = claude_dir.join("settings.json");
+    let mut settings = if settings_path.exists() {
+        let content = fs::read_to_string(&settings_path)
+            .map_err(|e| format!("Failed to read settings file: {}", e))?;
+        parse_settings_json(&content)
+            .map_err(|e| format!("Failed to parse settings JSON: {}", e))?
+    } else {
+        serde_json::json!({})
+    };
+
+    if !apply_auto_compact_defaults(&mut settings) {
+        return Ok(());
+    }
+
+    let json_string = serde_json::to_string_pretty(&settings)
+        .map_err(|e| format!("Failed to serialize settings JSON: {}", e))?;
+    fs::write(&settings_path, json_string)
+        .map_err(|e| format!("Failed to write settings file: {}", e))?;
+    log::info!(
+        "Initialized Claude auto-compact defaults at {} tokens",
+        DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW
+    );
+    Ok(())
+}
 
 fn normalize_effort_level(effort: Option<String>) -> String {
     match effort.as_deref() {
@@ -115,6 +167,41 @@ mod tests {
         assert!(env.get("CLAUDE_CODE_EFFORT_LEVEL").is_none());
         assert!(env.get("CLAUDE_CODE_THINKING_EFFORT").is_none());
         assert!(env.get("MAX_THINKING_TOKENS").is_none());
+    }
+
+    #[test]
+    fn auto_compact_defaults_fill_missing_official_settings() {
+        let mut settings = serde_json::json!({
+            "env": { "KEEP": "yes" },
+            "unknown": true
+        });
+
+        assert!(apply_auto_compact_defaults(&mut settings));
+        assert_eq!(settings["autoCompactEnabled"], true);
+        assert_eq!(settings["autoCompactWindow"], 256_000);
+        assert_eq!(settings["env"]["KEEP"], "yes");
+        assert_eq!(settings["unknown"], true);
+    }
+
+    #[test]
+    fn auto_compact_defaults_preserve_explicit_values() {
+        let mut settings = serde_json::json!({
+            "autoCompactEnabled": false,
+            "autoCompactWindow": 300_000
+        });
+
+        assert!(!apply_auto_compact_defaults(&mut settings));
+        assert_eq!(settings["autoCompactEnabled"], false);
+        assert_eq!(settings["autoCompactWindow"], 300_000);
+    }
+
+    #[test]
+    fn auto_compact_defaults_recover_a_non_object_root() {
+        let mut settings = serde_json::json!([]);
+
+        assert!(apply_auto_compact_defaults(&mut settings));
+        assert_eq!(settings["autoCompactEnabled"], true);
+        assert_eq!(settings["autoCompactWindow"], 256_000);
     }
 }
 

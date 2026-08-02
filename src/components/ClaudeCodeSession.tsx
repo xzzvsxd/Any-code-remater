@@ -347,7 +347,19 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   );
 
   // Queued prompts state —— 惰性初始化时从 localStorage 恢复（恢复项标记 restored=true，不会被自动发送）。
-  const [queuedPrompts, setQueuedPrompts] = useState<QueuedPrompt[]>(() => loadQueuedPrompts(queueStorageKey));
+  // Terminal event handlers run outside React's render cycle, so the ref must be
+  // updated in the same call as state. Waiting for an effect can miss a just-added
+  // prompt when completion arrives in the same frame.
+  const [queuedPrompts, setQueuedPromptsState] = useState<QueuedPrompt[]>(() => loadQueuedPrompts(queueStorageKey));
+  const queuedPromptsRef = useRef<QueuedPrompt[]>(queuedPrompts);
+  const setQueuedPrompts = useCallback<React.Dispatch<React.SetStateAction<QueuedPrompt[]>>>((action) => {
+    const nextQueuedPrompts = typeof action === 'function'
+      ? action(queuedPromptsRef.current)
+      : action;
+
+    queuedPromptsRef.current = nextQueuedPrompts;
+    setQueuedPromptsState(nextQueuedPrompts);
+  }, []);
   const lastSubmittedClaudeModelRef = useRef<ModelType | null>(null);
   // 首条用户消息是否已用于标签自动命名（防止重复触发）。
   // 已有会话本就有名，挂载即视为已通知，避免覆盖。
@@ -595,7 +607,6 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   const sessionMessagesRef = useRef<SessionMessagesRef>(null);
   const sendJumpTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingPromptNavRafRef = useRef<number | null>(null);
-  const queuedPromptsRef = useRef<QueuedPrompt[]>([]);
   const isMountedRef = useRef(true);
   const isListeningRef = useRef(false);
 
@@ -652,13 +663,8 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     },
   });
 
-  // Keep ref in sync with state
-  useEffect(() => {
-    queuedPromptsRef.current = queuedPrompts;
-  }, [queuedPrompts]);
-
   // 队列持久化：任何增删 / 重排 / 抽取都写回 localStorage，空队列则清理 key。
-  // 使队列跨重启（重启后恢复项为 restored，需手动确认）与跨视图（ViewRouter 卸载 TabManager）保活。
+  // 使队列跨重启（重启后恢复项为 restored，需手动确认）；跨视图由持久挂载的工作区直接保活。
   useEffect(() => {
     saveQueuedPrompts(queueStorageKey, queuedPrompts);
   }, [queueStorageKey, queuedPrompts]);
@@ -1091,25 +1097,25 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
   // - isMountedRef check in message handlers
   // - Session-specific event channels (claude-output:{session_id})
   useEffect(() => {
-    if (isActive && session) {
-      // Re-report the current streaming state to ensure the tab indicator is in sync.
-      // This handles the case where the state changed in the background but the
-      // parent tab manager did not receive the update.
-      onStreamingChange?.(isLoading, claudeSessionId);
+    if (!isActive) return;
 
-      // 标签页从后台(display:none)切回可见：隐藏期间滚动容器 clientHeight=0，
-      // 虚拟列表窗口塌缩，可能只渲染顶部几行、甚至行重叠/重复 + 下方留白。
-      // 已结束会话切回会走 scrollToBottom 的 rAF 救援被动重算窗口，但 streaming 会话
-      // 因 isLoading 跳过该救援（置底交给 useSmartAutoScroll，它不重算虚拟窗口），
-      // 故唯独 streaming 会话复现。这里主动让虚拟列表按真实视口尺寸重算一次。
-      sessionMessagesRef.current?.remeasureViewport();
+    // Re-report the current streaming state to ensure the tab indicator is in sync.
+    // This also applies to new tabs whose session prop intentionally stays undefined.
+    onStreamingChange?.(isLoading, claudeSessionId);
 
-      // If we are not already listening to session events, re-check whether the
-      // session is still actively running. This reconnects listeners if the session
-      // is alive but we lost our connection (e.g., after app restart or missed events).
-      if (!isListeningRef.current) {
-        checkForActiveSession();
-      }
+    // 标签页从后台(display:none)切回可见：隐藏期间滚动容器 clientHeight=0，
+    // 虚拟列表窗口塌缩，可能只渲染顶部几行、甚至行重叠/重复 + 下方留白。
+    // 新建 tab 即使已拿到 extractedSessionInfo，session prop 仍会保持 undefined，
+    // 所以视口恢复必须先于已有会话专属的重连判断。
+    sessionMessagesRef.current?.remeasureViewport();
+
+    if (!session) return;
+
+    // If we are not already listening to session events, re-check whether the
+    // session is still actively running. This reconnects listeners if the session
+    // is alive but we lost our connection (e.g., after app restart or missed events).
+    if (!isListeningRef.current) {
+      checkForActiveSession();
     }
   }, [isActive]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1940,7 +1946,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
         </ErrorBoundary>
 
         {/* Revert Prompt Picker - Shows when double ESC is pressed */}
-        {showRevertPicker && effectiveSession && (
+        {isActive && showRevertPicker && effectiveSession && (
           <RevertPromptPicker
             sessionId={effectiveSession.id}
             projectId={effectiveSession.project_id}
@@ -1954,7 +1960,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
 
         {/* Plan Approval Dialog - 方案 B-1: ExitPlanMode 触发审批 */}
         <PlanApprovalDialog
-          open={showApprovalDialog}
+          open={isActive && showApprovalDialog}
           plan={pendingApproval?.plan || ''}
           onClose={closeApprovalDialog}
           onApprove={approvePlan}
@@ -1968,7 +1974,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
 
         {/* 🆕 User Question Dialog - AskUserQuestion 自动触发 */}
         <AskUserQuestionDialog
-          open={showQuestionDialog}
+          open={isActive && showQuestionDialog}
           questions={pendingQuestion?.questions || []}
           resetKey={pendingQuestion?.questionId}
           onClose={closeQuestionDialog}
@@ -1984,7 +1990,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
       {/* Prompt Navigator - Quick navigation to any user prompt */}
       <PromptNavigator
         messages={visibleMessages}
-        isOpen={showPromptNavigator}
+        isOpen={isActive && showPromptNavigator}
         onClose={() => setShowPromptNavigator(false)}
         onPromptClick={handlePromptNavigation}
       />

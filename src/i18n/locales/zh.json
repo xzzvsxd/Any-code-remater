@@ -581,6 +581,11 @@
   "generalSettings": {
     "showSystemInit": "显示系统初始化信息",
     "showSystemInitDescription": "在会话开始时显示Session ID、Model、工作目录和可用工具信息",
+    "autoCompactEnabled": "Claude 自动压缩",
+    "autoCompactEnabledDescription": "由 Claude Code 原生管理上下文压缩，避免重复执行和状态冲突",
+    "autoCompactWindow": "自动压缩窗口",
+    "autoCompactWindowDescription": "Claude 会在上下文接近该窗口时自动压缩，可设置 100K 到 1000K（默认 256K）",
+    "autoCompactEnvironmentOverride": "环境变量 CLAUDE_CODE_AUTO_COMPACT_WINDOW={{value}} 当前优先生效",
     "hideWarmup": "隐藏 Warmup 消息",
     "hideWarmupDescription": "在会话消息中隐藏自动发送的 Warmup 消息及其回复（启动时的预热消息）",
     "includeCoauthored": "包含 \"Co-authored by Claude\"",
@@ -1522,7 +1527,25 @@
     "cacheCreation": "缓存创建",
     "cacheRead": "缓存读取",
     "criticalWarning": "上下文窗口接近上限，建议开始新会话",
-    "highWarning": "上下文使用率较高"
+    "highWarning": "上下文使用率较高",
+    "autoCompactWindow": "Auto-compact Window",
+    "configuredWindow": "配置窗口",
+    "tokensUntilWindow": "距离窗口",
+    "compactWindowReached": "已进入窗口",
+    "compactWindowReachedDescription": "已进入配置窗口，Claude 将立即按原生逻辑处理压缩。",
+    "compactWindowNear": "即将压缩：上下文使用量已接近配置窗口。",
+    "compactWindowDescription": "Claude 会在上下文使用量接近该窗口时按原生逻辑自动压缩。"
+  },
+  "compactLifecycle": {
+    "auto": "自动压缩",
+    "manual": "手动压缩",
+    "unknown": "上下文压缩",
+    "scheduled": "正在触发",
+    "preparing": "正在准备",
+    "running": "压缩中",
+    "completed": "压缩完成",
+    "failed": "压缩失败",
+    "released": "释放"
   },
   "systemInit": {
     "title": "系统初始化",

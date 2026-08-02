@@ -26,6 +26,7 @@ pub use self::cli_runner::{
 pub use self::config::{
     check_claude_version,
     clear_custom_claude_path,
+    ensure_claude_auto_compact_defaults,
     find_claude_md_files,
     get_available_tools,
     get_claude_capabilities,

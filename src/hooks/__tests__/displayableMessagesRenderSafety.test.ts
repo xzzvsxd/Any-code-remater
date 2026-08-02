@@ -116,6 +116,16 @@ const systemInit = {
   message: { content: [{ type: 'text', text: 'System Initialized' }] },
 };
 
+const compactLifecycleMessages = [
+  { type: 'system', subtype: 'status', status: 'compacting' },
+  { type: 'compact_progress', event: { type: 'compact_start' } },
+  {
+    type: 'system',
+    subtype: 'compact_boundary',
+    compactMetadata: { trigger: 'auto', preTokens: 160_000, postTokens: 40_000 },
+  },
+];
+
 describe('displayable message filtering render safety', () => {
   test('hides widget-backed tool results using a forward-only tool_use index', () => {
     const messages = [toolUse('bash-1', 'bash'), assistantText('gap'), toolResult('bash-1')];
@@ -164,6 +174,12 @@ describe('displayable message filtering render safety', () => {
       legacyAssistant,
       legacyTool,
     ]);
+  });
+
+  test('retains content-less native compact lifecycle events for timeline rendering', () => {
+    expect(filterDisplayableMessages(compactLifecycleMessages as any)).toEqual(
+      compactLifecycleMessages,
+    );
   });
 
   test('source does not do per-tool-result backward scans through message history', async () => {

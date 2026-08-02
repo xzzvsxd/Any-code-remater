@@ -43,10 +43,14 @@ if (!source.includes('SESSION_LISTENER_ATTACH_GRACE_BATCHES') || !source.include
   failures.push('stream_batcher.rs must keep a short global fallback grace after system:init so the frontend can attach session listeners without dropping early lines');
 }
 
+const hasClaudeSystemControlPredicate =
+  claudeStreamingSource.includes('(mtype == "system" && msg["subtype"] == "init")') ||
+  claudeStreamingSource.includes('Some("init" | "status" | "compact_boundary")');
+
 if (
   !claudeStreamingSource.includes('let is_control') ||
   !claudeStreamingSource.includes('mtype == "result"') ||
-  !claudeStreamingSource.includes('(mtype == "system" && msg["subtype"] == "init")') ||
+  !hasClaudeSystemControlPredicate ||
   !claudeStreamingSource.includes('if is_control') ||
   !claudeStreamingSource.includes('batcher.flush_with(sess_event.as_deref(), &line)')
 ) {

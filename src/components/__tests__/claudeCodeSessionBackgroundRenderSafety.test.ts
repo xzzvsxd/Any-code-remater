@@ -19,4 +19,23 @@ describe('ClaudeCodeSession background render safety', () => {
     expect(source).toContain('SessionHelpers.getConversationContext(messagesRef.current)');
     expect(source).not.toContain('resolveAutoContinuationModel = useCallback((): ModelType => {\n    return resolveClaudeContinuationModel({\n      requestedModel: \'sonnet\',\n      sessionModel: effectiveSession?.model || session?.model,\n      messages,');
   });
+
+  test('remeasures every returning tab before existing-session-only reconnect work', () => {
+    const activationEffectStart = source.indexOf('// 🔧 FIX: When a tab becomes active (visible)');
+    const activationEffectEnd = source.indexOf('// ✅ Keyboard shortcuts', activationEffectStart);
+    const activationEffect = source.slice(activationEffectStart, activationEffectEnd);
+    const activeGuardIndex = activationEffect.indexOf('if (!isActive) return');
+    const remeasureIndex = activationEffect.indexOf('sessionMessagesRef.current?.remeasureViewport()');
+    const sessionGuardIndex = activationEffect.indexOf('if (!session) return');
+
+    expect(activationEffectStart).toBeGreaterThanOrEqual(0);
+    expect(activeGuardIndex).toBeGreaterThanOrEqual(0);
+    expect(remeasureIndex).toBeGreaterThan(activeGuardIndex);
+    expect(sessionGuardIndex).toBeGreaterThan(remeasureIndex);
+  });
+
+  test('keeps portaled interaction dialogs hidden while their conversation workspace is hidden', () => {
+    expect(source).toContain('open={isActive && showApprovalDialog}');
+    expect(source).toContain('open={isActive && showQuestionDialog}');
+  });
 });

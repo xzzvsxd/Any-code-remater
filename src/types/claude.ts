@@ -2,7 +2,7 @@
 import type { CodexMessageMetadata } from './codex';
 
 export interface ClaudeStreamMessage {
-  type: "system" | "assistant" | "user" | "result" | "summary" | "queue-operation" | "thinking" | "tool_use";
+  type: "system" | "assistant" | "user" | "result" | "summary" | "queue-operation" | "thinking" | "tool_use" | "compact_progress";
   subtype?: string;
   message?: {
     content?: any[];

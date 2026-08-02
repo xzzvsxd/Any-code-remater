@@ -9,6 +9,7 @@ import { useMemo, useRef } from 'react';
 import type { ClaudeStreamMessage } from '@/types/claude';
 import { getRenderableAiContent } from '@/lib/aiMessageContent';
 import { getMessageContent, getMessageContentArray } from '@/lib/messageContentAccess';
+import { normalizeCompactLifecycleMessage } from '@/lib/compactLifecycle';
 
 /**
  * 过滤选项
@@ -152,6 +153,10 @@ function messageHasExtractableContent(message: ClaudeStreamMessage): boolean {
 }
 
 function shouldRenderMessageAsNull(message: ClaudeStreamMessage): boolean {
+  if (normalizeCompactLifecycleMessage(message)) {
+    return false;
+  }
+
   const messageType = getMessageRenderType(message);
 
   if (

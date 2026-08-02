@@ -20,6 +20,7 @@ import { ModelType, ModelConfig, ThinkingEffort, type ExecutionStatusInfo } from
 import { resolveSelectedModelName } from "./resolveModelName";
 import { resolvePromptActionButtonState } from "./promptActionButtonState";
 import type { CodexRateLimits } from "@/types/codex";
+import type { ClaudeSettings } from "@/lib/api";
 
 interface ControlBarProps {
   disabled?: boolean;
@@ -47,6 +48,7 @@ interface ControlBarProps {
   setShowCostPopover: (show: boolean) => void;
   messages?: any[];
   session?: any;
+  autoCompactSettings?: ClaudeSettings | null;
   codexRateLimits?: CodexRateLimits | null;
   isEnhancing: boolean;
   executionStatus?: ExecutionStatusInfo;
@@ -155,6 +157,7 @@ const areControlBarPropsEqual = (prev: ControlBarProps, next: ControlBarProps) =
     && prev.setShowCostPopover === next.setShowCostPopover
     && messagesEqual
     && prev.session === next.session
+    && prev.autoCompactSettings === next.autoCompactSettings
     && prev.codexRateLimits === next.codexRateLimits
     && prev.isEnhancing === next.isEnhancing
     && executionStatusEqual
@@ -193,6 +196,7 @@ const ControlBarComponent: React.FC<ControlBarProps> = ({
   setShowCostPopover,
   messages,
   session,
+  autoCompactSettings,
   codexRateLimits: providedCodexRateLimits,
   isEnhancing,
   executionStatus,
@@ -390,6 +394,7 @@ const ControlBarComponent: React.FC<ControlBarProps> = ({
           messages={messagesForPassiveWidgets}
           model={contextWindowModel}
           engine={executionEngineConfig.engine}
+          autoCompactSettings={autoCompactSettings}
           show={true}
         />
       )}

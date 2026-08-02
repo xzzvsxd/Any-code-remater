@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Plus } from "lucide-react";
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence, Transition } from "framer-motion"; // ✨ Added for transitions
-import { api, type Project } from "@/lib/api";
+import { api, type Project, type Session } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ProjectList } from "@/components/ProjectList";
 import { SessionList } from "@/components/SessionList";
@@ -58,12 +59,27 @@ export const ViewRouter: React.FC = () => {
     loadProjects, selectProject, registerProjectByPath, deleteProject, clearSelection, refreshSessions,
     scheduleProjectRefresh
   } = useProject();
-  const { openSessionInBackground, switchToTab } = useTabs();
+  const { createNewTab, openSessionInBackground, switchToTab } = useTabs();
 
   const [showClaudeBinaryDialog, setShowClaudeBinaryDialog] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
   const [showNavigationConfirm, setShowNavigationConfirm] = useState(false);
   const [pendingView, setPendingView] = useState<any | null>(null); // Store pending view for confirmation
+  const workspaceVisible = currentView === "claude-tab-manager";
+  const workspaceInitialParamsRef = useRef<{
+    initialSession?: Session;
+    initialProjectPath?: string;
+  } | null>(null);
+
+  // The conversation workspace owns in-memory messages, stream listeners, and the
+  // current-run prompt queue. Capture its initial route params once, then keep the
+  // component tree mounted when navigating to settings or other app pages.
+  if (workspaceVisible && workspaceInitialParamsRef.current === null) {
+    workspaceInitialParamsRef.current = {
+      initialSession: viewParams.initialSession,
+      initialProjectPath: viewParams.initialProjectPath,
+    };
+  }
 
   // Global keyboard shortcuts
   useGlobalKeyboardShortcuts({
@@ -397,7 +413,8 @@ export const ViewRouter: React.FC = () => {
                       }
                     }}
                     onNewSession={(projectPath) => {
-                      navigateTo("claude-tab-manager", { initialProjectPath: projectPath });
+                      createNewTab(undefined, projectPath);
+                      navigateTo("claude-tab-manager");
                     }}
                   />
                 </div>
@@ -472,15 +489,6 @@ export const ViewRouter: React.FC = () => {
           />
         );
 
-      case "claude-tab-manager":
-        return (
-          <TabManager
-            initialSession={viewParams.initialSession}
-            initialProjectPath={viewParams.initialProjectPath}
-            onBack={() => navigateTo("projects")}
-          />
-        );
-
       case "usage-dashboard":
         return <UsageDashboard onBack={goBack} />;
 
@@ -505,20 +513,41 @@ export const ViewRouter: React.FC = () => {
 
   return (
     <>
-      {/* ✨ AnimatePresence for smooth page transitions */}
-      <AnimatePresence mode="wait" initial={false}>
-        <motion.div
-          key={currentView}
-          initial="initial"
-          animate="in"
-          exit="out"
-          variants={pageVariants}
-          transition={pageTransition}
-          className="flex-1 flex flex-col h-full overflow-hidden"
-        >
-          {renderContent()}
-        </motion.div>
-      </AnimatePresence>
+      <div className="relative flex-1 h-full overflow-hidden">
+        {workspaceInitialParamsRef.current && (
+          <div
+            className={cn(
+              "absolute inset-0",
+              !workspaceVisible && "hidden"
+            )}
+            aria-hidden={!workspaceVisible}
+          >
+            <TabManager
+              initialSession={workspaceInitialParamsRef.current.initialSession}
+              initialProjectPath={workspaceInitialParamsRef.current.initialProjectPath}
+              isVisible={workspaceVisible}
+              onBack={() => navigateTo("projects")}
+            />
+          </div>
+        )}
+
+        {/* Non-workspace pages remain animated overlays without unmounting conversations. */}
+        <AnimatePresence mode="wait" initial={false}>
+          {!workspaceVisible && (
+            <motion.div
+              key={currentView}
+              initial="initial"
+              animate="in"
+              exit="out"
+              variants={pageVariants}
+              transition={pageTransition}
+              className="absolute inset-0 flex flex-col overflow-hidden"
+            >
+              {renderContent()}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
 
       <ClaudeBinaryDialog
         open={showClaudeBinaryDialog}

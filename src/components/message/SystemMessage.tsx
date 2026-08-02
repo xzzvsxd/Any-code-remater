@@ -6,6 +6,8 @@ import { shouldRenderStructuredCommandOutputAsPlainText } from "@/lib/markdownRe
 import { LargePlainTextContent } from "./MessageContent";
 import { MessageActions } from "./MessageActions";
 import type { ClaudeStreamMessage } from "@/types/claude";
+import { normalizeCompactLifecycleMessage } from "@/lib/compactLifecycle";
+import { CompactLifecycleMessage } from "./CompactLifecycleMessage";
 
 /**
  * 格式化斜杠命令输出
@@ -211,6 +213,11 @@ export const SystemMessage: React.FC<SystemMessageProps> = ({
   onBranch,
 }) => {
   const subtype = message.subtype;
+  const compactLifecycle = normalizeCompactLifecycleMessage(message);
+
+  if (compactLifecycle) {
+    return <CompactLifecycleMessage lifecycle={compactLifecycle} className={className} />;
+  }
 
   if (subtype === "init") {
     const showSystemInit = claudeSettings?.showSystemInitialization !== false;

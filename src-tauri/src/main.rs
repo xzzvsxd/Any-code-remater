@@ -325,22 +325,14 @@ fn main() {
                 });
             }
 
-            // Initialize auto-compact manager for context management
+            if let Err(error) = commands::claude::ensure_claude_auto_compact_defaults() {
+                log::warn!("Failed to initialize Claude auto-compact defaults: {}", error);
+            }
+
+            // Keep legacy command state for API compatibility. Claude Code owns automatic
+            // compaction; Any Code no longer starts a competing polling executor.
             let auto_compact_manager =
                 Arc::new(commands::context_manager::AutoCompactManager::new());
-            let app_handle_for_monitor = app.handle().clone();
-            let manager_for_monitor = auto_compact_manager.clone();
-
-            // Start monitoring in background
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = manager_for_monitor
-                    .start_monitoring(app_handle_for_monitor)
-                    .await
-                {
-                    log::error!("Failed to start auto-compact monitoring: {}", e);
-                }
-            });
-
             app.manage(commands::context_manager::AutoCompactState(
                 auto_compact_manager,
             ));

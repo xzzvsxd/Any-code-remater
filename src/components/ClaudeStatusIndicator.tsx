@@ -7,13 +7,10 @@ import {
   AlertCircle,
   RefreshCw,
   Settings,
-  Info,
-  Zap,
-  Archive
+  Info
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import {
   Tooltip,
   TooltipContent,
@@ -27,7 +24,6 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { tokenExtractor } from "@/lib/tokenExtractor";
 import { useSessionActivityStatus } from "@/hooks/useSessionActivityStatus";
-import { useAutoCompactStatus } from "@/hooks/useAutoCompactStatus";
 
 import type { ClaudeStreamMessage } from '@/types/claude';
 
@@ -117,12 +113,6 @@ export const ClaudeStatusIndicator: React.FC<ClaudeStatusIndicatorProps> = ({
     enableRealTimeTracking: true,
     pollInterval: 30000,
     activityTimeoutMinutes: 30
-  });
-
-  // Auto-compact status monitoring
-  const autoCompactStatus = useAutoCompactStatus({
-    sessionId,
-    enableEventTracking: true,
   });
 
   // Calculate cost from messages with activity-aware logic
@@ -314,19 +304,9 @@ export const ClaudeStatusIndicator: React.FC<ClaudeStatusIndicatorProps> = ({
                 transition={{ duration: 0.2 }}
                 className="flex items-center gap-2"
               >
-                {/* Show compacting indicator when auto-compact is in progress */}
-                {autoCompactStatus.isCompacting ? (
-                  <div className="flex items-center gap-1.5">
-                    <Archive className="h-4 w-4 text-amber-500 animate-pulse" />
-                    <span className="text-xs text-amber-600 dark:text-amber-400">
-                      压缩中...
-                    </span>
-                  </div>
-                ) : (
-                  getStatusIcon()
-                )}
+                {getStatusIcon()}
                 {/* 非紧凑模式下显示版本号和费用 */}
-                {!compact && statusInfo.version && !autoCompactStatus.isCompacting && (
+                {!compact && statusInfo.version && (
                   <Badge variant="secondary" className={cn("text-xs", getStatusColor())}>
                     v{statusInfo.version}
                   </Badge>
@@ -424,76 +404,6 @@ export const ClaudeStatusIndicator: React.FC<ClaudeStatusIndicatorProps> = ({
                   </div>
                 )}
               </div>
-
-              {/* Auto-Compact Status Section */}
-              <AnimatePresence>
-                {(autoCompactStatus.isCompacting || autoCompactStatus.eventType === 'completed') && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className={cn(
-                      "p-3 rounded-md border",
-                      autoCompactStatus.isCompacting
-                        ? "bg-amber-50 border-amber-200 dark:bg-amber-900/20 dark:border-amber-800"
-                        : "bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800"
-                    )}
-                  >
-                    <div className="flex items-start gap-2">
-                      {autoCompactStatus.isCompacting ? (
-                        <Archive className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0 animate-pulse" />
-                      ) : (
-                        <Zap className="h-4 w-4 text-green-600 dark:text-green-400 mt-0.5 flex-shrink-0" />
-                      )}
-                      <div className="flex-1 space-y-2">
-                        <p className={cn(
-                          "text-sm font-medium",
-                          autoCompactStatus.isCompacting
-                            ? "text-amber-800 dark:text-amber-200"
-                            : "text-green-800 dark:text-green-200"
-                        )}>
-                          {autoCompactStatus.isCompacting ? "正在优化上下文" : "上下文优化完成"}
-                        </p>
-                        {autoCompactStatus.message && (
-                          <p className={cn(
-                            "text-xs",
-                            autoCompactStatus.isCompacting
-                              ? "text-amber-700 dark:text-amber-300"
-                              : "text-green-700 dark:text-green-300"
-                          )}>
-                            {autoCompactStatus.message}
-                          </p>
-                        )}
-                        {autoCompactStatus.isCompacting && (
-                          <Progress
-                            value={autoCompactStatus.progress}
-                            className="h-1.5 bg-amber-200 dark:bg-amber-800"
-                          />
-                        )}
-                        {autoCompactStatus.tokensBefore && autoCompactStatus.tokensAfter && (
-                          <p className="text-xs text-muted-foreground">
-                            Token: {autoCompactStatus.tokensBefore.toLocaleString()} → {autoCompactStatus.tokensAfter.toLocaleString()}
-                            <span className="ml-1 text-green-600 dark:text-green-400">
-                              (-{Math.round((1 - autoCompactStatus.tokensAfter / autoCompactStatus.tokensBefore) * 100)}%)
-                            </span>
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              {/* Compact Statistics */}
-              {autoCompactStatus.compactionCount > 0 && !autoCompactStatus.isCompacting && autoCompactStatus.eventType !== 'completed' && (
-                <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span className="flex items-center gap-1">
-                    <Archive className="h-3 w-3" />
-                    压缩次数:
-                  </span>
-                  <span>{autoCompactStatus.compactionCount} 次</span>
-                </div>
-              )}
 
               {/* Simple Error Information */}
               <AnimatePresence>

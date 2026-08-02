@@ -9,6 +9,11 @@ import type { ClaudeStreamMessage } from '@/types/claude';
 import type { RewindMode } from '@/lib/api';
 import type { MessageGroup } from '@/lib/subagentGrouping';
 import { getMessageContent } from '@/lib/messageContentAccess';
+import {
+  areCompactLifecycleEventsEqual,
+  normalizeCompactLifecycleMessage,
+} from '@/lib/compactLifecycle';
+import { CompactLifecycleMessage } from './CompactLifecycleMessage';
 
 interface StreamMessageV2Props {
   message?: ClaudeStreamMessage;
@@ -156,6 +161,11 @@ const StreamMessageV2Component: React.FC<StreamMessageV2Props> = ({
     return null;
   }
 
+  const compactLifecycle = normalizeCompactLifecycleMessage(message);
+  if (compactLifecycle) {
+    return <CompactLifecycleMessage lifecycle={compactLifecycle} className={className} />;
+  }
+
   // 对仅包含空 tool_result 的消息进行过滤，避免出现空白气泡
   const contentItems = (message as any)?.message?.content;
   if ((message as any)._toolResultOnly) {
@@ -267,6 +277,12 @@ const isMessageEqual = (prev: ClaudeStreamMessage | undefined, next: ClaudeStrea
 
   // 比较关键属性
   if (prev.type !== next.type) return false;
+
+  const previousCompactLifecycle = normalizeCompactLifecycleMessage(prev);
+  const nextCompactLifecycle = normalizeCompactLifecycleMessage(next);
+  if (previousCompactLifecycle || nextCompactLifecycle) {
+    return areCompactLifecycleEventsEqual(previousCompactLifecycle, nextCompactLifecycle);
+  }
 
   // 比较消息 ID（如果存在）
   const prevId = (prev as any).id;

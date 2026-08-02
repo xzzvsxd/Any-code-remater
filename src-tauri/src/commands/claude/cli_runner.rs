@@ -1123,11 +1123,6 @@ async fn spawn_claude_process(
         }
     }
 
-    // Check if auto-compact state is available
-    let auto_compact_available = app
-        .try_state::<crate::commands::context_manager::AutoCompactState>()
-        .is_some();
-
     // Spawn tasks to read stdout and stderr
     let app_handle = app.clone();
     let session_id_holder_clone = session_id_holder.clone();
@@ -1165,24 +1160,6 @@ async fn spawn_claude_process(
                             log::info!("Extracted Claude session ID: {}", claude_session_id);
                         }
                         drop(session_id_guard);
-
-                        // Register with auto-compact manager
-                        if auto_compact_available {
-                            if let Some(auto_compact_state) = app_handle
-                                .try_state::<crate::commands::context_manager::AutoCompactState>()
-                            {
-                                if let Err(e) = auto_compact_state.0.register_session(
-                                    claude_session_id.to_string(),
-                                    project_path_clone.clone(),
-                                    model_clone.clone(),
-                                ) {
-                                    log::warn!(
-                                        "Failed to register session with auto-compact manager: {}",
-                                        e
-                                    );
-                                }
-                            }
-                        }
 
                         let existing_run_id = *run_id_holder_clone.lock().unwrap();
                         let run_id = if let Some(run_id) = existing_run_id {
@@ -1258,53 +1235,6 @@ async fn spawn_claude_process(
                 }
 
                 // Check for usage information and update context tracking
-                if let Some(usage) = msg.get("usage") {
-                    if let (Some(input_tokens), Some(output_tokens)) = (
-                        usage.get("input_tokens").and_then(|t| t.as_u64()),
-                        usage.get("output_tokens").and_then(|t| t.as_u64()),
-                    ) {
-                        let total_tokens = (input_tokens + output_tokens) as usize;
-
-                        // Extract cache tokens if available
-                        let _cache_creation_tokens = usage
-                            .get("cache_creation_input_tokens")
-                            .and_then(|t| t.as_u64());
-                        let _cache_read_tokens = usage
-                            .get("cache_read_input_tokens")
-                            .and_then(|t| t.as_u64());
-
-                        // Store usage data in database for real-time token statistics
-                        let session_id_for_update =
-                            { session_id_holder_clone.lock().unwrap().as_ref().cloned() };
-
-                        if let Some(session_id_str) = &session_id_for_update {
-                            // Agent database functionality removed - usage tracking disabled
-
-                            // Update auto-compact manager with token count
-                            if auto_compact_available {
-                                if let Some(auto_compact_state) = app_handle.try_state::<crate::commands::context_manager::AutoCompactState>() {
-                                    let auto_compact_state_clone = auto_compact_state.inner().clone();
-                                    let session_id_for_compact = session_id_str.clone();
-
-                                    // Spawn async task to avoid blocking main output loop
-                                    tokio::spawn(async move {
-                                        match auto_compact_state_clone.0.update_session_tokens(&session_id_for_compact, total_tokens).await {
-                                            Ok(compaction_triggered) => {
-                                                if compaction_triggered {
-                                                    log::info!("Auto-compaction triggered for session {}", session_id_for_compact);
-                                                    // The actual compaction will be handled by the background monitoring thread
-                                                }
-                                            }
-                                            Err(e) => {
-                                                log::warn!("Failed to update session tokens for auto-compact: {}", e);
-                                            }
-                                        }
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
             }
 
             // Store live output in registry if we have a run_id
@@ -1322,7 +1252,13 @@ async fn spawn_claude_process(
                 .ok()
                 .map(|v| {
                     let t = v["type"].as_str().unwrap_or("");
-                    t == "result" || (t == "system" && v["subtype"] == "init")
+                    t == "result"
+                        || t == "compact_progress"
+                        || (t == "system"
+                            && matches!(
+                                v["subtype"].as_str(),
+                                Some("init" | "status" | "compact_boundary")
+                            ))
                 })
                 .unwrap_or(false);
             if is_control {

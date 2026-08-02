@@ -98,6 +98,21 @@ describe('message height estimation for virtualized history navigation', () => {
     expect(estimateMessageGroupHeight(systemInit)).toBeGreaterThanOrEqual(260);
   });
 
+  test('uses a stable compact estimate for native lifecycle dividers', () => {
+    const compactBoundary = normalGroup({
+      type: 'system',
+      subtype: 'compact_boundary',
+      compactMetadata: {
+        trigger: 'auto',
+        preTokens: 165_132,
+        postTokens: 42_000,
+        durationMs: 1_840,
+      },
+    } as ClaudeStreamMessage);
+
+    expect(estimateMessageGroupHeight(compactBoundary)).toBe(96);
+  });
+
   test('limits overscan so top jumps do not mount too many unmeasured long rows at once', () => {
     expect(SESSION_MESSAGES_OVERSCAN).toBeLessThanOrEqual(8);
   });

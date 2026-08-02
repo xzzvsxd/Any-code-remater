@@ -14,7 +14,8 @@ import { useDraftPersistence } from "./hooks/useDraftPersistence";
 import { useSlashCommandMenu } from "./hooks/useSlashCommandMenu";
 import { useCustomSlashCommands } from "./hooks/useCustomSlashCommands";
 import { usePluginSlashCommands } from "./hooks/usePluginSlashCommands";
-import { api } from "@/lib/api";
+import { api, type ClaudeSettings } from "@/lib/api";
+import { CLAUDE_AUTO_COMPACT_SETTINGS_CHANGED_EVENT } from "@/lib/claudeAutoCompact";
 import { getEnabledProviders } from "@/lib/promptEnhancementService";
 import { formatDuration } from "@/lib/pricing";
 import { inputReducer, initialState } from "./reducer";
@@ -24,9 +25,12 @@ import {
   buildPromptInputModelScopeKey,
   doesSessionModelOnlyDropOneMillion,
   parseSessionModelForPromptInput,
+  readPromptInputLastSelectedModel,
   readPromptInputScopedModel,
+  resolveInitialPromptInputModel,
   resolvePromptInputModelForScopeChange,
   shouldPersistPromptInputModelForScopeTransition,
+  writePromptInputLastSelectedModel,
   writePromptInputScopedModel,
 } from "./modelSessionScope";
 
@@ -126,24 +130,17 @@ const FloatingPromptInputInner = (
   // Determine initial model:
   // 1. Scoped UI choice: preserves Claude 1M intent per session/draft
   // 2. Historical session: use sessionModel
-  // 3. New session: use user's default model or fallback to "sonnet"
+  // 3. Fresh draft/new session: keep sticky 1M UI intent if present
+  // 4. New session: use user's default model or fallback to "sonnet"
   const getInitialModel = (): ModelType => {
-    const scopedModel = readPromptInputScopedModel(initialModelScopeKey);
-    if (scopedModel) {
-      return scopedModel;
-    }
-    // If this is a historical session with saved model, use it
-    const parsedSessionModel = parseSessionModelForPromptInput(sessionModel);
-    if (parsedSessionModel) {
-      return parsedSessionModel;
-    }
-    // For new sessions, use user's default model setting
-    const userDefaultModel = getDefaultModel();
-    if (userDefaultModel) {
-      return userDefaultModel;
-    }
-    // Fall back to prop default or "sonnet"
-    return defaultModel;
+    return resolveInitialPromptInputModel({
+      scopeKey: initialModelScopeKey,
+      scopedModel: readPromptInputScopedModel(initialModelScopeKey),
+      sessionModel,
+      lastSelectedModel: readPromptInputLastSelectedModel(),
+      userDefaultModel: getDefaultModel(),
+      defaultModel,
+    });
   };
 
   // Use Reducer for state management
@@ -152,6 +149,7 @@ const FloatingPromptInputInner = (
     selectedModel: getInitialModel(),
     executionEngineConfig: externalEngineConfig || initialState.executionEngineConfig,
   });
+  const [autoCompactSettings, setAutoCompactSettings] = useState<ClaudeSettings | null>(null);
   const modelScopeKey = useMemo(
     () => buildPromptInputModelScopeKey({ sessionId, draftTabId, projectPath }),
     [draftTabId, projectPath, sessionId],
@@ -215,6 +213,7 @@ const FloatingPromptInputInner = (
     const initThinkingMode = async () => {
       try {
         const settings = await api.getClaudeSettings();
+        setAutoCompactSettings(settings);
         const effort = parseThinkingEffort(
           settings?.env?.CLAUDE_CODE_EFFORT_LEVEL ?? settings?.env?.CLAUDE_CODE_THINKING_EFFORT
         );
@@ -251,6 +250,31 @@ const FloatingPromptInputInner = (
     };
 
     initThinkingMode();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const handleSettingsChanged = (event: Event) => {
+      const settings = (event as CustomEvent<{ settings?: ClaudeSettings }>).detail?.settings;
+      if (settings) {
+        setAutoCompactSettings(settings);
+        return;
+      }
+
+      void api.getClaudeSettings()
+        .then((latestSettings) => {
+          if (!cancelled) setAutoCompactSettings(latestSettings);
+        })
+        .catch((error) => {
+          console.warn('[AutoCompact] Failed to refresh Claude settings:', error);
+        });
+    };
+
+    window.addEventListener(CLAUDE_AUTO_COMPACT_SETTINGS_CHANGED_EVENT, handleSettingsChanged);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(CLAUDE_AUTO_COMPACT_SETTINGS_CHANGED_EVENT, handleSettingsChanged);
+    };
   }, []);
 
   // Sync external config changes
@@ -308,6 +332,7 @@ const FloatingPromptInputInner = (
   const setSelectedModel = useCallback((model: ModelType) => {
     modelEditedByUserRef.current = true;
     writePromptInputScopedModel(modelScopeKey, model);
+    writePromptInputLastSelectedModel(model);
     dispatch({ type: "SET_MODEL", payload: model });
   }, [modelScopeKey]);
 
@@ -536,12 +561,19 @@ const FloatingPromptInputInner = (
       nextModel,
     })) {
       writePromptInputScopedModel(nextScopeKey, nextModel);
+      writePromptInputLastSelectedModel(nextModel);
     }
 
     if (nextModel !== state.selectedModel) {
       dispatch({ type: "SET_MODEL", payload: nextModel });
     }
   }, [defaultModel, modelScopeKey, sessionModel, state.selectedModel]);
+
+  useEffect(() => {
+    if (state.executionEngineConfig.engine === 'claude') {
+      writePromptInputLastSelectedModel(state.selectedModel);
+    }
+  }, [state.executionEngineConfig.engine, state.selectedModel]);
 
   // Load custom models
   useEffect(() => {
@@ -745,6 +777,7 @@ const FloatingPromptInputInner = (
 
       if (state.executionEngineConfig.engine === 'claude') {
         writePromptInputScopedModel(modelScopeKey, state.selectedModel);
+        writePromptInputLastSelectedModel(state.selectedModel);
       }
 
       onSend(finalPrompt, modelToSend, undefined);
@@ -1034,6 +1067,7 @@ const FloatingPromptInputInner = (
             setShowCostPopover={setShowCostPopover}
             messages={messages}
             session={session}
+            autoCompactSettings={autoCompactSettings}
             codexRateLimits={codexRateLimits}
             isEnhancing={isEnhancing}
             executionStatus={executionStatus}

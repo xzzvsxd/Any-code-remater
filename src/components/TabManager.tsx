@@ -34,6 +34,8 @@ import { api, type Project, type Session } from '@/lib/api';
 interface TabManagerProps {
   onBack: () => void;
   className?: string;
+  /** Whether the persistent workspace is currently shown by the app router. */
+  isVisible?: boolean;
   /**
    * 初始会话信息 - 从 SessionList 跳转时使用
    */
@@ -51,6 +53,7 @@ interface TabManagerProps {
 export const TabManager: React.FC<TabManagerProps> = ({
   onBack,
   className,
+  isVisible = true,
   initialSession,
   initialProjectPath,
 }) => {
@@ -291,12 +294,13 @@ export const TabManager: React.FC<TabManagerProps> = ({
           {/* 🔧 STATE PRESERVATION: 渲染所有标签页但隐藏非活跃标签页 */}
           {/* 这样可以保持组件状态（包括输入框内容），避免切换标签页时状态丢失 */}
           {tabs.map((tab) => {
+            const tabIsVisible = tab.isActive && isVisible;
             return (
               <div
                 key={tab.id}
                 className={cn(
                   "absolute inset-0",
-                  !tab.isActive && "hidden"
+                  !tabIsVisible && "hidden"
                 )}
               >
                 <TabSessionWrapper
@@ -304,7 +308,7 @@ export const TabManager: React.FC<TabManagerProps> = ({
                   session={tab.session}
                   initialProjectPath={tab.projectPath}
                   initialEngine={tab.engine}
-                  isActive={tab.isActive}
+                  isActive={tabIsVisible}
                   onStreamingChange={(isStreaming, sessionId) =>
                     updateTabStreamingStatus(tab.id, isStreaming, sessionId)
                   }

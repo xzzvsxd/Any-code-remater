@@ -3,9 +3,12 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
   doesSessionModelOnlyDropOneMillion,
   parseSessionModelForPromptInput,
+  readPromptInputLastSelectedModel,
   readPromptInputScopedModel,
+  resolveInitialPromptInputModel,
   resolvePromptInputModelForScopeChange,
   shouldPersistPromptInputModelForScopeTransition,
+  writePromptInputLastSelectedModel,
   writePromptInputScopedModel,
 } from '../modelSessionScope';
 
@@ -100,12 +103,60 @@ describe('FloatingPromptInput session-scoped model state', () => {
     })).toBe(true);
   });
 
-  test('uses the user default only for a new empty scope without a session model', () => {
+  test('keeps explicit 1M when opening a fresh draft from a session scope', () => {
     expect(resolvePromptInputModelForScopeChange({
       previousScopeKey: 'session:old',
       nextScopeKey: 'draft:new',
       currentModel: 'claude-opus-4-8[1m]',
       sessionModel: undefined,
+      userDefaultModel: 'claude-opus-4-8',
+      defaultModel: 'sonnet',
+    })).toBe('claude-opus-4-8[1m]');
+  });
+
+  test('persists carried 1M intent into a fresh draft scope for future restores', () => {
+    expect(shouldPersistPromptInputModelForScopeTransition({
+      previousScopeKey: 'session:old',
+      nextScopeKey: 'draft:new',
+      currentModel: 'claude-opus-4-8[1m]',
+      sessionModel: undefined,
+      nextModel: 'claude-opus-4-8[1m]',
+    })).toBe(true);
+  });
+
+  test('uses the user default for a new empty draft when there is no sticky 1M intent', () => {
+    expect(resolvePromptInputModelForScopeChange({
+      previousScopeKey: 'session:old',
+      nextScopeKey: 'draft:new',
+      currentModel: 'claude-opus-4-8',
+      sessionModel: undefined,
+      userDefaultModel: 'claude-sonnet-5',
+      defaultModel: 'sonnet',
+    })).toBe('claude-sonnet-5');
+  });
+
+  test('uses sticky last-selected 1M for a freshly mounted draft before a bare default can clear it', () => {
+    writePromptInputLastSelectedModel('claude-opus-4-8[1m]');
+
+    expect(resolveInitialPromptInputModel({
+      scopeKey: 'draft:new-tab',
+      scopedModel: readPromptInputScopedModel('draft:new-tab'),
+      sessionModel: undefined,
+      lastSelectedModel: readPromptInputLastSelectedModel(),
+      userDefaultModel: 'claude-opus-4-8',
+      defaultModel: 'sonnet',
+    })).toBe('claude-opus-4-8[1m]');
+  });
+
+  test('does not keep stale 1M after the user last selected a bare model', () => {
+    writePromptInputLastSelectedModel('claude-opus-4-8[1m]');
+    writePromptInputLastSelectedModel('claude-opus-4-8');
+
+    expect(resolveInitialPromptInputModel({
+      scopeKey: 'draft:new-tab',
+      scopedModel: readPromptInputScopedModel('draft:new-tab'),
+      sessionModel: undefined,
+      lastSelectedModel: readPromptInputLastSelectedModel(),
       userDefaultModel: 'claude-sonnet-5',
       defaultModel: 'sonnet',
     })).toBe('claude-sonnet-5');

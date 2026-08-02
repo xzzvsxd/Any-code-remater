@@ -14,26 +14,8 @@ import { useContextWindowUsage } from '@/hooks/useContextWindowUsage';
 import { USAGE_LEVEL_COLORS } from '@/types/contextWindow';
 import { cn } from '@/lib/utils';
 import type { ClaudeStreamMessage } from '@/types/claude';
-
-// Claude 的 Auto-compact buffer 动态预留量
-// 不再写死 45k：按上下文窗口大小按比例预留，并钳制下限，
-// 使其同时适配 200K 与原生 1M（claude-opus-5）等不同窗口。
-// 比例 0.225 = 45000 / 200000，保证 200K 窗口仍预留 45k（向后兼容），1M 窗口则自动扩展到约 225k。
-const AUTO_COMPACT_BUFFER_RATIO = 0.225;
-const MIN_AUTO_COMPACT_BUFFER = 13000;
-
-/**
- * 根据上下文窗口大小动态计算 Auto-compact buffer 预留量
- * @param contextWindowSize 上下文窗口总大小（tokens）
- * @returns 预留的 buffer tokens
- */
-const getAutoCompactBuffer = (contextWindowSize: number): number => {
-  if (!contextWindowSize || contextWindowSize <= 0) return MIN_AUTO_COMPACT_BUFFER;
-  return Math.max(
-    MIN_AUTO_COMPACT_BUFFER,
-    Math.round(contextWindowSize * AUTO_COMPACT_BUFFER_RATIO)
-  );
-};
+import type { ClaudeSettings } from '@/lib/api';
+import { resolveClaudeAutoCompactConfig } from '@/lib/claudeAutoCompact';
 
 export interface ContextWindowIndicatorProps {
   /** 会话消息列表 */
@@ -42,6 +24,8 @@ export interface ContextWindowIndicatorProps {
   model?: string;
   /** 引擎类型（claude/codex/gemini） */
   engine?: string;
+  /** Claude 官方 auto-compact 设置快照 */
+  autoCompactSettings?: ClaudeSettings | null;
   /** 是否显示（需要有消息时才显示） */
   show?: boolean;
   /** 自定义类名 */
@@ -68,6 +52,7 @@ const ContextWindowIndicatorComponent: React.FC<ContextWindowIndicatorProps> = (
   messages,
   model,
   engine,
+  autoCompactSettings,
   show = true,
   className,
 }) => {
@@ -90,12 +75,24 @@ const ContextWindowIndicatorComponent: React.FC<ContextWindowIndicatorProps> = (
 
   // 计算 Auto-compact 相关数据（仅 Claude 引擎）
   const isClaudeEngine = engine === 'claude';
-  const autoCompactBuffer = getAutoCompactBuffer(displayUsage.contextWindowSize);
-  const autoCompactThreshold = displayUsage.contextWindowSize - autoCompactBuffer;
-  const autoCompactThresholdPercentage = (autoCompactThreshold / displayUsage.contextWindowSize) * 100;
-  const tokensUntilCompact = Math.max(0, autoCompactThreshold - displayUsage.currentTokens);
-  const isNearCompact = isClaudeEngine && displayUsage.currentTokens >= autoCompactThreshold * 0.9; // 90% of threshold
-  const willTriggerCompact = isClaudeEngine && displayUsage.currentTokens >= autoCompactThreshold;
+  const autoCompactConfig = resolveClaudeAutoCompactConfig(
+    autoCompactSettings,
+    displayUsage.contextWindowSize,
+  );
+  const autoCompactWindow = autoCompactConfig.effectiveWindow;
+  const showAutoCompactWindow = isClaudeEngine
+    && autoCompactConfig.enabled
+    && typeof autoCompactWindow === 'number';
+  const autoCompactWindowPercentage = autoCompactWindow
+    ? (autoCompactWindow / displayUsage.contextWindowSize) * 100
+    : 0;
+  const tokensUntilCompactWindow = autoCompactWindow
+    ? Math.max(0, autoCompactWindow - displayUsage.currentTokens)
+    : 0;
+  const isNearCompact = showAutoCompactWindow
+    && displayUsage.currentTokens >= autoCompactWindow * 0.9;
+  const willTriggerCompact = showAutoCompactWindow
+    && displayUsage.currentTokens >= autoCompactWindow;
 
   return (
     <div
@@ -123,10 +120,10 @@ const ContextWindowIndicatorComponent: React.FC<ContextWindowIndicatorProps> = (
                 style={{ width: `${Math.min(displayUsage.percentage, 100)}%` }}
               />
               {/* Auto-compact 阈值线（仅 Claude） */}
-              {isClaudeEngine && (
+              {showAutoCompactWindow && (
                 <div
                   className="absolute top-0 bottom-0 w-px bg-amber-500 dark:bg-amber-400"
-                  style={{ left: `${Math.min(autoCompactThresholdPercentage, 100)}%` }}
+                  style={{ left: `${Math.min(autoCompactWindowPercentage, 100)}%` }}
                 />
               )}
             </div>
@@ -166,11 +163,11 @@ const ContextWindowIndicatorComponent: React.FC<ContextWindowIndicatorProps> = (
                   style={{ width: `${Math.min(displayUsage.percentage, 100)}%` }}
                 />
                 {/* Auto-compact 阈值线（仅 Claude） */}
-                {isClaudeEngine && (
+                {showAutoCompactWindow && (
                   <div
                     className="absolute top-0 bottom-0 w-0.5 bg-amber-500 dark:bg-amber-400 z-10"
-                    style={{ left: `${Math.min(autoCompactThresholdPercentage, 100)}%` }}
-                    title={`Auto-compact 阈值: ${formatK(autoCompactThreshold)}`}
+                    style={{ left: `${Math.min(autoCompactWindowPercentage, 100)}%` }}
+                    title={`${t('contextWindow.autoCompactWindow', 'Auto-compact Window')}: ${formatK(autoCompactWindow)}`}
                   />
                 )}
               </div>
@@ -184,8 +181,8 @@ const ContextWindowIndicatorComponent: React.FC<ContextWindowIndicatorProps> = (
               )}
             </div>
 
-            {/* Auto-compact Buffer 信息（仅 Claude 引擎） */}
-            {isClaudeEngine && (
+            {/* Claude 官方 auto-compact 窗口信息 */}
+            {showAutoCompactWindow && (
               <div className={cn(
                 "p-2 rounded-md border text-xs",
                 willTriggerCompact
@@ -207,20 +204,20 @@ const ContextWindowIndicatorComponent: React.FC<ContextWindowIndicatorProps> = (
                       ? "text-amber-700 dark:text-amber-300"
                       : "text-foreground"
                   )}>
-                    Auto-compact Buffer
+                    {t('contextWindow.autoCompactWindow', 'Auto-compact Window')}
                   </span>
                 </div>
                 <div className="space-y-1 pl-5">
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">预留空间:</span>
-                    <span className="font-mono">{formatK(autoCompactBuffer)}</span>
+                    <span className="text-muted-foreground">
+                      {t('contextWindow.configuredWindow', '配置窗口')}:
+                    </span>
+                    <span className="font-mono">{formatK(autoCompactWindow)}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">压缩阈值:</span>
-                    <span className="font-mono">{formatK(autoCompactThreshold)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">距离压缩:</span>
+                    <span className="text-muted-foreground">
+                      {t('contextWindow.tokensUntilWindow', '距离窗口')}:
+                    </span>
                     <span className={cn(
                       "font-mono",
                       willTriggerCompact
@@ -229,13 +226,22 @@ const ContextWindowIndicatorComponent: React.FC<ContextWindowIndicatorProps> = (
                           ? "text-yellow-600 dark:text-yellow-400"
                           : ""
                     )}>
-                      {willTriggerCompact ? '即将触发' : formatK(tokensUntilCompact)}
+                      {willTriggerCompact
+                        ? t('contextWindow.compactWindowReached', '已进入窗口')
+                        : formatK(tokensUntilCompactWindow)}
                     </span>
                   </div>
                 </div>
                 {willTriggerCompact && (
                   <div className="mt-2 pt-2 border-t border-amber-200 dark:border-amber-700 text-amber-700 dark:text-amber-300">
-                    上下文已达压缩阈值，将自动优化
+                    {t('contextWindow.compactWindowReachedDescription', '已进入配置窗口，Claude 将立即按原生逻辑处理压缩。')}
+                  </div>
+                )}
+                {!willTriggerCompact && (
+                  <div className="mt-2 pt-2 border-t text-muted-foreground">
+                    {isNearCompact
+                      ? t('contextWindow.compactWindowNear', '即将压缩：上下文使用量已接近配置窗口。')
+                      : t('contextWindow.compactWindowDescription', 'Claude 会在上下文使用量接近该窗口时按原生逻辑自动压缩。')}
                   </div>
                 )}
               </div>
@@ -308,6 +314,7 @@ export const ContextWindowIndicator = React.memo(
     prevProps.messages === nextProps.messages &&
     prevProps.model === nextProps.model &&
     prevProps.engine === nextProps.engine &&
+    prevProps.autoCompactSettings === nextProps.autoCompactSettings &&
     prevProps.show === nextProps.show &&
     prevProps.className === nextProps.className
   )

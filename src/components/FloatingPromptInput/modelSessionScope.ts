@@ -2,6 +2,7 @@ import { decodeClaudeModel, encodeClaudeModel } from './constants';
 import type { ModelType } from './types';
 
 const SCOPED_MODEL_STORAGE_KEY = 'floating_prompt_input_scoped_models_v1';
+const LAST_SELECTED_MODEL_STORAGE_KEY = 'floating_prompt_input_last_selected_model_v1';
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -74,6 +75,27 @@ export function writePromptInputScopedModel(scopeKey: string | null | undefined,
   writeScopedModelRecord(record);
 }
 
+export function readPromptInputLastSelectedModel(): ModelType | null {
+  try {
+    return parseSessionModelForPromptInput(localStorage.getItem(LAST_SELECTED_MODEL_STORAGE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+export function writePromptInputLastSelectedModel(model: ModelType | null | undefined): void {
+  const parsedModel = parseSessionModelForPromptInput(model);
+  try {
+    if (parsedModel) {
+      localStorage.setItem(LAST_SELECTED_MODEL_STORAGE_KEY, parsedModel);
+    } else {
+      localStorage.removeItem(LAST_SELECTED_MODEL_STORAGE_KEY);
+    }
+  } catch {
+    // localStorage may be unavailable in privacy/test contexts; model selection still works in memory.
+  }
+}
+
 export function doesSessionModelOnlyDropOneMillion(currentModel?: string | null, sessionModel?: string | null): boolean {
   const current = decodeClaudeModel(currentModel);
   const incoming = decodeClaudeModel(sessionModel);
@@ -82,6 +104,10 @@ export function doesSessionModelOnlyDropOneMillion(currentModel?: string | null,
   return current.versionId === incoming.versionId
     && current.oneMillion
     && !incoming.oneMillion;
+}
+
+export function isOneMillionClaudeModel(model?: string | null): boolean {
+  return decodeClaudeModel(model)?.oneMillion === true;
 }
 
 export function isPromptInputDraftToSessionPromotion(previousScopeKey: string, nextScopeKey: string): boolean {
@@ -102,6 +128,14 @@ export function shouldPersistPromptInputModelForScopeTransition({
   nextModel: ModelType;
 }): boolean {
   if (isPromptInputDraftToSessionPromotion(previousScopeKey, nextScopeKey)) {
+    return true;
+  }
+
+  if (
+    nextScopeKey.startsWith('draft:')
+    && nextModel === currentModel
+    && isOneMillionClaudeModel(currentModel)
+  ) {
     return true;
   }
 
@@ -129,6 +163,47 @@ export function buildPromptInputModelScopeKey({
   if (path) return `project:${path.replace(/\\/g, '/').toLowerCase()}`;
 
   return 'new';
+}
+
+export function resolveInitialPromptInputModel({
+  scopeKey,
+  scopedModel,
+  sessionModel,
+  lastSelectedModel,
+  userDefaultModel,
+  defaultModel,
+}: {
+  scopeKey: string;
+  scopedModel?: string | null;
+  sessionModel?: string | null;
+  lastSelectedModel?: string | null;
+  userDefaultModel?: ModelType | null;
+  defaultModel: ModelType;
+}): ModelType {
+  const parsedScopedModel = parseSessionModelForPromptInput(scopedModel);
+  if (parsedScopedModel) {
+    return parsedScopedModel;
+  }
+
+  const parsedSessionModel = parseSessionModelForPromptInput(sessionModel);
+  if (parsedSessionModel) {
+    return parsedSessionModel;
+  }
+
+  // 新 tab 会挂载全新的 FloatingPromptInput 实例，无法通过 previousScopeKey
+  // 知道它来自哪个会话。把“最近一次 UI 选中的 1M 意图”作为 sticky preference，
+  // 可防止新会话初始化时被裸 userDefaultModel（如 claude-opus-4-8）清掉 1M。
+  // 非 1M 模型仍交给“新会话默认模型”控制，保留星标默认模型的语义。
+  const parsedLastSelectedModel = parseSessionModelForPromptInput(lastSelectedModel);
+  if (
+    (scopeKey === 'new' || scopeKey.startsWith('draft:') || scopeKey.startsWith('project:'))
+    && parsedLastSelectedModel
+    && isOneMillionClaudeModel(parsedLastSelectedModel)
+  ) {
+    return parsedLastSelectedModel;
+  }
+
+  return parseSessionModelForPromptInput(userDefaultModel) || defaultModel;
 }
 
 export function resolvePromptInputModelForScopeChange({
@@ -165,6 +240,16 @@ export function resolvePromptInputModelForScopeChange({
   // 这是同一个逻辑会话的身份升级，不是用户切换到了另一个会话；必须保留当前 UI
   // 选择（尤其是 claude-*- [1m]），否则真实 sessionId 回填瞬间会把 1M 按钮打掉。
   if (isPromptInputDraftToSessionPromotion(previousScopeKey, nextScopeKey)) {
+    return currentModel;
+  }
+
+  // “开启新会话”会从已有 session 切到新的 draft scope；如果当前 UI 已显式开启
+  // 1M，不能在 draft 初始化时退回裸 userDefaultModel/defaultModel。
+  if (
+    nextScopeKey.startsWith('draft:')
+    && isOneMillionClaudeModel(currentModel)
+    && !parseSessionModelForPromptInput(sessionModel)
+  ) {
     return currentModel;
   }
 

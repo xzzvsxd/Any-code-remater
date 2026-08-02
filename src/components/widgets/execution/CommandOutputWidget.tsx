@@ -6,9 +6,11 @@
  */
 
 import React from "react";
-import { ChevronRight, CheckCircle2 } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { detectLinks, makeLinksClickable } from "@/lib/linkDetector";
 import { countLinesUpTo } from "@/lib/markdownRenderSafety";
+import { normalizeLegacyCompactOutput } from "@/lib/compactLifecycle";
+import { CompactLifecycleMessage } from "@/components/message/CompactLifecycleMessage";
 
 const MAX_CLICKABLE_OUTPUT_CHARS = 80_000;
 const MAX_CLICKABLE_OUTPUT_LINES = 2_000;
@@ -51,8 +53,7 @@ export const CommandOutputWidget: React.FC<CommandOutputWidgetProps> = ({
 }) => {
   const safeOutput = React.useMemo(() => getSafeOutputPreview(output), [output]);
   const plainTextOutput = shouldUsePlainTextOutput(output);
-  // 检查是否是 /compact 命令成功消息
-  const isCompactSuccess = output.includes("Compacted.") && output.includes("ctrl+r to see full summary");
+  const compactLifecycle = normalizeLegacyCompactOutput(output);
 
   // 链接检测
   React.useEffect(() => {
@@ -106,30 +107,8 @@ export const CommandOutputWidget: React.FC<CommandOutputWidgetProps> = ({
   };
 
   // /compact 命令成功的特殊渲染
-  if (isCompactSuccess) {
-    return (
-      <div className="rounded-lg border border-success/20 bg-success/5 overflow-hidden">
-        <div className="px-4 py-2 bg-success/10 flex items-center gap-2">
-          <CheckCircle2 className="h-3 w-3 text-success" />
-          <span className="text-xs font-mono text-success">/compact 命令成功</span>
-        </div>
-        <div className="p-3 space-y-2">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 text-success" />
-            <span className="text-sm font-medium text-success">
-              对话历史已压缩
-            </span>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Claude 已将之前的对话内容压缩为更紧凑的格式，释放了上下文空间。
-            压缩后的内容保留了重要信息，同时为后续对话腾出了更多空间。
-          </p>
-          <pre className="text-xs font-mono text-muted-foreground bg-muted/30 p-2 rounded border">
-            {safeOutput}
-          </pre>
-        </div>
-      </div>
-    );
+  if (compactLifecycle) {
+    return <CompactLifecycleMessage lifecycle={compactLifecycle} />;
   }
 
   // 常规输出渲染

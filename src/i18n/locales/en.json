@@ -581,6 +581,11 @@
   "generalSettings": {
     "showSystemInit": "Show System Initialization Info",
     "showSystemInitDescription": "Display Session ID, Model, working directory and available tools at session start",
+    "autoCompactEnabled": "Claude Auto-Compaction",
+    "autoCompactEnabledDescription": "Let Claude Code manage context compaction natively without duplicate execution or conflicting status",
+    "autoCompactWindow": "Auto-compact Window",
+    "autoCompactWindowDescription": "Claude compacts as context approaches this window; set 100K to 1000K (default 256K)",
+    "autoCompactEnvironmentOverride": "CLAUDE_CODE_AUTO_COMPACT_WINDOW={{value}} currently takes precedence",
     "hideWarmup": "Hide Warmup Messages",
     "hideWarmupDescription": "Hide auto-sent Warmup messages and their replies in session messages (startup warmup messages)",
     "includeCoauthored": "Include 'Co-authored by Claude'",
@@ -1528,7 +1533,25 @@
     "cacheCreation": "Cache Creation",
     "cacheRead": "Cache Read",
     "criticalWarning": "Context window nearly full, consider starting a new session",
-    "highWarning": "Context usage is high"
+    "highWarning": "Context usage is high",
+    "autoCompactWindow": "Auto-compact Window",
+    "configuredWindow": "Configured window",
+    "tokensUntilWindow": "Until window",
+    "compactWindowReached": "Window reached",
+    "compactWindowReachedDescription": "The configured window has been reached; Claude will process compaction immediately using its native logic.",
+    "compactWindowNear": "Compaction is approaching as context usage nears the configured window.",
+    "compactWindowDescription": "Claude compacts automatically using its native logic as context usage approaches this window."
+  },
+  "compactLifecycle": {
+    "auto": "Automatic compact",
+    "manual": "Manual compact",
+    "unknown": "Context compact",
+    "scheduled": "Starting",
+    "preparing": "Preparing",
+    "running": "Compacting",
+    "completed": "Compact complete",
+    "failed": "Compact failed",
+    "released": "released"
   },
   "systemInit": {
     "title": "System Initialized",
