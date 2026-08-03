@@ -22,6 +22,7 @@ export type InputAction =
   | { type: "SET_SHOW_COST_POPOVER"; payload: boolean }
   | { type: "SET_CURSOR_POSITION"; payload: number }
   | { type: "SET_EXECUTION_ENGINE_CONFIG"; payload: ExecutionEngineConfig }
+  | { type: "PATCH_EXECUTION_ENGINE_CONFIG"; payload: Partial<ExecutionEngineConfig> }
   | { type: "SET_ENABLE_PROJECT_CONTEXT"; payload: boolean }
   | { type: "RESET_INPUT" };
 
@@ -66,6 +67,11 @@ export function inputReducer(state: InputState, action: InputAction): InputState
       return { ...state, cursorPosition: action.payload };
     case "SET_EXECUTION_ENGINE_CONFIG":
       return { ...state, executionEngineConfig: action.payload };
+    case "PATCH_EXECUTION_ENGINE_CONFIG":
+      return {
+        ...state,
+        executionEngineConfig: { ...state.executionEngineConfig, ...action.payload },
+      };
     case "SET_ENABLE_PROJECT_CONTEXT":
       return { ...state, enableProjectContext: action.payload };
     case "RESET_INPUT":

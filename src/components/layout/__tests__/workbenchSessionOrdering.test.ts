@@ -4,6 +4,8 @@ import { resolve } from 'node:path';
 import type { DraftSession, Project, Session } from '@/lib/api';
 import {
   buildWorkbenchProjectSessionIndex,
+  createWorkbenchOpenTabSession,
+  filterWorkbenchOpenTabsShadowedByDrafts,
   filterPromotedDraftSessionsForSidebar,
   getWorkbenchSessionRunningKey,
   isWorkbenchSessionRunning,
@@ -179,6 +181,57 @@ describe('workbench sidebar session ordering', () => {
     expect(index.draftSessionsByProjectId.get('p2')?.map((d) => d.id)).toEqual(['draft-by-id']);
     expect(index.runningCountByProjectId.get('p1')).toBe(1);
     expect(index.runningCountByProjectId.get('p2') ?? 0).toBe(0);
+  });
+
+  test('shows a fresh idle tab as soon as its project path is selected', () => {
+    const openSession = createWorkbenchOpenTabSession({
+      id: 'tab-fresh',
+      title: 'New conversation',
+      type: 'new',
+      projectPath: '/repo/app',
+      state: 'idle',
+      createdAt: 1_720_000_000_000,
+      engine: 'claude',
+    });
+
+    expect(openSession).toMatchObject({
+      id: workbenchTemporaryOpenTabSessionId('tab-fresh'),
+      project_path: '/repo/app',
+      first_message: 'New conversation',
+      __workbenchOpenTabId: 'tab-fresh',
+      __workbenchTemporaryOpenTab: true,
+    });
+  });
+
+  test('does not invent a sidebar session before a fresh tab has a project', () => {
+    expect(createWorkbenchOpenTabSession({
+      id: 'tab-unscoped',
+      title: 'New conversation',
+      type: 'new',
+      state: 'idle',
+      createdAt: 1_720_000_000_000,
+    })).toBeNull();
+  });
+
+  test('lets a saved draft row replace its idle temporary tab row', () => {
+    const temporary = createWorkbenchOpenTabSession({
+      id: 'tab-with-draft',
+      title: 'New conversation',
+      type: 'new',
+      projectPath: '/repo/app',
+      state: 'idle',
+      createdAt: 1_720_000_000_000,
+    });
+    const persisted = withWorkbenchOpenTabMetadata(
+      session('persisted', '2026-06-15T02:30:00.000Z'),
+      'tab-persisted',
+      false,
+    );
+
+    expect(filterWorkbenchOpenTabsShadowedByDrafts(
+      [temporary!, persisted],
+      [{ id: 'tab-with-draft' }],
+    ).map((item) => item.id)).toEqual(['persisted']);
   });
 
   test('WorkbenchSidebar does not poll expanded projects while sessions are streaming', () => {

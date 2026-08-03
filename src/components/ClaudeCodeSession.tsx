@@ -45,6 +45,7 @@ import { convertGeminiSessionDetailToClaudeMessages } from '@/lib/geminiConverte
 import { formatClaudeModelLabel, resolveClaudeContinuationModel } from '@/lib/claudeModelSelection';
 import { buildQueueStorageKey, loadQueuedPrompts, saveQueuedPrompts } from '@/lib/queuedPromptsStore';
 import { resolveInitialExecutionEngineConfig } from './executionEngineConfigPolicy';
+import { subscribeRuntimeConfigChanged } from '@/lib/runtimeConfigEvents';
 import {
   getBranchPromptIndexForDisplayableMessage,
   getPromptNavigationIndexForDisplayableMessage,
@@ -1046,22 +1047,45 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
     }
   }, [session]); // Remove hasLoadedSession dependency to ensure it runs on mount
 
-  // Load Claude settings once for all StreamMessage components
+  // Keep the persistent workspace in sync with committed settings without
+  // remounting its messages or stream listeners.
   useEffect(() => {
-    const loadSettings = async () => {
+    let cancelled = false;
+    const loadSettings = async (snapshot?: import('@/lib/api').ClaudeSettings) => {
       try {
-        const settings = await api.getClaudeSettings();
-        setClaudeSettings(settings);
+        const settings = snapshot ?? await api.getClaudeSettings();
+        const data = settings?.data && typeof settings.data === 'object' ? settings.data : settings;
+        if (!cancelled) {
+          setClaudeSettings((previous) => {
+            const next = {
+              showSystemInitialization: data?.showSystemInitialization,
+              hideWarmupMessages: data?.hideWarmupMessages,
+            };
+            return previous.showSystemInitialization === next.showSystemInitialization
+              && previous.hideWarmupMessages === next.hideWarmupMessages
+              ? previous
+              : next;
+          });
+        }
       } catch (error) {
         console.error("Failed to load Claude settings:", error);
-        setClaudeSettings({ 
+        if (!cancelled) setClaudeSettings({
           showSystemInitialization: true,
           hideWarmupMessages: true // Default: hide warmup messages for better UX
         }); // Default fallback
       }
     };
 
-    loadSettings();
+    void loadSettings();
+    const unsubscribe = subscribeRuntimeConfigChanged((detail) => {
+      if (detail.engine === 'claude' && detail.settings) {
+        void loadSettings(detail.settings);
+      }
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, []);
 
   // 检测 CLI 能力（仅 Claude 引擎相关）：决定问题/计划的交互模型

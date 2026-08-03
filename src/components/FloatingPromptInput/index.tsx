@@ -16,11 +16,13 @@ import { useCustomSlashCommands } from "./hooks/useCustomSlashCommands";
 import { usePluginSlashCommands } from "./hooks/usePluginSlashCommands";
 import { api, type ClaudeSettings } from "@/lib/api";
 import { CLAUDE_AUTO_COMPACT_SETTINGS_CHANGED_EVENT } from "@/lib/claudeAutoCompact";
+import { subscribeRuntimeConfigChanged } from '@/lib/runtimeConfigEvents';
 import { getEnabledProviders } from "@/lib/promptEnhancementService";
 import { formatDuration } from "@/lib/pricing";
 import { inputReducer, initialState } from "./reducer";
 import { getDefaultModel } from "./defaultModelStorage";
 import { resolveSelectedModelName } from "./resolveModelName";
+import { shouldSyncExecutionEngineConfig } from '@/components/executionEngineConfigPolicy';
 import {
   buildPromptInputModelScopeKey,
   doesSessionModelOnlyDropOneMillion,
@@ -149,6 +151,7 @@ const FloatingPromptInputInner = (
     selectedModel: getInitialModel(),
     executionEngineConfig: externalEngineConfig || initialState.executionEngineConfig,
   });
+  const lastReportedEngineConfigRef = useRef(state.executionEngineConfig);
   const [autoCompactSettings, setAutoCompactSettings] = useState<ClaudeSettings | null>(null);
   const modelScopeKey = useMemo(
     () => buildPromptInputModelScopeKey({ sessionId, draftTabId, projectPath }),
@@ -279,15 +282,20 @@ const FloatingPromptInputInner = (
 
   // Sync external config changes
   useEffect(() => {
-    if (externalEngineConfig && externalEngineConfig.engine !== state.executionEngineConfig.engine) {
+    if (
+      externalEngineConfig
+      && shouldSyncExecutionEngineConfig(state.executionEngineConfig, externalEngineConfig)
+      && shouldSyncExecutionEngineConfig(lastReportedEngineConfigRef.current, externalEngineConfig)
+    ) {
       dispatch({ type: "SET_EXECUTION_ENGINE_CONFIG", payload: externalEngineConfig });
     }
-  }, [externalEngineConfig]);
+  }, [externalEngineConfig, state.executionEngineConfig]);
 
   // Persist execution engine config
   useEffect(() => {
     try {
       localStorage.setItem('execution_engine_config', JSON.stringify(state.executionEngineConfig));
+      lastReportedEngineConfigRef.current = state.executionEngineConfig;
       onExecutionEngineConfigChange?.(state.executionEngineConfig);
     } catch (error) {
       console.error('[ExecutionEngine] Failed to save config to localStorage:', error);
@@ -575,45 +583,66 @@ const FloatingPromptInputInner = (
     }
   }, [state.executionEngineConfig.engine, state.selectedModel]);
 
-  // Load custom models
-  useEffect(() => {
-    const loadCustomModel = async () => {
-      try {
-        const settings = await api.getClaudeSettings();
-        const envVars = settings?.data?.env || settings?.env;
+  const applyCustomModelSettings = useCallback((settings: ClaudeSettings) => {
+    const envVars = settings?.data?.env || settings?.env;
+    const customModel = envVars && typeof envVars === 'object'
+      ? envVars.ANTHROPIC_MODEL
+        || envVars.ANTHROPIC_DEFAULT_FABLE_MODEL
+        || envVars.ANTHROPIC_DEFAULT_SONNET_MODEL
+        || envVars.ANTHROPIC_DEFAULT_OPUS_MODEL
+      : undefined;
 
-        if (envVars && typeof envVars === 'object') {
-          const customModel = envVars.ANTHROPIC_MODEL ||
-                             envVars.ANTHROPIC_DEFAULT_FABLE_MODEL ||
-                             envVars.ANTHROPIC_DEFAULT_SONNET_MODEL ||
-                             envVars.ANTHROPIC_DEFAULT_OPUS_MODEL;
+    if (!customModel || typeof customModel !== 'string') {
+      setCustomModels([]);
+      return;
+    }
 
-          if (customModel && typeof customModel === 'string') {
-            // 识别是否为内置模型（旧别名或 claude- 全名）——是则不作为自定义模型
-            const lower = customModel.toLowerCase();
-            const isBuiltInModel =
-              ['fable', 'sonnet', 'opus', 'haiku', 'sonnet1m', 'opus1m'].includes(lower) ||
-              /^claude-/i.test(lower);
-
-            if (!isBuiltInModel) {
-              // 非内置：作为自定义模型，其真实 model 串同时作为 id 与显示名
-              const customModelConfig: ModelConfig = {
-                id: customModel as ModelType,
-                name: customModel,
-                description: "Custom model from environment variables",
-                icon: <Sparkles className="h-4 w-4" />
-              };
-              setCustomModels([customModelConfig]);
-            }
-          }
-        }
-      } catch (error) {
-        console.error('[FloatingPromptInput] Failed to load custom model:', error);
-      }
-    };
-
-    loadCustomModel();
+    const lower = customModel.toLowerCase();
+    const isBuiltInModel =
+      ['fable', 'sonnet', 'opus', 'haiku', 'sonnet1m', 'opus1m'].includes(lower)
+      || /^claude-/i.test(lower);
+    setCustomModels(isBuiltInModel ? [] : [{
+      id: customModel as ModelType,
+      name: customModel,
+      description: "Custom model from environment variables",
+      icon: <Sparkles className="h-4 w-4" />,
+    }]);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.getClaudeSettings()
+      .then((settings) => {
+        if (!cancelled) applyCustomModelSettings(settings);
+      })
+      .catch((error) => {
+        console.error('[FloatingPromptInput] Failed to load custom model:', error);
+      });
+
+    const unsubscribe = subscribeRuntimeConfigChanged((detail) => {
+      if (detail.engine === 'claude') {
+        if (detail.settings) {
+          setAutoCompactSettings(detail.settings);
+          applyCustomModelSettings(detail.settings);
+        }
+        if (detail.model) setSelectedModel(detail.model as ModelType);
+        return;
+      }
+
+      if (!detail.model) return;
+      dispatch({
+        type: 'PATCH_EXECUTION_ENGINE_CONFIG',
+        payload: detail.engine === 'codex'
+          ? { codexModel: detail.model }
+          : { geminiModel: detail.model },
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [applyCustomModelSettings, setSelectedModel]);
 
   // Imperative handle
   useImperativeHandle(ref, () => ({

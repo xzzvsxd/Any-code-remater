@@ -31,6 +31,7 @@ import {
 } from '@/config/geminiProviderPresets';
 import { useTranslation } from "@/hooks/useTranslation";
 import { SortableList } from '@/components/ui/sortable-list';
+import { notifyRuntimeConfigChanged } from '@/lib/runtimeConfigEvents';
 
 interface GeminiProviderManagerProps {
   onBack?: () => void;
@@ -107,6 +108,7 @@ export default function GeminiProviderManager({ onBack }: GeminiProviderManagerP
     try {
       setSwitching(config.id);
       const message = await api.switchGeminiProvider(config);
+      notifyRuntimeConfigChanged({ engine: 'gemini', model: extractModelFromEnv(config.env) || undefined });
       setToastMessage({ message, type: 'success' });
       await loadData();
     } catch (error) {
@@ -121,6 +123,7 @@ export default function GeminiProviderManager({ onBack }: GeminiProviderManagerP
     try {
       setSwitching('clear');
       const message = await api.clearGeminiProviderConfig();
+      notifyRuntimeConfigChanged({ engine: 'gemini' });
       setToastMessage({ message, type: 'success' });
       await loadData();
     } catch (error) {
@@ -194,6 +197,10 @@ export default function GeminiProviderManager({ onBack }: GeminiProviderManagerP
         if (isCurrentProvider(editingProvider)) {
           try {
             await api.switchGeminiProvider(updatedConfig);
+            notifyRuntimeConfigChanged({
+              engine: 'gemini',
+              model: extractModelFromEnv(updatedConfig.env) || undefined,
+            });
             setToastMessage({ message: t('provider.geminiUpdateSyncSuccess'), type: 'success' });
           } catch (switchError) {
             console.error('Failed to sync Gemini provider config:', switchError);

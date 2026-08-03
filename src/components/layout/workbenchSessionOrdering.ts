@@ -14,6 +14,17 @@ export type WorkbenchOpenTabSession = Session & {
   __workbenchTemporaryOpenTab?: boolean;
 };
 
+export interface WorkbenchOpenTabCandidate {
+  id: string;
+  title: string;
+  type: 'session' | 'new';
+  projectPath?: string;
+  session?: Session;
+  engine?: 'claude' | 'codex' | 'gemini';
+  state: 'idle' | 'streaming' | 'error';
+  createdAt: number;
+}
+
 export const normalizeWorkbenchPath = (path?: string) =>
   path ? path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() : '';
 
@@ -35,6 +46,50 @@ export function withWorkbenchOpenTabMetadata(
     __workbenchOpenTabId: openTabId,
     __workbenchTemporaryOpenTab: temporaryOpenTab,
   };
+}
+
+/**
+ * Projects are the sidebar's ownership boundary, so an unscoped empty tab has
+ * nowhere to render. Once a path is selected, expose it immediately instead of
+ * waiting for the first runtime event or session id.
+ */
+export function createWorkbenchOpenTabSession(
+  tab: WorkbenchOpenTabCandidate,
+): WorkbenchOpenTabSession | null {
+  if (tab.session?.id) {
+    return withWorkbenchOpenTabMetadata(
+      tab.session.first_message ? tab.session : { ...tab.session, first_message: tab.title },
+      tab.id,
+      false,
+    );
+  }
+
+  if (!tab.projectPath) return null;
+
+  return withWorkbenchOpenTabMetadata(
+    {
+      id: workbenchTemporaryOpenTabSessionId(tab.id),
+      project_id: '',
+      project_path: tab.projectPath,
+      created_at: Math.floor((tab.createdAt || Date.now()) / 1000),
+      first_message: tab.title,
+      engine: tab.engine || 'claude',
+    },
+    tab.id,
+    true,
+  );
+}
+
+export function filterWorkbenchOpenTabsShadowedByDrafts<T extends { id: string }>(
+  openTabs: readonly WorkbenchOpenTabSession[],
+  drafts: readonly T[],
+): WorkbenchOpenTabSession[] {
+  if (openTabs.length === 0 || drafts.length === 0) return [...openTabs];
+  const draftCarrierIds = new Set(drafts.map((draft) => draft.id));
+  return openTabs.filter((session) => (
+    !isTemporaryWorkbenchOpenTabSession(session)
+    || !draftCarrierIds.has(getWorkbenchOpenTabId(session)!)
+  ));
 }
 
 export function getWorkbenchOpenTabId(session: Session): string | undefined {

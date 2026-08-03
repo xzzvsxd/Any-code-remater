@@ -65,3 +65,14 @@ export function resolveInitialExecutionEngineConfig({
   };
 }
 
+export function shouldSyncExecutionEngineConfig(
+  current: ExecutionEngineConfig,
+  incoming: ExecutionEngineConfig,
+): boolean {
+  return current.engine !== incoming.engine
+    || current.codexMode !== incoming.codexMode
+    || current.codexModel !== incoming.codexModel
+    || current.codexReasoningLevel !== incoming.codexReasoningLevel
+    || current.geminiModel !== incoming.geminiModel
+    || current.geminiApprovalMode !== incoming.geminiApprovalMode;
+}

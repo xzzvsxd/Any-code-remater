@@ -27,6 +27,7 @@ import { Toast } from '@/components/ui/toast';
 import ProviderFormV2 from './ProviderFormV2';
 import { useTranslation } from "@/hooks/useTranslation";
 import { SortableList } from '@/components/ui/sortable-list';
+import { notifyRuntimeConfigChanged } from '@/lib/runtimeConfigEvents';
 
 interface ProviderManagerV2Props {
   onBack: () => void;
@@ -83,10 +84,16 @@ export default function ProviderManagerV2({ onBack }: ProviderManagerV2Props) {
     }
   };
 
+  const publishProviderChange = async (model?: string) => {
+    const settings = await api.getClaudeSettings().catch(() => undefined);
+    notifyRuntimeConfigChanged({ engine: 'claude', model, settings });
+  };
+
   const switchProvider = async (config: ProviderConfig) => {
     try {
       setSwitching(config.id);
       const message = await api.switchProviderConfig(config);
+      await publishProviderChange(config.lock_model || config.model || undefined);
       setToastMessage({ message, type: 'success' });
       await loadData();
     } catch (error) {
@@ -101,6 +108,7 @@ export default function ProviderManagerV2({ onBack }: ProviderManagerV2Props) {
     try {
       setSwitching('clear');
       const message = await api.clearProviderConfig();
+      await publishProviderChange();
       setToastMessage({ message, type: 'success' });
       await loadData();
     } catch (error) {
@@ -198,6 +206,7 @@ export default function ProviderManagerV2({ onBack }: ProviderManagerV2Props) {
         if (isCurrentProvider(editingProvider)) {
           try {
             await api.switchProviderConfig(updatedConfig);
+            await publishProviderChange(updatedConfig.lock_model || updatedConfig.model || undefined);
             setToastMessage({ message: t('provider.updateSyncSuccess'), type: 'success' });
           } catch (switchError) {
             console.error('Failed to sync provider config:', switchError);

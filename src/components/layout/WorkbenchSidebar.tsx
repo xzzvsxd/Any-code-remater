@@ -71,18 +71,19 @@ import type { Project, Session } from '@/lib/api';
 import { truncateText, getFirstLine } from '@/lib/date-utils';
 import {
   buildWorkbenchProjectSessionIndex,
+  createWorkbenchOpenTabSession,
   filterPromotedDraftSessionsForSidebar,
+  filterWorkbenchOpenTabsShadowedByDrafts,
   getWorkbenchOpenTabId,
   isWorkbenchSessionRunning,
   normalizeWorkbenchPath,
   orderProjectSessionsForSidebar,
   shouldRefreshProjectSessionsOnFocus,
-  withWorkbenchOpenTabMetadata,
   workbenchSessionKey,
   workbenchTabKey,
-  workbenchTemporaryOpenTabSessionId,
 } from './workbenchSessionOrdering';
 import { getDraftStorageKey } from '@/components/FloatingPromptInput/hooks/useDraftPersistence';
+import { subscribeWorkbenchSessionPromoted } from '@/lib/sessionLifecycleEvents';
 
 interface WorkbenchSidebarProps {
   /** 打开"关于"对话框 */
@@ -145,7 +146,18 @@ const EngineCountBadges: React.FC<{ project: Project; isCurrent: boolean }> = ({
 export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick }) => {
   const { t } = useTranslation();
   const { tabs, switchToTab, createNewTab, openSessionInBackground, closeTab, updateTabTitle, updateTabEngine } = useTabs();
-  const { projects, selectedProject, sessions, sessionsByProject, sessionsLoading, selectProject, deleteProject, refreshSessions, loadProjectSessions } = useProject();
+  const {
+    projects,
+    selectedProject,
+    sessions,
+    sessionsByProject,
+    sessionsLoading,
+    selectProject,
+    deleteProject,
+    refreshSessions,
+    loadProjectSessions,
+    scheduleProjectRefresh,
+  } = useProject();
   const { currentView, navigateTo } = useNavigation();
 
   const [collapsed, setCollapsed] = useState<boolean>(() => {
@@ -363,79 +375,58 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
 
     return keyOrder;
   }, [runningTabRefs]);
-  // 已在标签页打开的会话（含尚未落盘的新建会话、以及运行中但还没拿到 sessionId 的新会话）：
+  // 已在标签页打开的会话（含已选项目但尚未发送的新标签、以及还没拿到 sessionId 的新会话）：
   // 实时合并进项目树，无需等待 AI 完成事件与磁盘刷新。
   // 落盘前 session 无 first_message，用标签页标题兜底，避免显示成裸 id。
   //
-  // 纳入条件：① 已有 session.id；或 ② 正在运行(streaming)且有 projectPath 可归类。
-  // 后者是关键兜底——修复「会话已运行但侧栏不显示，仅项目 badge 亮」：新会话首轮 state 已是
-  // streaming 但 session.id 要等 system:init 才写入，这段窗口期(Linux 上因 focus 刷新不可靠
-  // 可能长达数秒)若不纳入，列表里就看不到它。用带命名空间的 tab id 合成临时会话顶上。
-  const includeTab = useCallback(
-    (tb: typeof tabs[number]) => !!tb.session?.id || (tb.state === 'streaming' && !!tb.projectPath),
-    [],
-  );
+  // 只要项目路径已确定就立即合成临时会话。等待 streaming/system:init 才显示会制造一个
+  // 明显空窗，持久工作区下甚至会一直看不到尚未发送的当前新对话。
   const openTabsSig = React.useMemo(
     () =>
       tabs
-        .filter(includeTab)
-        .map((tb) => JSON.stringify([
-          tb.id,
-          tb.session?.id || tb.id,
-          tb.session?.first_message ?? '',
-          tb.title,
-          tb.session?.project_id ?? '',
-          tb.session?.project_path ?? tb.projectPath ?? '',
-          // state 必须入签名：tab 从 idle↔streaming 变化时若签名不变，openTabSessions 不重算，
-          // 会导致「会话已在运行但侧栏不刷新/不显示」（Linux 尤甚，聚焦刷新不常触发）。
-          // state 是低频枚举（仅边沿变化），入签名不会重新引入 streaming 抖动。
-          tb.state,
-        ]))
+        .flatMap((tab) => {
+          const session = createWorkbenchOpenTabSession(tab);
+          if (!session) return [];
+          return [JSON.stringify([
+            tab.id,
+            session.id,
+            session.first_message ?? '',
+            session.project_id,
+            session.project_path,
+            // state 必须入签名：tab 从 idle↔streaming 变化时若签名不变，openTabSessions 不重算，
+            // 会导致「会话已在运行但侧栏不刷新/不显示」（Linux 尤甚，聚焦刷新不常触发）。
+            // state 是低频枚举（仅边沿变化），入签名不会重新引入 streaming 抖动。
+            tab.state,
+          ])];
+        })
         .join('\n'),
-    [tabs, includeTab],
+    [tabs],
   );
   const openTabSessions = React.useMemo(
-    () => tabs
-      .filter(includeTab)
-      .map((tb) => {
-        if (tb.session?.id) {
-          return withWorkbenchOpenTabMetadata(
-            tb.session.first_message ? tb.session : { ...tb.session, first_message: tb.title },
-            tb.id,
-            false,
-          );
-        }
-        // 运行中但还没 session 的新会话：构造临时 Session，让它即时进树。
-        // id 也做命名空间隔离，避免与旧草稿/旧会话 id 碰撞后被 diskIds 去重吞掉。
-        return withWorkbenchOpenTabMetadata(
-          {
-            id: workbenchTemporaryOpenTabSessionId(tb.id),
-            project_id: '',
-            project_path: tb.projectPath || '',
-            created_at: Math.floor((tb.createdAt || Date.now()) / 1000),
-            first_message: tb.title,
-            engine: (tb.engine || 'claude') as 'claude' | 'codex' | 'gemini',
-          } as Session,
-          tb.id,
-          true,
-        );
-      }),
+    () => tabs.flatMap((tab) => {
+      const session = createWorkbenchOpenTabSession(tab);
+      return session ? [session] : [];
+    }),
     // 依赖稳定签名而非 tabs 本身：仅当影响渲染的字段变化时才重算，消除 streaming 期间的引用抖动。
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [openTabsSig],
   );
+  const visibleOpenTabSessions = React.useMemo(
+    () => filterWorkbenchOpenTabsShadowedByDrafts(openTabSessions, draftSessionsForSidebar),
+    [draftSessionsForSidebar, openTabSessions],
+  );
   const runningOpenTabSessions = React.useMemo(
-    () => openTabSessions.filter((session) => isWorkbenchSessionRunning(session, runningSessionKeys)),
-    [openTabSessions, runningSessionKeys],
+    () => visibleOpenTabSessions.filter((session) => isWorkbenchSessionRunning(session, runningSessionKeys)),
+    [runningSessionKeys, visibleOpenTabSessions],
   );
   const projectSessionIndex = React.useMemo(
     () => buildWorkbenchProjectSessionIndex({
       projects,
-      openTabSessions,
+      openTabSessions: visibleOpenTabSessions,
       draftSessions: draftSessionsForSidebar,
       runningSessionKeys,
     }),
-    [projects, openTabSessions, draftSessionsForSidebar, runningSessionKeys],
+    [projects, visibleOpenTabSessions, draftSessionsForSidebar, runningSessionKeys],
   );
 
   // 活跃置顶时间戳：项目「首次进入 streaming」时打一次当前时间戳，供「活跃项目自动置顶」。
@@ -536,6 +527,51 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
       runningSessions: runningOpenTabSessions,
     };
   }, [expandedProjects, projects, loadProjectSessions, runningOpenTabSessions]);
+
+  // A promoted tab is already rendered from in-memory tab state. Refresh only
+  // its owning project so the disk cache catches up without a global scan.
+  useEffect(() => subscribeWorkbenchSessionPromoted((promotion) => {
+    const project = projects.find((candidate) => (
+      candidate.id === promotion.projectId
+      || normalizeWorkbenchPath(candidate.path) === normalizeWorkbenchPath(promotion.projectPath)
+    ));
+    if (!project) {
+      scheduleProjectRefresh(false);
+      return;
+    }
+
+    setExpandedProjects((previous) => {
+      if (previous.has(project.id)) return previous;
+      const next = new Set(previous);
+      next.add(project.id);
+      return next;
+    });
+    void loadProjectSessions(project, { silent: true });
+  }), [loadProjectSessions, projects, scheduleProjectRefresh]);
+
+  // Choosing a path inside a brand-new tab must reveal that tab in the tree.
+  // The dependency is identity-only, so manually collapsing it later stays respected.
+  const activeTabProjectPath = tabs.find((tab) => tab.isActive)?.projectPath;
+  const autoExpandedActiveTabPathRef = useRef('');
+  useEffect(() => {
+    if (!activeTabProjectPath) {
+      autoExpandedActiveTabPathRef.current = '';
+      return;
+    }
+    const normalizedActivePath = normalizeWorkbenchPath(activeTabProjectPath);
+    if (autoExpandedActiveTabPathRef.current === normalizedActivePath) return;
+    const project = projects.find((candidate) => (
+      normalizeWorkbenchPath(candidate.path) === normalizedActivePath
+    ));
+    if (!project) return;
+    autoExpandedActiveTabPathRef.current = normalizedActivePath;
+    setExpandedProjects((previous) => {
+      if (previous.has(project.id)) return previous;
+      const next = new Set(previous);
+      next.add(project.id);
+      return next;
+    });
+  }, [activeTabProjectPath, projects]);
 
   useEffect(() => {
     const handleVisibility = () => {

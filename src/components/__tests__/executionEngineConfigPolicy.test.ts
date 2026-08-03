@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'vitest';
 
 import { DEFAULT_CODEX_MODEL_ID } from '@/lib/codexModelSupport';
-import { resolveInitialExecutionEngineConfig } from '../executionEngineConfigPolicy';
+import {
+  resolveInitialExecutionEngineConfig,
+  shouldSyncExecutionEngineConfig,
+} from '../executionEngineConfigPolicy';
 
 describe('ClaudeCodeSession initial execution engine policy', () => {
   test('new sessions default to Claude even when the previous persisted engine was Codex', () => {
@@ -45,5 +48,16 @@ describe('ClaudeCodeSession initial execution engine policy', () => {
       codexModel: DEFAULT_CODEX_MODEL_ID,
       geminiModel: 'gemini-3-flash',
     });
+  });
+
+  test('syncs same-engine model and permission changes from the live parent config', () => {
+    const current = resolveInitialExecutionEngineConfig({
+      storedConfig: { codexModel: 'gpt-5.4', codexMode: 'read-only' },
+      sessionEngine: 'codex',
+    });
+    const incoming = { ...current, codexModel: 'gpt-5.5-codex', codexMode: 'full-auto' as const };
+
+    expect(shouldSyncExecutionEngineConfig(current, incoming)).toBe(true);
+    expect(shouldSyncExecutionEngineConfig(incoming, incoming)).toBe(false);
   });
 });

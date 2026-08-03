@@ -31,6 +31,7 @@ import {
 } from '@/config/codexProviderPresets';
 import { useTranslation } from "@/hooks/useTranslation";
 import { SortableList } from '@/components/ui/sortable-list';
+import { notifyRuntimeConfigChanged } from '@/lib/runtimeConfigEvents';
 
 interface CodexProviderManagerProps {
   onBack?: () => void;
@@ -108,6 +109,7 @@ export default function CodexProviderManager({ onBack }: CodexProviderManagerPro
     try {
       setSwitching(config.id);
       const message = await api.switchCodexProvider(config);
+      notifyRuntimeConfigChanged({ engine: 'codex', model: extractModelFromConfig(config.config) || undefined });
       setToastMessage({ message, type: 'success' });
       await loadData();
     } catch (error) {
@@ -122,6 +124,7 @@ export default function CodexProviderManager({ onBack }: CodexProviderManagerPro
     try {
       setSwitching('clear');
       const message = await api.clearCodexProviderConfig();
+      notifyRuntimeConfigChanged({ engine: 'codex' });
       setToastMessage({ message, type: 'success' });
       await loadData();
     } catch (error) {
@@ -195,6 +198,10 @@ export default function CodexProviderManager({ onBack }: CodexProviderManagerPro
         if (isCurrentProvider(editingProvider)) {
           try {
             await api.switchCodexProvider(updatedConfig);
+            notifyRuntimeConfigChanged({
+              engine: 'codex',
+              model: extractModelFromConfig(updatedConfig.config) || undefined,
+            });
             setToastMessage({ message: t('provider.codexUpdateSyncSuccess'), type: 'success' });
           } catch (switchError) {
             console.error('Failed to sync Codex provider config:', switchError);

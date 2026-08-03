@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { autoNameSessionFromPrompt } from '@/lib/sessionAutoTitle';
 import type { Session } from '@/lib/api';
 import { buildQueueStorageKey } from '@/lib/queuedPromptsStore';
+import { notifyWorkbenchSessionPromoted } from '@/lib/sessionLifecycleEvents';
 
 interface TabSessionWrapperProps {
   tabId: string;
@@ -127,6 +128,7 @@ const TabSessionWrapperComponent: React.FC<TabSessionWrapperProps> = ({
   const handleSessionInfoChange = useCallback((info: { sessionId: string; projectId: string; projectPath: string; engine?: 'claude' | 'codex' | 'gemini'; firstUserPrompt?: string }) => {
     console.debug('[TabSessionWrapper] Session info received, updating tab:', { tabId, info });
     updateSession(info);
+    notifyWorkbenchSessionPromoted(info);
     deletePromotedDraftCarrier();
 
     const firstPrompt = firstPromptForAutoTitleRef.current ?? info.firstUserPrompt?.trim() ?? null;
