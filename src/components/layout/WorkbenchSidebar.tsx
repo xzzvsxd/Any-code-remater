@@ -78,7 +78,10 @@ import {
   isWorkbenchSessionRunning,
   normalizeWorkbenchPath,
   orderProjectSessionsForSidebar,
+  reconcileWorkbenchOpenTabSessions,
+  resolveWorkbenchProjectSessions,
   shouldRefreshProjectSessionsOnFocus,
+  workbenchProjectsMatch,
   workbenchSessionKey,
   workbenchTabKey,
 } from './workbenchSessionOrdering';
@@ -986,7 +989,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
       {/* 主体：项目资源管理器（打开中的会话在树里高亮，无需单独标签列表） */}
       <WorkbenchProjectTree
         projects={orderedProjects}
-        selectedProjectId={selectedProject?.id ?? null}
+        selectedProject={selectedProject}
         sessions={sessions}
         sessionsByProject={sessionsByProject}
         sessionsLoading={sessionsLoading}
@@ -1226,7 +1229,7 @@ const WorkbenchNavDock: React.FC<NavDockProps> = ({ currentView, onNavigate, onA
 // ============================================================================
 interface ProjectTreeProps {
   projects: Project[];
-  selectedProjectId: string | null;
+  selectedProject: Project | null;
   sessions: Session[];
   /** 按项目 id 缓存的会话，支持多项目同时展开各显各的会话 */
   sessionsByProject: Record<string, Session[]>;
@@ -1269,7 +1272,7 @@ interface ProjectTreeProps {
 // 配合上方所有 props 已稳定引用化（useCallback/useMemo + 稳定签名），memo 才能真正生效，
 // 从而消除会话列表的鬼畜/上下乱跳/乱闪（根治抖动的最后一环）。
 const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
-  projects, selectedProjectId, sessions, sessionsByProject, sessionsLoading, expandedProjects, activeSessionId, runningSessionKeys, runningStartOrder,
+  projects, selectedProject, sessions, sessionsByProject, sessionsLoading, expandedProjects, activeSessionId, runningSessionKeys, runningStartOrder,
   openTabSessionsByProjectId, draftSessionsByProjectId, runningCountByProjectId,
   onToggleProject, onOpenSession,
   onNewSession, onNewSessionInProject, onRefreshProject, onOpenInExplorer, onCopyText, onDuplicateSession, onExportSession,
@@ -1311,17 +1314,32 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
         onReorder={(items) => onReorderProjects(items.map((p) => p.id))}
         renderItem={(project) => {
         const isExpanded = expandedProjects.has(project.id);
-        const isCurrent = selectedProjectId === project.id;
-        // 多项目展开：优先读该项目的按项目缓存；缓存未命中时回退到当前选中项目的 sessions。
+        const isCurrent = workbenchProjectsMatch(project, selectedProject);
+        // 当前项目必须和中央会话列表共用实时 sessions；sessionsByProject 只服务后台项目，
+        // 不能让较早完成的缓存请求覆盖当前项目的新会话。
         const cachedSessions = sessionsByProject[project.id];
-        const diskSessions = cachedSessions ?? (isCurrent ? sessions : []);
+        const diskSessions = resolveWorkbenchProjectSessions({
+          project,
+          selectedProject,
+          selectedProjectSessions: sessions,
+          cachedProjectSessions: cachedSessions,
+        });
         // 缓存未命中（首次展开、尚未加载完）视为加载中，用于空状态文案区分「加载中 / 暂无会话」。
-        const isProjectLoading = cachedSessions === undefined && (isCurrent ? sessionsLoading : isExpanded);
+        const isProjectLoading = isCurrent
+          ? sessionsLoading && sessions.length === 0
+          : cachedSessions === undefined && isExpanded;
         // 实时合并该项目下"已在标签页打开但尚未落盘/尚未刷新"的会话，
         // 使新建会话拿到 sessionId 后立刻出现在树里，无需等 AI 完成事件。
-        const diskIds = new Set(diskSessions.map((s) => s.id));
         const indexedOpenTabSessions = openTabSessionsByProjectId.get(project.id) ?? [];
-        const pendingTabSessions = indexedOpenTabSessions.filter((s) => !diskIds.has(s.id));
+        // 活动/运行中的内存会话覆盖同 id 的陈旧磁盘行；否则 JSONL 刚创建时的空标题、旧时间
+        // 会把新会话排到最近 5 条之外。后台 idle 旧标签仍走磁盘行，不会挤占置顶区。
+        const reconciledOpenTabs = reconcileWorkbenchOpenTabSessions({
+          diskSessions,
+          openTabSessions: indexedOpenTabSessions,
+          activeSessionId,
+          runningSessionKeys,
+        });
+        const pendingTabSessions = reconciledOpenTabs.pinnedOpenTabSessions;
         // 该项目的草稿会话：转成 Session 形态混进列表（置顶），用 is_draft 标记走红色渲染。
         // first_message 用草稿正文首行预览；点击时据 is_draft 走「恢复草稿」入口。
         const projectDrafts: Session[] = (draftSessionsByProjectId.get(project.id) ?? [])
@@ -1348,7 +1366,7 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
           || (s.message_timestamp ? Date.parse(s.message_timestamp) : 0)
           || (s.created_at || 0) * 1000;
         const orderedDisk = savedOrder && savedOrder.length > 0
-          ? [...diskSessions].sort((a, b) => {
+          ? [...reconciledOpenTabs.remainingDiskSessions].sort((a, b) => {
               const ia = savedOrder.indexOf(a.id);
               const ib = savedOrder.indexOf(b.id);
               // 两者都已手动排序：严格遵循用户拖拽的 savedOrder。
@@ -1359,7 +1377,7 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
               // 两者都是新会话：按活跃时间倒序，最近活跃的在最前。
               return activityOf(b) - activityOf(a);
             })
-          : diskSessions;
+          : reconciledOpenTabs.remainingDiskSessions;
         const projectSessions = pinnedSessions.length > 0
           ? [...pinnedSessions, ...orderedDisk]
           : orderedDisk;

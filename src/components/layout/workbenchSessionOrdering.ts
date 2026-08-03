@@ -32,6 +32,40 @@ export const sessionBelongsToWorkbenchProject = (session: Session, project: Proj
   session.project_id === project.id ||
   (!!session.project_path && normalizeWorkbenchPath(session.project_path) === normalizeWorkbenchPath(project.path));
 
+export const workbenchProjectsMatch = (
+  project: Pick<Project, 'id' | 'path'>,
+  candidate?: Pick<Project, 'id' | 'path'> | null,
+): boolean => {
+  if (!candidate) return false;
+  return project.id === candidate.id
+    || normalizeWorkbenchPath(project.path) === normalizeWorkbenchPath(candidate.path);
+};
+
+interface ResolveWorkbenchProjectSessionsOptions {
+  project: Pick<Project, 'id' | 'path'>;
+  selectedProject?: Pick<Project, 'id' | 'path'> | null;
+  selectedProjectSessions: Session[];
+  cachedProjectSessions?: Session[];
+}
+
+/**
+ * The selected project's `sessions` array drives the main session list and is
+ * therefore authoritative. `sessionsByProject` is only a background-project
+ * cache and may finish an older request after the selected list has refreshed.
+ */
+export function resolveWorkbenchProjectSessions({
+  project,
+  selectedProject,
+  selectedProjectSessions,
+  cachedProjectSessions,
+}: ResolveWorkbenchProjectSessionsOptions): Session[] {
+  if (workbenchProjectsMatch(project, selectedProject)) {
+    return selectedProjectSessions;
+  }
+
+  return cachedProjectSessions ?? [];
+}
+
 export const workbenchSessionKey = (sessionId: string): WorkbenchRunningSessionKey => `session:${sessionId}`;
 export const workbenchTabKey = (tabId: string): WorkbenchRunningSessionKey => `tab:${tabId}`;
 export const workbenchTemporaryOpenTabSessionId = (tabId: string) => `__workbench_tab__:${tabId}`;
@@ -123,6 +157,55 @@ export function isWorkbenchSessionRunning(
   runningSessionKeys: ReadonlySet<string>,
 ): boolean {
   return runningSessionKeys.has(getWorkbenchSessionRunningKey(session));
+}
+
+interface ReconcileWorkbenchOpenTabSessionsOptions {
+  diskSessions: Session[];
+  openTabSessions: readonly Session[];
+  activeSessionId?: string | null;
+  runningSessionKeys: ReadonlySet<string>;
+}
+
+interface ReconciledWorkbenchOpenTabSessions {
+  pinnedOpenTabSessions: Session[];
+  remainingDiskSessions: Session[];
+}
+
+/**
+ * Keep the in-memory representation for sessions that are new, active, or
+ * running. A just-created JSONL can already appear in a disk scan with an empty
+ * title/old activity timestamp; letting that stale copy shadow the open tab
+ * sends the new session below the sidebar's render limit.
+ *
+ * Idle background tabs continue to use their disk row, so restored tab sets do
+ * not flood the pinned section.
+ */
+export function reconcileWorkbenchOpenTabSessions({
+  diskSessions,
+  openTabSessions,
+  activeSessionId,
+  runningSessionKeys,
+}: ReconcileWorkbenchOpenTabSessionsOptions): ReconciledWorkbenchOpenTabSessions {
+  const diskIds = new Set(diskSessions.map((session) => session.id));
+  const pinnedIds = new Set<string>();
+  const pinnedOpenTabSessions: Session[] = [];
+
+  openTabSessions.forEach((session) => {
+    const shouldPin = !diskIds.has(session.id)
+      || session.id === activeSessionId
+      || isWorkbenchSessionRunning(session, runningSessionKeys);
+    if (!shouldPin || pinnedIds.has(session.id)) return;
+
+    pinnedIds.add(session.id);
+    pinnedOpenTabSessions.push(session);
+  });
+
+  return {
+    pinnedOpenTabSessions,
+    remainingDiskSessions: pinnedIds.size === 0
+      ? diskSessions
+      : diskSessions.filter((session) => !pinnedIds.has(session.id)),
+  };
 }
 
 /**

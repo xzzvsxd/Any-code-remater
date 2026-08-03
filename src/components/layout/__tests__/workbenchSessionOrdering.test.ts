@@ -10,6 +10,8 @@ import {
   getWorkbenchSessionRunningKey,
   isWorkbenchSessionRunning,
   orderProjectSessionsForSidebar,
+  reconcileWorkbenchOpenTabSessions,
+  resolveWorkbenchProjectSessions,
   shouldRefreshProjectSessionsOnFocus,
   withWorkbenchOpenTabMetadata,
   workbenchSessionKey,
@@ -232,6 +234,58 @@ describe('workbench sidebar session ordering', () => {
       [temporary!, persisted],
       [{ id: 'tab-with-draft' }],
     ).map((item) => item.id)).toEqual(['persisted']);
+  });
+
+  test('uses the live selected-project sessions instead of an older sidebar cache', () => {
+    const staleCached = [session('old-cache', '2026-06-15T02:00:00.000Z')];
+    const liveSelected = [session('fresh-session', '2026-06-15T02:30:00.000Z')];
+
+    expect(resolveWorkbenchProjectSessions({
+      project,
+      selectedProject: project,
+      selectedProjectSessions: liveSelected,
+      cachedProjectSessions: staleCached,
+    }).map((item) => item.id)).toEqual(['fresh-session']);
+  });
+
+  test('matches the selected project by normalized path when its hydrated id changed', () => {
+    const liveSelected = [session('fresh-session', '2026-06-15T02:30:00.000Z')];
+
+    expect(resolveWorkbenchProjectSessions({
+      project,
+      selectedProject: { ...project, id: 'virtual:/repo/app', path: '/REPO/app/' },
+      selectedProjectSessions: liveSelected,
+      cachedProjectSessions: [session('old-cache', '2026-06-15T02:00:00.000Z')],
+    })).toBe(liveSelected);
+  });
+
+  test('keeps an active promoted session pinned while replacing its stale disk copy', () => {
+    const staleDiskCopy = session('fresh-session', '2026-06-15T01:00:00.000Z', {
+      first_message: '',
+    });
+    const activeOpenCopy = withWorkbenchOpenTabMetadata(
+      session('fresh-session', '2026-06-15T02:30:00.000Z', {
+        first_message: 'Brand new conversation',
+      }),
+      'tab-fresh',
+      false,
+    );
+    const idleBackgroundCopy = withWorkbenchOpenTabMetadata(
+      session('old-session', '2026-06-15T02:00:00.000Z'),
+      'tab-old',
+      false,
+    );
+    const diskOnly = session('disk-only', '2026-06-15T02:10:00.000Z');
+
+    const reconciled = reconcileWorkbenchOpenTabSessions({
+      diskSessions: [staleDiskCopy, idleBackgroundCopy, diskOnly],
+      openTabSessions: [idleBackgroundCopy, activeOpenCopy],
+      activeSessionId: 'fresh-session',
+      runningSessionKeys: new Set(),
+    });
+
+    expect(reconciled.pinnedOpenTabSessions.map((item) => item.id)).toEqual(['fresh-session']);
+    expect(reconciled.remainingDiskSessions.map((item) => item.id)).toEqual(['old-session', 'disk-only']);
   });
 
   test('WorkbenchSidebar does not poll expanded projects while sessions are streaming', () => {
