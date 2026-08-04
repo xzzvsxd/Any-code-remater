@@ -196,7 +196,13 @@ describe('session message virtualization safety', () => {
     expect(sessionMessagesSource).toContain('pendingRemeasureItemIndexesRef');
     expect(sessionMessagesSource).toContain('measureVisibleRowsIntoVirtualizer');
     expect(sessionMessagesSource).toContain("querySelectorAll<HTMLElement>('[data-index][data-item-key][data-measurement-key]')");
-    expect(sessionMessagesSource).toContain('rowVirtualizer.resizeItem(itemIndex, rawHeight)');
+    expect(sessionMessagesSource).toContain('rowVirtualizer.resizeItem(itemIndex, measuredHeight)');
+  });
+
+  test('both initial and targeted measurement collapse null-rendered rows instead of preserving ghost height', () => {
+    expect(sessionMessagesSource).toContain('resolveVirtualRowMeasuredHeight');
+    expect(sessionMessagesSource.match(/resolveVirtualRowMeasuredHeight\(/g)).toHaveLength(2);
+    expect(sessionMessagesSource).not.toContain('if (rawHeight <= 0) return;');
   });
 
   test('height cache is keyed by render revision so changed rows cannot reuse stale measurements', () => {

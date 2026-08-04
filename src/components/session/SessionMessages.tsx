@@ -30,6 +30,7 @@ import {
   type RefreshableElementRectObserver,
 } from "./refreshableElementRectObserver";
 import { getVirtualTrackLayout } from "./virtualTrackLayout";
+import { resolveVirtualRowMeasuredHeight } from "./virtualRowMeasurement";
 import { isNavigableUserPrompt } from "@/lib/promptIndex";
 
 const EMPTY_WINDOW_RECOVERY_MAX_FRAMES = 8;
@@ -256,11 +257,10 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       const measuredIndex = idxAttr !== null ? Number(idxAttr) : NaN;
       const isStreamingRow = isLoading && idxAttr !== null && measuredIndex === messageGroups.length - 1;
 
-      // 🐛 白屏根因：快速上翻时 WebKitGTK/WebView 下元素可能处于「布局未就绪」瞬态，
-      // getBoundingClientRect().height 返回 0。若把 0 喂给虚拟列表，该行高度塌缩为 0 →
-      // 之后所有行的 translateY(start) 整体错位 → 可见项被推到视口外 → 整屏空白。
-      // 因此测到非正高度时绝不返回 0：优先用上次测得的真实高度，再退回估算值，
-      // 让虚拟列表在该项重新稳定布局前用合理占位高度，避免位置塌缩闪白。
+      // 非正高度有两种完全不同的含义：WebKitGTK/WebView 布局未就绪的瞬时 0px，
+      // 以及 StreamMessageV2 对空工具结果等技术行合法返回 null 的持久 0px。
+      // 前者必须保留缓存/估算高度，后者必须收缩到最小占位；若将后者也回退到
+      // 数百像素的估算高度，会留下大量透明行，使自动滚动落入无消息 DOM 的空白轨道。
       if (rawHeight > 0) {
         // 写入高度缓存（key 来自 MeasurableItem 设置的 data-item-key），
         // 供 estimateSize 复用真实高度，消除重测时的整列跳动。
@@ -273,8 +273,13 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       }
 
       const cached = measurementKey ? measuredHeightsRef.current.get(measurementKey) : undefined;
-      if (cached && cached > 0) return cached;
-      return safeEstimateMessageGroupHeight(messageGroups[measuredIndex]);
+      const hasRenderedContent = el.childElementCount > 0 || Boolean(el.textContent?.trim());
+      return resolveVirtualRowMeasuredHeight({
+        rawHeight,
+        cachedHeight: cached,
+        fallbackHeight: safeEstimateMessageGroupHeight(messageGroups[measuredIndex]),
+        hasRenderedContent,
+      });
     },
   });
 
@@ -318,14 +323,23 @@ export const SessionMessages = forwardRef<SessionMessagesRef, SessionMessagesPro
       if (!shouldMeasure) return;
 
       const rawHeight = rowElement.getBoundingClientRect().height;
-      if (rawHeight <= 0) return;
+      const cachedHeight = measurementKey
+        ? measuredHeightsRef.current.get(measurementKey)
+        : undefined;
+      const hasRenderedContent = rowElement.childElementCount > 0 || Boolean(rowElement.textContent?.trim());
+      const measuredHeight = resolveVirtualRowMeasuredHeight({
+        rawHeight,
+        cachedHeight,
+        fallbackHeight: safeEstimateMessageGroupHeight(messageGroups[itemIndex]),
+        hasRenderedContent,
+      });
 
-      if (measurementKey) {
+      if (measurementKey && rawHeight > 0) {
         measuredHeightsRef.current.set(measurementKey, rawHeight);
       }
-      rowVirtualizer.resizeItem(itemIndex, rawHeight);
+      rowVirtualizer.resizeItem(itemIndex, measuredHeight);
     });
-  }, [parentRef, rowVirtualizer]);
+  }, [messageGroups, parentRef, rowVirtualizer]);
 
   /**
    * 子组件折叠/展开（尤其 ThinkingBlock）会让行高从几百 px 变成几十 px。
