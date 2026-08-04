@@ -58,18 +58,18 @@ const renderList = (count: number, disableSortingAbove?: number) =>
   );
 
 describe('SortableList large-list render safety', () => {
-  test('keeps drag-and-drop enabled below the large-list cutoff', () => {
-    const html = renderList(5, 80);
+  test('keeps drag-and-drop enabled at the large-list cutoff', () => {
+    const html = renderList(80, 80);
 
     expect(html).toContain('data-dnd-context="true"');
     expect(html).toContain('data-sortable-context="true"');
   });
 
-  test('renders a plain list above the cutoff instead of mounting dnd-kit for every row', () => {
-    const html = renderList(300, 80);
+  test('renders a plain list immediately above the cutoff instead of mounting dnd-kit for every row', () => {
+    const html = renderList(81, 80);
 
     expect(html).not.toContain('data-dnd-context="true"');
     expect(html).not.toContain('data-sortable-context="true"');
-    expect(html).toContain('item-299');
+    expect(html).toContain('item-80');
   });
 });

@@ -9,9 +9,13 @@ import {
   filterPromotedDraftSessionsForSidebar,
   getWorkbenchSessionRunningKey,
   isWorkbenchSessionRunning,
+  mergeVisibleSessionOrder,
+  migrateSessionOrderAliases,
   orderProjectSessionsForSidebar,
+  orderSessionsWithSavedOrder,
   reconcileWorkbenchOpenTabSessions,
   resolveWorkbenchProjectSessions,
+  sortSessionsByActivity,
   shouldRefreshProjectSessionsOnFocus,
   withWorkbenchOpenTabMetadata,
   workbenchSessionKey,
@@ -21,6 +25,10 @@ import {
 
 const sidebarSource = readFileSync(
   resolve(process.cwd(), 'src/components/layout/WorkbenchSidebar.tsx'),
+  'utf8',
+);
+const tabsSource = readFileSync(
+  resolve(process.cwd(), 'src/hooks/useTabs.tsx'),
   'utf8',
 );
 
@@ -42,6 +50,165 @@ const session = (id: string, last: string, extra: Partial<Session> = {}): Sessio
 });
 
 describe('workbench sidebar session ordering', () => {
+  test('stores promoted tab session creation time in Unix seconds', () => {
+    expect(tabsSource).toContain('created_at: Math.floor(tab.createdAt / 1000)');
+  });
+
+  test('sorts invalid timestamps by finite creation fallback instead of preserving source order', () => {
+    const oldMalformed = session('old-malformed', 'not-a-timestamp', { created_at: 1 });
+    const freshMalformed = session('fresh-malformed', 'also-invalid', {
+      created_at: Math.floor(Date.now() / 1000),
+    });
+
+    expect(sortSessionsByActivity([oldMalformed, freshMalformed]).map((s) => s.id)).toEqual([
+      'fresh-malformed',
+      'old-malformed',
+    ]);
+  });
+
+  test('ignores an implausible future message timestamp when choosing recency', () => {
+    const recent = session('recent', new Date(Date.now() - 1_000).toISOString(), { created_at: 1 });
+    const corrupted = session('corrupted', '2999-01-01T00:00:00.000Z', { created_at: 1 });
+
+    expect(sortSessionsByActivity([corrupted, recent]).map((s) => s.id)).toEqual([
+      'recent',
+      'corrupted',
+    ]);
+  });
+
+  test('rejects even near-future message timestamps instead of outranking a new session', () => {
+    const now = Date.now();
+    const recent = session('recent', new Date(now).toISOString(), { created_at: 1 });
+    const clockSkewed = session('clock-skewed', new Date(now + 60 * 60 * 1000).toISOString(), {
+      created_at: 1,
+    });
+
+    expect(sortSessionsByActivity([clockSkewed, recent]).map((s) => s.id)).toEqual([
+      'recent',
+      'clock-skewed',
+    ]);
+  });
+
+  test('ignores an implausible future creation timestamp when choosing recency', () => {
+    const recent = session('recent', 'invalid', { created_at: Math.floor(Date.now() / 1000) });
+    const corrupted = session('corrupted', 'invalid', {
+      created_at: Math.floor(Date.UTC(2999, 0, 1) / 1000),
+    });
+
+    expect(sortSessionsByActivity([corrupted, recent]).map((s) => s.id)).toEqual([
+      'recent',
+      'corrupted',
+    ]);
+  });
+
+  test('rejects near-future creation timestamps in both seconds and milliseconds', () => {
+    const now = Date.now();
+    const recent = session('recent', 'invalid', { created_at: Math.floor(now / 1000) });
+    const skewedSeconds = session('skewed-seconds', 'invalid', {
+      created_at: Math.floor((now + 60 * 60 * 1000) / 1000),
+    });
+    const skewedMilliseconds = session('skewed-milliseconds', 'invalid', {
+      created_at: now + 60 * 60 * 1000,
+    });
+
+    expect(sortSessionsByActivity([skewedSeconds, skewedMilliseconds, recent]).map((s) => s.id)).toEqual([
+      'recent',
+      'skewed-seconds',
+      'skewed-milliseconds',
+    ]);
+  });
+
+  test('does not classify a clock-skewed unlisted row as new beside a saved order', () => {
+    const now = Date.now();
+    const known = session('known', 'invalid', { created_at: Math.floor(now / 1000) });
+    const clockSkewed = session('clock-skewed', new Date(now + 60 * 60 * 1000).toISOString(), {
+      created_at: 1,
+    });
+
+    expect(orderSessionsWithSavedOrder([clockSkewed, known], ['known']).map((s) => s.id)).toEqual([
+      'known',
+      'clock-skewed',
+    ]);
+  });
+
+  test('keeps genuinely new sessions above stale ids missing from saved manual order', () => {
+    const oldUnlisted = session('old-unlisted', 'invalid', { created_at: 1 });
+    const known = session('known', 'invalid', { created_at: Math.floor(Date.now() / 1000) - 100 });
+    const fresh = session('fresh', 'invalid', { created_at: Math.floor(Date.now() / 1000) });
+
+    expect(orderSessionsWithSavedOrder([oldUnlisted, known, fresh], ['known']).map((s) => s.id)).toEqual([
+      'fresh',
+      'known',
+      'old-unlisted',
+    ]);
+  });
+
+  test('does not re-pin active or running rows after the user establishes a manual order', () => {
+    const manuallyFirst = session('manual-first', 'invalid');
+    const pinned = session('pinned', 'invalid');
+    const running = session('running', 'invalid');
+
+    const ordered = orderProjectSessionsForSidebar({
+      projectSessions: [manuallyFirst, pinned, running],
+      pinnedSessionIds: new Set(['pinned']),
+      runningSessionKeys: new Set([workbenchSessionKey('running')]),
+      runningStartOrder: new Map([[workbenchSessionKey('running'), 1]]),
+      preserveInputOrder: true,
+    });
+
+    expect(ordered.map((s) => s.id)).toEqual(['manual-first', 'pinned', 'running']);
+  });
+
+  test('keeps a dragged draft position when its carrier is promoted to a real session id', () => {
+    expect(migrateSessionOrderAliases(
+      ['first', 'tab-1', 'last'],
+      'session-real',
+      ['tab-1', workbenchTemporaryOpenTabSessionId('tab-1')],
+    )).toEqual(['first', 'session-real', 'last']);
+  });
+
+  test('keeps a dragged temporary-tab position and removes a duplicate real id on promotion', () => {
+    expect(migrateSessionOrderAliases(
+      ['first', workbenchTemporaryOpenTabSessionId('tab-1'), 'session-real', 'last'],
+      'session-real',
+      ['tab-1', workbenchTemporaryOpenTabSessionId('tab-1')],
+    )).toEqual(['first', 'session-real', 'last']);
+  });
+
+  test('does not rewrite persisted order when a promotion has no saved alias', () => {
+    const savedOrder = ['first', 'last'];
+    expect(migrateSessionOrderAliases(savedOrder, 'session-real', ['tab-1'])).toBe(savedOrder);
+  });
+
+  test('persists migrated draft and temporary-tab aliases after promotion', () => {
+    expect(sidebarSource).toContain('migrateSessionOrderAliases(');
+    expect(sidebarSource).toContain('workbenchTemporaryOpenTabSessionId(tab.tabId)');
+    expect(sidebarSource).toContain("api.setSessionOrder('proj', project.id, migratedOrder)");
+  });
+
+  test('renders a promoted session with its effective migrated order before persistence effects run', () => {
+    expect(sidebarSource).toContain('persistedTabSessionRefsSig');
+    expect(sidebarSource).toContain('sessionOrder={effectiveSessionOrder}');
+    expect(sidebarSource).not.toContain('}, [projects, sessionOrder, tabs]);');
+  });
+
+  test('applies saved order to pinned and persisted rows as one list', () => {
+    expect(sidebarSource).toContain('[...pinnedSessions, ...reconciledOpenTabs.remainingDiskSessions]');
+    expect(sidebarSource).toContain('preserveInputOrder: Boolean(savedOrder?.length)');
+  });
+
+  test('keeps the hidden tail stable when an expanded visible batch is reordered', () => {
+    const all = ['a', 'b', 'c', 'd'].map((id) => session(id, 'invalid'));
+    const reorderedVisible = [all[2], all[0]];
+
+    expect(mergeVisibleSessionOrder(reorderedVisible, all).map((item) => item.id)).toEqual([
+      'c',
+      'a',
+      'b',
+      'd',
+    ]);
+  });
+
   test('keeps running sessions in start order when assistant activity timestamps keep changing', () => {
     const olderStartedFirst = session('a', '2026-06-15T02:00:00.000Z');
     const startedSecond = session('b', '2026-06-15T02:10:00.000Z');

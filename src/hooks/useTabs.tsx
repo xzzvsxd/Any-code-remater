@@ -399,7 +399,7 @@ export const TabProvider: React.FC<TabProviderProps> = ({ children }) => {
           id: sessionInfo.sessionId,
           project_id: sessionInfo.projectId,
           project_path: sessionInfo.projectPath,
-          created_at: tab.createdAt,
+          created_at: Math.floor(tab.createdAt / 1000),
           engine: sessionInfo.engine || tab.engine,
         };
 

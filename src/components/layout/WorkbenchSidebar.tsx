@@ -76,7 +76,10 @@ import {
   filterWorkbenchOpenTabsShadowedByDrafts,
   getWorkbenchOpenTabId,
   isWorkbenchSessionRunning,
+  mergeVisibleSessionOrder,
+  migrateSessionOrderAliases,
   normalizeWorkbenchPath,
+  orderSessionsWithSavedOrder,
   orderProjectSessionsForSidebar,
   reconcileWorkbenchOpenTabSessions,
   resolveWorkbenchProjectSessions,
@@ -84,6 +87,7 @@ import {
   workbenchProjectsMatch,
   workbenchSessionKey,
   workbenchTabKey,
+  workbenchTemporaryOpenTabSessionId,
 } from './workbenchSessionOrdering';
 import { getDraftStorageKey } from '@/components/FloatingPromptInput/hooks/useDraftPersistence';
 import { subscribeWorkbenchSessionPromoted } from '@/lib/sessionLifecycleEvents';
@@ -302,6 +306,83 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
       console.error('[Workbench] reorder failed:', e);
     }
   }, []);
+
+  // Keep promotion identity separate from high-frequency tab state. The JSON
+  // signature changes only when an id/project binding changes, not on tokens,
+  // titles, active timestamps, or streaming state updates.
+  const persistedTabSessionRefsSig = React.useMemo(() => JSON.stringify(
+    tabs
+      .filter((tab) => !!tab.session?.id)
+      .map((tab) => ({
+        tabId: tab.id,
+        sessionId: tab.session!.id,
+        projectId: tab.session!.project_id,
+        projectPath: normalizeWorkbenchPath(tab.session!.project_path || tab.projectPath),
+      }))
+      .sort((a, b) => a.tabId.localeCompare(b.tabId)),
+  ), [tabs]);
+  const persistedTabSessionRefs = React.useMemo(
+    () => JSON.parse(persistedTabSessionRefsSig) as Array<{
+      tabId: string;
+      sessionId: string;
+      projectId: string;
+      projectPath: string;
+    }>,
+    [persistedTabSessionRefsSig],
+  );
+  const sidebarProjectRefsSig = React.useMemo(() => JSON.stringify(
+    projects
+      .map((project) => ({ id: project.id, path: normalizeWorkbenchPath(project.path) }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  ), [projects]);
+  const sidebarProjectRefs = React.useMemo(
+    () => JSON.parse(sidebarProjectRefsSig) as Array<{ id: string; path: string }>,
+    [sidebarProjectRefsSig],
+  );
+
+  // Resolve aliases during render so promotion cannot jump for one paint. The
+  // effect below only commits and persists the already-rendered effective order.
+  const sessionOrderResolution = React.useMemo(() => {
+    const projectsById = new Map(sidebarProjectRefs.map((project) => [project.id, project]));
+    const projectsByPath = new Map(sidebarProjectRefs.map((project) => [project.path, project]));
+    let effectiveSessionOrder = sessionOrder;
+    const pendingWrites = new Map<string, {
+      project: { id: string };
+      migratedOrder: string[];
+    }>();
+
+    persistedTabSessionRefs.forEach((tab) => {
+      const project = projectsById.get(tab.projectId) ?? projectsByPath.get(tab.projectPath);
+      if (!project) return;
+
+      const orderKey = `proj:${project.id}`;
+      const savedOrder = effectiveSessionOrder[orderKey];
+      if (!savedOrder?.length) return;
+      const migratedOrder = migrateSessionOrderAliases(
+        savedOrder,
+        tab.sessionId,
+        [tab.tabId, workbenchTemporaryOpenTabSessionId(tab.tabId)],
+      );
+      if (migratedOrder === savedOrder) return;
+
+      if (effectiveSessionOrder === sessionOrder) effectiveSessionOrder = { ...sessionOrder };
+      effectiveSessionOrder[orderKey] = migratedOrder;
+      pendingWrites.set(orderKey, { project, migratedOrder });
+    });
+
+    return { effectiveSessionOrder, pendingWrites: [...pendingWrites.values()] };
+  }, [persistedTabSessionRefs, sessionOrder, sidebarProjectRefs]);
+  const { effectiveSessionOrder } = sessionOrderResolution;
+
+  useEffect(() => {
+    if (sessionOrderResolution.effectiveSessionOrder === sessionOrder) return;
+    setSessionOrder(sessionOrderResolution.effectiveSessionOrder);
+    sessionOrderResolution.pendingWrites.forEach(({ project, migratedOrder }) => {
+      void api.setSessionOrder('proj', project.id, migratedOrder).catch((error) => {
+        console.error('[Workbench] migrate promoted session order failed:', error);
+      });
+    });
+  }, [sessionOrder, sessionOrderResolution]);
 
   const draggingRef = useRef(false);
 
@@ -1014,7 +1095,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
         onAIRenameSession={aiRenameSession}
         aiRenamingSessionId={aiRenamingSessionId}
         recentlyAIRenamedSessionId={recentlyAIRenamedSessionId}
-        sessionOrder={sessionOrder}
+        sessionOrder={effectiveSessionOrder}
         onReorderSessions={reorderSessions}
         onReorderProjects={reorderProjects}
         onRequestDeleteSession={onRequestDeleteSessionCb}
@@ -1318,19 +1399,23 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
         // 当前项目必须和中央会话列表共用实时 sessions；sessionsByProject 只服务后台项目，
         // 不能让较早完成的缓存请求覆盖当前项目的新会话。
         const cachedSessions = sessionsByProject[project.id];
-        const diskSessions = resolveWorkbenchProjectSessions({
-          project,
-          selectedProject,
-          selectedProjectSessions: sessions,
-          cachedProjectSessions: cachedSessions,
-        });
+        const diskSessions = isExpanded
+          ? resolveWorkbenchProjectSessions({
+              project,
+              selectedProject,
+              selectedProjectSessions: sessions,
+              cachedProjectSessions: cachedSessions,
+            })
+          : [];
         // 缓存未命中（首次展开、尚未加载完）视为加载中，用于空状态文案区分「加载中 / 暂无会话」。
         const isProjectLoading = isCurrent
           ? sessionsLoading && sessions.length === 0
           : cachedSessions === undefined && isExpanded;
         // 实时合并该项目下"已在标签页打开但尚未落盘/尚未刷新"的会话，
         // 使新建会话拿到 sessionId 后立刻出现在树里，无需等 AI 完成事件。
-        const indexedOpenTabSessions = openTabSessionsByProjectId.get(project.id) ?? [];
+        const indexedOpenTabSessions = isExpanded
+          ? openTabSessionsByProjectId.get(project.id) ?? []
+          : [];
         // 活动/运行中的内存会话覆盖同 id 的陈旧磁盘行；否则 JSONL 刚创建时的空标题、旧时间
         // 会把新会话排到最近 5 条之外。后台 idle 旧标签仍走磁盘行，不会挤占置顶区。
         const reconciledOpenTabs = reconcileWorkbenchOpenTabSessions({
@@ -1342,52 +1427,40 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
         const pendingTabSessions = reconciledOpenTabs.pinnedOpenTabSessions;
         // 该项目的草稿会话：转成 Session 形态混进列表（置顶），用 is_draft 标记走红色渲染。
         // first_message 用草稿正文首行预览；点击时据 is_draft 走「恢复草稿」入口。
-        const projectDrafts: Session[] = (draftSessionsByProjectId.get(project.id) ?? [])
-          .map((d) => ({
-            id: d.id,
-            project_id: project.id,
-            project_path: d.project_path || project.path,
-            created_at: d.created_at,
-            first_message: d.content,
-            engine: (d.engine || 'claude') as 'claude' | 'codex' | 'gemini',
-            is_draft: true,
-          } as Session & { is_draft: boolean }));
-        // 置顶项（草稿 + 已打开未落盘的会话，含正在运行的新会话）：始终排在最前，
-        // 不参与 savedOrder 排序。否则它们的 id 不在 savedOrder 里 → indexOf=-1 → 被排到末尾
-        // → 被 visible 的 slice(0,5) 截断 →「会话已在运行但列表里看不到」（项目 badge 却亮，
-        // 因为 badge 不受 slice 影响）。这是 Linux/Windows 都会触发的真正根因。
+        const projectDrafts: Session[] = isExpanded
+          ? (draftSessionsByProjectId.get(project.id) ?? []).map((d) => ({
+              id: d.id,
+              project_id: project.id,
+              project_path: d.project_path || project.path,
+              created_at: d.created_at,
+              first_message: d.content,
+              engine: (d.engine || 'claude') as 'claude' | 'codex' | 'gemini',
+              is_draft: true,
+            } as Session & { is_draft: boolean }))
+          : [];
+        // 没有手动顺序时，草稿和未落盘会话保持在已排序磁盘行之前，避免被最近 5 条截断。
+        // 有手动顺序时，三类行统一参与 savedOrder，用户拖动位置才不会在下一次渲染中丢失。
         const pinnedSessions = [...projectDrafts, ...pendingTabSessions];
-        // 仅对落盘会话应用用户自定义排序：order key 以项目维度存储（引擎前缀固定，仅作存储键）。
+        // 对草稿、内存新会话和落盘会话统一应用项目级用户顺序；否则拖动 pinned/running 行后，
+        // 下一次渲染会再次把它自动置顶，看起来像拖拽没有生效。
         const orderKey = `proj:${project.id}`;
         const savedOrder = sessionOrder[orderKey];
-        // 会话活跃时间：优先末条消息时间，回退到创建时间。用于「新活跃会话排最前」。
-        const activityOf = (s: Session) =>
-          (s.last_message_timestamp ? Date.parse(s.last_message_timestamp) : 0)
-          || (s.message_timestamp ? Date.parse(s.message_timestamp) : 0)
-          || (s.created_at || 0) * 1000;
-        const orderedDisk = savedOrder && savedOrder.length > 0
-          ? [...reconciledOpenTabs.remainingDiskSessions].sort((a, b) => {
-              const ia = savedOrder.indexOf(a.id);
-              const ib = savedOrder.indexOf(b.id);
-              // 两者都已手动排序：严格遵循用户拖拽的 savedOrder。
-              if (ia !== -1 && ib !== -1) return ia - ib;
-              // 仅一方在 savedOrder 中：未排序的「新会话」提到最前（与旧逻辑相反）。
-              if (ia === -1 && ib !== -1) return -1;
-              if (ia !== -1 && ib === -1) return 1;
-              // 两者都是新会话：按活跃时间倒序，最近活跃的在最前。
-              return activityOf(b) - activityOf(a);
-            })
+        // 先应用用户顺序，再用有限、可验证的时间字段处理新会话和历史脏数据。
+        const combinedSessions = pinnedSessions.length > 0
+          ? [...pinnedSessions, ...reconciledOpenTabs.remainingDiskSessions]
           : reconciledOpenTabs.remainingDiskSessions;
-        const projectSessions = pinnedSessions.length > 0
-          ? [...pinnedSessions, ...orderedDisk]
-          : orderedDisk;
-        // 运行中的落盘会话仍保证在最近区可见，但只按“进入 streaming 的顺序”排一次；
-        // assistant 后续持续写入 last_message_timestamp 不再让多个运行项互相抢排名。
+        const projectSessions = !isExpanded
+          ? []
+          : savedOrder?.length
+            ? orderSessionsWithSavedOrder(combinedSessions, savedOrder)
+            : combinedSessions;
+        // 无手动顺序时，运行会话按稳定的启动顺序保证可见；有手动顺序后，用户排序优先。
         const visibleSorted = orderProjectSessionsForSidebar({
           projectSessions,
           pinnedSessionIds: new Set(pinnedSessions.map((s) => s.id)),
           runningSessionKeys,
           runningStartOrder,
+          preserveInputOrder: Boolean(savedOrder?.length),
         });
         const expandedSessionLimit = expandedSessionLimitByProject[project.id] ?? RECENT_SESSION_COUNT;
         const visibleSessionLimit = Math.min(
@@ -1395,7 +1468,7 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
           Math.max(RECENT_SESSION_COUNT, expandedSessionLimit),
         );
         const sessionListExpanded = visibleSessionLimit > RECENT_SESSION_COUNT;
-        // 截断前用 visibleSorted（pinned + 运行中 已提到最前），保证运行中/草稿会话不被 slice 截掉。
+        // 截断前使用最终顺序：无手动顺序时优先保证新建/运行项可见，有手动顺序时严格保留用户位置。
         // 展开大项目时按批次增加渲染上限，避免一次性挂载几百个会话行导致 Linux 前端白屏/卡死。
         const visible = visibleSorted.slice(0, visibleSessionLimit);
         const hiddenSessionCount = Math.max(projectSessions.length - visible.length, 0);
@@ -1509,14 +1582,12 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
                       items={visible}
                       customHandle
                       listClassName="space-y-px"
-                      disabled={sessionListExpanded}
+                      disableSortingAbove={EXPANDED_SESSION_BATCH_SIZE}
                       onReorder={(items) => {
-                        // 拖拽仅在「最近 N 个」视图启用（分批展开时退化为纯列表、不挂 dnd-kit，
-                        // 避免几百个 useSortable 实例导致 Linux 反复开关文件夹卡死）。
-                        // 此时 items 是拖拽后的前 N 个，完整顺序 = 新前 N + 其余会话（保持原相对序）。
-                        const movedIds = new Set(items.map((s) => s.id));
-                        const rest = projectSessions.filter((s) => !movedIds.has(s.id));
-                        onReorderSessions('proj', project.id, [...items, ...rest].map((s) => s.id));
+                        // 当前可见批次（最多 80 行）保持可拖拽，超过安全阈值时 SortableList 才退化；
+                        // items 是拖拽后的可见部分，完整顺序 = 新可见顺序 + 其余会话原相对顺序。
+                        const completeOrder = mergeVisibleSessionOrder(items, projectSessions);
+                        onReorderSessions('proj', project.id, completeOrder.map((s) => s.id));
                       }}
                       renderItem={(session) => {
                       const isDraft = (session as any).is_draft === true;
@@ -1562,12 +1633,10 @@ const WorkbenchProjectTree: React.FC<ProjectTreeProps> = React.memo(({
                                   : 'bg-amber-500/60'
                             )} />
                           )}
-                          {/* 拖拽手柄：仅「最近 N 个」视图可见可用（分批展开时退化纯列表、无拖拽） */}
-                          {!sessionListExpanded && (
-                            <SortableDragHandle className="flex-shrink-0 h-4 w-3 opacity-0 group-hover/sess:opacity-100 transition-opacity">
-                              <GripVertical className="h-3 w-3" />
-                            </SortableDragHandle>
-                          )}
+                          {/* 分批展开仍保持拖拽；超过 80 行由 SortableList 自动退化为纯列表。 */}
+                          <SortableDragHandle className="flex-shrink-0 h-4 w-3 opacity-0 group-hover/sess:opacity-100 transition-opacity">
+                            <GripVertical className="h-3 w-3" />
+                          </SortableDragHandle>
                           {/* AI 命名态自带星芒；其余状态继续使用草稿/运行/引擎图标。 */}
                           {!isAIRenaming && (
                             <span className="flex items-center justify-center flex-shrink-0">

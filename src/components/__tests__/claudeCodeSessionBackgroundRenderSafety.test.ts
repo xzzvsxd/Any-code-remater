@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 const source = readFileSync('src/components/ClaudeCodeSession.tsx', 'utf8');
 
 describe('ClaudeCodeSession background render safety', () => {
+  test('uses Unix seconds for synthetic session metadata', () => {
+    expect(source).toContain('created_at: Math.floor(Date.now() / 1000)');
+  });
+
   test('inactive tabs do not feed full message history into expensive visible-message rendering hooks', () => {
     expect(source).toContain('EMPTY_VISIBLE_MESSAGES');
     expect(source).toContain('const visibleMessages = isActive ? messages : EMPTY_VISIBLE_MESSAGES');

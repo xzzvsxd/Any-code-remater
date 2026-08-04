@@ -24,6 +24,18 @@ describe('WorkbenchSidebar large-list render safety', () => {
     );
   });
 
+  test('keeps session drag sorting available while rendering an expanded batch', () => {
+    expect(sidebarSource).toContain('disableSortingAbove={EXPANDED_SESSION_BATCH_SIZE}');
+    expect(sidebarSource).not.toContain('disabled={sessionListExpanded}');
+  });
+
+  test('does not construct or re-sort session arrays for collapsed projects', () => {
+    expect(sidebarSource).toContain('const diskSessions = isExpanded');
+    expect(sidebarSource).toContain('const projectSessions = !isExpanded');
+    expect(sidebarSource).toContain(': savedOrder?.length');
+    expect(sidebarSource).toContain('pinnedSessions.length > 0');
+  });
+
   test('precomputes project order indexes before sorting large project lists', () => {
     expect(sidebarSource).toContain('projectOrderIndex');
     expect(sidebarSource).not.toContain('projectOrder.indexOf(id)');

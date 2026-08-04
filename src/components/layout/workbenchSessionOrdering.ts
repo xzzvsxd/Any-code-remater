@@ -1,4 +1,9 @@
 import type { DraftSession, Project, Session } from '@/lib/api';
+export {
+  getSessionActivityTimestamp,
+  orderSessionsWithSavedOrder,
+  sortSessionsByActivity,
+} from '@/lib/sessionOrdering';
 
 export type RunningSessionStartOrder = ReadonlyMap<string, number>;
 export type WorkbenchRunningSessionKey = `session:${string}` | `tab:${string}`;
@@ -69,6 +74,36 @@ export function resolveWorkbenchProjectSessions({
 export const workbenchSessionKey = (sessionId: string): WorkbenchRunningSessionKey => `session:${sessionId}`;
 export const workbenchTabKey = (tabId: string): WorkbenchRunningSessionKey => `tab:${tabId}`;
 export const workbenchTemporaryOpenTabSessionId = (tabId: string) => `__workbench_tab__:${tabId}`;
+
+/** Preserve a dragged temporary row's position when it acquires its real session id. */
+export function migrateSessionOrderAliases(
+  savedOrder: string[],
+  realSessionId: string,
+  aliases: readonly string[],
+): string[] {
+  const aliasIds = new Set(aliases.filter((id) => id && id !== realSessionId));
+  const aliasIndex = savedOrder.findIndex((id) => aliasIds.has(id));
+  if (aliasIndex === -1) return savedOrder;
+
+  const migrated: string[] = [];
+  savedOrder.forEach((id, index) => {
+    if (index === aliasIndex) {
+      migrated.push(realSessionId);
+      return;
+    }
+    if (id === realSessionId || aliasIds.has(id)) return;
+    migrated.push(id);
+  });
+  return migrated;
+}
+
+export function mergeVisibleSessionOrder<T extends { id: string }>(
+  reorderedVisible: readonly T[],
+  allItems: readonly T[],
+): T[] {
+  const visibleIds = new Set(reorderedVisible.map((item) => item.id));
+  return [...reorderedVisible, ...allItems.filter((item) => !visibleIds.has(item.id))];
+}
 
 export function withWorkbenchOpenTabMetadata(
   session: Session,
@@ -230,6 +265,7 @@ interface OrderProjectSessionsForSidebarOptions {
   pinnedSessionIds: ReadonlySet<string>;
   runningSessionKeys: ReadonlySet<string>;
   runningStartOrder: RunningSessionStartOrder;
+  preserveInputOrder?: boolean;
 }
 
 /**
@@ -237,6 +273,7 @@ interface OrderProjectSessionsForSidebarOptions {
  * - 草稿/未落盘 tab 仍置顶，保证刚创建或待恢复的项不会被 slice 截掉。
  * - 运行中会话只在进入 running 时获得一个稳定 start order；后续 assistant token
  *   写入导致 last_message_timestamp 变化时，不再跟着磁盘活跃时间反复换位。
+ * - 一旦存在用户手动顺序，输入顺序即为权威顺序，不再把 pinned/running 行二次置顶。
  * - 非运行项保留输入顺序，由上层的磁盘/用户排序决定。
  */
 export function orderProjectSessionsForSidebar({
@@ -244,8 +281,9 @@ export function orderProjectSessionsForSidebar({
   pinnedSessionIds,
   runningSessionKeys,
   runningStartOrder,
+  preserveInputOrder = false,
 }: OrderProjectSessionsForSidebarOptions): Session[] {
-  if (runningSessionKeys.size === 0) {
+  if (preserveInputOrder || runningSessionKeys.size === 0) {
     return projectSessions;
   }
 

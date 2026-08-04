@@ -700,7 +700,7 @@ const ClaudeCodeSessionInner: React.FC<ClaudeCodeSessionProps> = ({
         id: extractedSessionInfo.sessionId,
         project_id: extractedSessionInfo.projectId,
         project_path: projectPath,
-        created_at: Date.now(),
+        created_at: Math.floor(Date.now() / 1000),
         engine: extractedSessionInfo.engine, // 🔧 FIX: Include engine field
       } as Session;
     }

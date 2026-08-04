@@ -1,5 +1,6 @@
 ﻿import React, { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react';
 import { api, Project, Session } from '@/lib/api';
+import { sortSessionsByActivity } from '@/lib/sessionOrdering';
 import { useTranslation } from 'react-i18next';
 
 interface ProjectContextType {
@@ -43,24 +44,6 @@ const loadingSessionsLoadProgress: SessionsLoadProgress = {
   claude: 'loading',
   codex: 'loading',
   gemini: 'loading',
-};
-
-const sortSessionsByActivity = (sessionList: Session[]) => {
-  return [...sessionList].sort((a, b) => {
-    const getTime = (session: Session) => {
-      if (session.last_message_timestamp) {
-        const parsed = new Date(session.last_message_timestamp).getTime();
-        if (Number.isFinite(parsed)) return parsed;
-      }
-      if (session.message_timestamp) {
-        const parsed = new Date(session.message_timestamp).getTime();
-        if (Number.isFinite(parsed)) return parsed;
-      }
-      return session.created_at * 1000;
-    };
-
-    return getTime(b) - getTime(a);
-  });
 };
 
 const codexSessionToProjectSession = (
