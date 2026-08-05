@@ -7,6 +7,7 @@ import {
   createWorkbenchOpenTabSession,
   filterWorkbenchOpenTabsShadowedByDrafts,
   filterPromotedDraftSessionsForSidebar,
+  findWorkbenchProjectForSession,
   getWorkbenchSessionRunningKey,
   isWorkbenchSessionRunning,
   mergeVisibleSessionOrder,
@@ -50,6 +51,34 @@ const session = (id: string, last: string, extra: Partial<Session> = {}): Sessio
 });
 
 describe('workbench sidebar session ordering', () => {
+  test('resolves a clicked session to its owning project by id or normalized path', () => {
+    const otherProject: Project = {
+      ...project,
+      id: 'p2',
+      path: 'C:\\REPO\\other\\',
+    };
+    const byId = session('by-id', 'invalid', {
+      project_id: 'p2',
+      project_path: '/stale/path',
+    });
+    const byPath = session('by-path', 'invalid', {
+      project_id: 'missing-id',
+      project_path: 'C:/REPO/other',
+    });
+
+    expect(findWorkbenchProjectForSession(byId, [project, otherProject])).toBe(otherProject);
+    expect(findWorkbenchProjectForSession(byPath, [project, otherProject])).toBe(otherProject);
+    expect(findWorkbenchProjectForSession(session('missing', 'invalid', {
+      project_id: 'missing-id',
+      project_path: '/missing/path',
+    }), [project])).toBeUndefined();
+  });
+
+  test('syncs the selected project when a different session is opened', () => {
+    expect(sidebarSource).toContain('selectProjectForSession(session);');
+    expect(sidebarSource).toContain('findWorkbenchProjectForSession(session, projects)');
+  });
+
   test('stores promoted tab session creation time in Unix seconds', () => {
     expect(tabsSource).toContain('created_at: Math.floor(tab.createdAt / 1000)');
   });

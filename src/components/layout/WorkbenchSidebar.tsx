@@ -74,6 +74,7 @@ import {
   createWorkbenchOpenTabSession,
   filterPromotedDraftSessionsForSidebar,
   filterWorkbenchOpenTabsShadowedByDrafts,
+  findWorkbenchProjectForSession,
   getWorkbenchOpenTabId,
   isWorkbenchSessionRunning,
   mergeVisibleSessionOrder,
@@ -635,27 +636,35 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
 
   // Choosing a path inside a brand-new tab must reveal that tab in the tree.
   // The dependency is identity-only, so manually collapsing it later stays respected.
-  const activeTabProjectPath = tabs.find((tab) => tab.isActive)?.projectPath;
-  const autoExpandedActiveTabPathRef = useRef('');
+  const activeTab = tabs.find((tab) => tab.isActive);
+  const activeTabProjectId = activeTab?.session?.project_id || '';
+  const activeTabProjectPath = activeTab?.session?.project_path || activeTab?.projectPath;
+  const activeTabProjectBindingSig = `${activeTabProjectId}\u0000${normalizeWorkbenchPath(activeTabProjectPath)}`;
+  const syncedActiveTabProjectBindingRef = useRef('');
   useEffect(() => {
-    if (!activeTabProjectPath) {
-      autoExpandedActiveTabPathRef.current = '';
+    if (!activeTabProjectBindingSig.replace(/\u0000/g, '')) {
+      syncedActiveTabProjectBindingRef.current = '';
       return;
     }
-    const normalizedActivePath = normalizeWorkbenchPath(activeTabProjectPath);
-    if (autoExpandedActiveTabPathRef.current === normalizedActivePath) return;
-    const project = projects.find((candidate) => (
-      normalizeWorkbenchPath(candidate.path) === normalizedActivePath
-    ));
+    if (syncedActiveTabProjectBindingRef.current === activeTabProjectBindingSig) return;
+    const project = findWorkbenchProjectForSession({
+      project_id: activeTabProjectId,
+      project_path: activeTabProjectPath ?? '',
+    }, projects);
     if (!project) return;
-    autoExpandedActiveTabPathRef.current = normalizedActivePath;
+    syncedActiveTabProjectBindingRef.current = activeTabProjectBindingSig;
     setExpandedProjects((previous) => {
       if (previous.has(project.id)) return previous;
       const next = new Set(previous);
       next.add(project.id);
       return next;
     });
-  }, [activeTabProjectPath, projects]);
+    if (!workbenchProjectsMatch(project, selectedProject)) {
+      void selectProject(project).catch((error) => {
+        console.error('[Workbench] sync active tab project failed:', error);
+      });
+    }
+  }, [activeTabProjectBindingSig, activeTabProjectId, activeTabProjectPath, projects, selectedProject, selectProject]);
 
   useEffect(() => {
     const handleVisibility = () => {
@@ -767,7 +776,21 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     setTimeout(() => { closeTab(prevId, true).catch(() => { /* ignore */ }); }, 0);
   }, [tabs, closeTab]);
 
+  const selectProjectForSession = useCallback((session: Pick<Session, 'project_id' | 'project_path'>) => {
+    const project = findWorkbenchProjectForSession(session, projects);
+    if (project && !workbenchProjectsMatch(project, selectedProject)) {
+      void selectProject(project).catch((error) => {
+        console.error('[Workbench] select session project failed:', error);
+      });
+    }
+  }, [projects, selectedProject, selectProject]);
+
   const openSession = useCallback((session: Session) => {
+    // The session row and project row have separate visual state. Keep the
+    // ProjectContext selection in sync before switching tabs, otherwise a
+    // session from project A can be highlighted while project B stays bold.
+    selectProjectForSession(session);
+
     // 侧栏合成的“已打开/临时运行”项应直接切回承载它的 tab。
     // 否则未拿到真实 session.id 的临时行会被当作一个普通落盘会话再次打开，制造重复 tab/幽灵运行项。
     const openTabId = getWorkbenchOpenTabId(session);
@@ -812,7 +835,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
     switchToTab(result.tabId);
     closePrevIfIdle(result.tabId);
     navigateTo('claude-tab-manager');
-  }, [openSessionInBackground, switchToTab, navigateTo, tabs, createNewTab, updateTabEngine, closePrevIfIdle]);
+  }, [openSessionInBackground, switchToTab, navigateTo, tabs, createNewTab, updateTabEngine, closePrevIfIdle, selectProjectForSession]);
 
   const onNewSession = useCallback(() => {
     createNewTab();

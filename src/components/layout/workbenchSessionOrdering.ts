@@ -37,6 +37,15 @@ export const sessionBelongsToWorkbenchProject = (session: Session, project: Proj
   session.project_id === project.id ||
   (!!session.project_path && normalizeWorkbenchPath(session.project_path) === normalizeWorkbenchPath(project.path));
 
+export const findWorkbenchProjectForSession = (
+  session: Pick<Session, 'project_id' | 'project_path'>,
+  projects: readonly Project[],
+): Project | undefined => projects.find((project) => (
+  project.id === session.project_id
+  || (!!session.project_path
+    && normalizeWorkbenchPath(session.project_path) === normalizeWorkbenchPath(project.path))
+));
+
 export const workbenchProjectsMatch = (
   project: Pick<Project, 'id' | 'path'>,
   candidate?: Pick<Project, 'id' | 'path'> | null,
