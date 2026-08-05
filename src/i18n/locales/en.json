@@ -1466,7 +1466,9 @@
     "version": "Version",
     "description": "Any Code is a powerful Claude Code session management tool that helps you better organize and manage Claude conversations.",
     "checkUpdate": "Check for Updates",
-    "visitProject": "Visit Project"
+    "visitProject": "Visit Releases",
+    "originalAuthors": "Original Authors",
+    "originalAuthorsDescription": "Built on these projects. Special thanks to both original authors."
   },
   "codexEditor": {
     "codexDirNotFound": "Codex directory not found. Please ensure Codex CLI is installed.",

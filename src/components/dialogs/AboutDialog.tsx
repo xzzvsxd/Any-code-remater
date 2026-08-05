@@ -12,7 +12,11 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/hooks/useTranslation";
-import { getCopyrightYear } from "@/lib/appMetadata";
+import {
+  getCopyrightYear,
+  PROJECT_RELEASES_URL,
+  UPSTREAM_PROJECTS,
+} from "@/lib/appMetadata";
 
 interface AboutDialogProps {
   open: boolean;
@@ -23,7 +27,6 @@ interface AboutDialogProps {
 export function AboutDialog({ open, onClose, onCheckUpdate }: AboutDialogProps) {
   const { t } = useTranslation();
   const [appVersion, setAppVersion] = useState<string>(t('messages.loading'));
-  const PROJECT_URL = "https://github.com/zm892729231/Any-code";
   const copyrightYear = getCopyrightYear();
 
   // 动态获取应用版本号
@@ -43,9 +46,9 @@ export function AboutDialog({ open, onClose, onCheckUpdate }: AboutDialogProps) 
     }
   }, [open, t]);
 
-  const handleOpenProject = async () => {
+  const handleOpenExternal = async (url: string) => {
     try {
-      await openUrl(PROJECT_URL);
+      await openUrl(url);
     } catch (err) {
       console.error(t('dialogs.openProjectPageFailed'), err);
     }
@@ -87,13 +90,40 @@ export function AboutDialog({ open, onClose, onCheckUpdate }: AboutDialogProps) 
 
           <Button
             variant="outline"
-            onClick={handleOpenProject}
+            onClick={() => void handleOpenExternal(PROJECT_RELEASES_URL)}
             className="w-full"
           >
             <ExternalLink className="w-4 h-4 mr-2" />
             {t('about.visitProject')}
           </Button>
         </DialogFooter>
+
+        <div className="pt-4 border-t border-border text-center">
+          <p className="text-xs font-medium text-foreground">
+            {t('about.originalAuthors')}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t('about.originalAuthorsDescription')}
+          </p>
+          <div className="mt-2 flex flex-wrap justify-center gap-x-3 gap-y-1">
+            {UPSTREAM_PROJECTS.map((project) => (
+              <a
+                key={project.url}
+                href={project.url}
+                onClick={(event) => {
+                  event.preventDefault();
+                  void handleOpenExternal(project.url);
+                }}
+                className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <span>{project.name}</span>
+                <ExternalLink className="h-3 w-3" aria-hidden="true" />
+              </a>
+            ))}
+          </div>
+        </div>
 
         {/* Footer */}
         <div className="pt-4 border-t border-border text-center">

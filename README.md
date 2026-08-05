@@ -2,9 +2,9 @@
 
 > 🚀 专业的 AI 代码助手桌面应用 - 多引擎、现代化、高效、功能完备的 GUI 工具包
 
-[![Release](https://img.shields.io/github/v/release/zm892729231/Any-code?style=flat-square)](https://github.com/zm892729231/Any-code/releases)
+[![Release](https://img.shields.io/github/v/release/xzzvsxd/Any-code-remater?style=flat-square)](https://github.com/xzzvsxd/Any-code-remater/releases)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg?style=flat-square)](https://github.com/zm892729231/Any-code)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg?style=flat-square)](https://github.com/xzzvsxd/Any-code-remater/releases)
 [![Made with Tauri](https://img.shields.io/badge/Made%20with-Tauri-FFC131?style=flat-square&logo=tauri)](https://tauri.app/)
 [![React](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react)](https://react.dev/)
 [![Rust](https://img.shields.io/badge/Rust-Latest-orange?style=flat-square&logo=rust)](https://rust-lang.org/)
@@ -431,7 +431,7 @@ Any Code 是一个为 AI 驱动的代码开发工作流量身打造的专业桌�
 
 #### 📦 预构建版本（推荐）
 
-从 [Releases](https://github.com/zm892729231/Any-code/releases) 下载对应平台的安装包：
+从 [Releases](https://github.com/xzzvsxd/Any-code-remater/releases) 下载对应平台的安装包：
 
 <details>
 <summary><b>Windows 安装</b></summary>
@@ -519,7 +519,7 @@ sudo rpm -i any-code-*.rpm
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/zm892729231/Any-code.git
+git clone https://github.com/xzzvsxd/Any-code-remater.git
 cd any-code
 
 # 2. 安装依赖
@@ -1213,8 +1213,8 @@ git push origin feature/your-feature-name
 
 ### 获取帮助
 
-- **GitHub Issues**: [报告问题](https://github.com/zm892729231/Any-code/issues)
-- **GitHub Discussions**: [讨论和提问](https://github.com/zm892729231/Any-code/discussions)
+- **GitHub Issues**: [报告问题](https://github.com/xzzvsxd/Any-code-remater/issues)
+- **GitHub Discussions**: [讨论和提问](https://github.com/xzzvsxd/Any-code-remater/discussions)
 
 ### 参与讨论
 
@@ -1237,6 +1237,8 @@ git push origin feature/your-feature-name
 - [Tauri](https://tauri.app/) - 优秀的桌面应用框架
 - [React](https://react.dev/) - 灵活的前端框架
 - [Rust 社区](https://rust-lang.org/) - 高性能系统编程
+- [anyme123/Any-code](https://github.com/anyme123/Any-code) - 原始项目作者，感谢其开源工作
+- [zm892729231/Any-code](https://github.com/zm892729231/Any-code) - 上游项目作者，感谢其持续维护
 - 所有贡献者和用户的支持 ❤️
 
 ---
@@ -1245,7 +1247,7 @@ git push origin feature/your-feature-name
 
 如果这个项目对您有帮助，请给我们一个 **Star** ⭐！
 
-[![Star History Chart](https://api.star-history.com/svg?repos=zm892729231/Any-code&type=Date)](https://star-history.com/#zm892729231/Any-code&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=xzzvsxd/Any-code-remater&type=Date)](https://star-history.com/#xzzvsxd/Any-code-remater&Date)
 
 ---
 
@@ -1255,6 +1257,6 @@ git push origin feature/your-feature-name
 
 Made with ❤️ by the Any Code Team
 
-🔗 **项目地址**: https://github.com/zm892729231/Any-code
+🔗 **项目地址**: https://github.com/xzzvsxd/Any-code-remater/releases
 
 </div>

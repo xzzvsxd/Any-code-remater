@@ -1498,7 +1498,9 @@
     "version": "版本",
     "description": "Any Code 是一个强大的 Claude Code 会话管理工具，帮助您更好地组织和管理 Claude 对话。",
     "checkUpdate": "检查更新",
-    "visitProject": "访问项目地址"
+    "visitProject": "访问项目发布页",
+    "originalAuthors": "感谢原作者",
+    "originalAuthorsDescription": "本项目基于以下项目持续开发，特别感谢两位原作者。"
   },
   "codexEditor": {
     "codexDirNotFound": "未找到 Codex 目录。请确保已安装 Codex CLI。",
