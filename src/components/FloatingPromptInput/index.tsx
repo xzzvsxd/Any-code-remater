@@ -1,4 +1,4 @@
-import React, { useState, useRef, forwardRef, useImperativeHandle, useEffect, useReducer, useCallback, useMemo } from "react";
+import React, { useState, useRef, forwardRef, useImperativeHandle, useEffect, useReducer, useCallback, useDeferredValue, useMemo } from "react";
 import { AnimatePresence } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import { ArrowDown, LoaderCircle, Sparkles } from "lucide-react";
@@ -41,6 +41,7 @@ import { InputArea } from "./InputArea";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { ControlBar } from "./ControlBar";
 import { ExpandedModal } from "./ExpandedModal";
+import { PromptActionButton } from "./PromptActionButton";
 import {
   resolvePromptActionButtonState,
   shouldSubmitPromptFromEnterKey,
@@ -431,6 +432,11 @@ const FloatingPromptInputInner = (
     enableProjectContext: state.enableProjectContext,
     enableMultiRound: true,
   });
+  const enhancePromptHandlerRef = useRef(handleEnhancePromptWithAPI);
+  enhancePromptHandlerRef.current = handleEnhancePromptWithAPI;
+  const handleEnhancePromptWithAPIStable = useCallback((providerId: string) => {
+    void enhancePromptHandlerRef.current(providerId);
+  }, []);
 
   // 🆕 Prompt Suggestions Hook
   const [enablePromptSuggestion, setEnablePromptSuggestion] = useState(() => {
@@ -453,6 +459,10 @@ const FloatingPromptInputInner = (
     };
   }, []);
 
+  // Suggestions are non-urgent work. Let the controlled textarea commit first so
+  // cache-key generation and message inspection cannot extend the key event frame.
+  const promptForSuggestion = useDeferredValue(state.prompt);
+
   const {
     suggestion,
     isLoading: isSuggestionLoading,
@@ -460,7 +470,7 @@ const FloatingPromptInputInner = (
     dismissSuggestion,
   } = usePromptSuggestion({
     messages: messages || [],
-    currentPrompt: state.prompt,
+    currentPrompt: promptForSuggestion,
     enabled: enablePromptSuggestion && !state.isExpanded && !isLoading && !disabled,
     debounceMs: 600,
   });
@@ -752,9 +762,13 @@ const FloatingPromptInputInner = (
   }, [cancelTextareaHeightAdjust, state.isExpanded]);
 
   useEffect(() => {
-    const textarea = state.isExpanded ? expandedTextareaRef.current : textareaRef.current;
-    scheduleTextareaHeightAdjust(textarea);
-  }, [state.prompt, state.isExpanded, scheduleTextareaHeightAdjust]);
+    if (!state.isExpanded) {
+      cancelTextareaHeightAdjust();
+      return;
+    }
+
+    scheduleTextareaHeightAdjust(expandedTextareaRef.current);
+  }, [cancelTextareaHeightAdjust, state.prompt, state.isExpanded, scheduleTextareaHeightAdjust]);
 
   useEffect(() => cancelTextareaHeightAdjust, [cancelTextareaHeightAdjust]);
 
@@ -993,18 +1007,25 @@ const FloatingPromptInputInner = (
 
       {/* ✅ 重构布局: 输入区域不再使用 fixed 定位，作为 Flex 容器的一部分 */}
       <div className={cn(
-        "flex-shrink-0 border-t border-[var(--glass-border)] bg-[var(--glass-bg)] backdrop-blur-[var(--glass-blur)] shadow-[var(--glass-shadow)]",
+        "relative isolate flex-shrink-0 border-t border-[var(--glass-border)] shadow-[var(--glass-shadow)]",
         className
       )}>
-        <AttachmentPreview
-          imageAttachments={imageAttachments}
-          embeddedImages={embeddedImages}
-          onRemoveAttachment={handleRemoveImageAttachment}
-          onRemoveEmbedded={handleRemoveEmbeddedImage}
-          className="border-b border-border/50 p-4"
+        <div
+          data-prompt-input-glass-layer
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-0 bg-[var(--glass-bg)] backdrop-blur-[var(--glass-blur)] transform-gpu [contain:paint]"
         />
 
-        <div className="p-4 space-y-2">
+        <div className="relative z-10">
+          <AttachmentPreview
+            imageAttachments={imageAttachments}
+            embeddedImages={embeddedImages}
+            onRemoveAttachment={handleRemoveImageAttachment}
+            onRemoveEmbedded={handleRemoveEmbeddedImage}
+            className="border-b border-border/50 p-4"
+          />
+
+          <div className="p-4 space-y-2">
           {showProcessingStatus && (
             <div
               className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2"
@@ -1072,44 +1093,51 @@ const FloatingPromptInputInner = (
             engine={currentEngine}
           />
 
-          <ControlBar
-            disabled={disabled}
-            isLoading={isLoading}
-            prompt={state.prompt}
-            hasAttachments={imageAttachments.length > 0}
-            executionEngineConfig={state.executionEngineConfig}
-            setExecutionEngineConfig={setExecutionEngineConfig}
-            selectedModel={state.selectedModel}
-            setSelectedModel={setSelectedModel}
-            availableModels={availableModels}
-            selectedThinkingMode={state.selectedThinkingMode}
-            selectedThinkingEffort={state.selectedThinkingEffort}
-            handleToggleThinkingMode={handleToggleThinkingMode}
-            onSetThinkingEffort={handleSetThinkingEffort}
-            customModels={customModels}
-            isPlanMode={isPlanMode}
-            onTogglePlanMode={onTogglePlanMode}
-            hasMessages={hasMessages}
-            sessionCost={sessionCost}
-            sessionStats={sessionStats}
-            showCostPopover={state.showCostPopover}
-            setShowCostPopover={setShowCostPopover}
-            messages={messages}
-            session={session}
-            autoCompactSettings={autoCompactSettings}
-            codexRateLimits={codexRateLimits}
-            isEnhancing={isEnhancing}
-            executionStatus={executionStatus}
-            projectPath={projectPath}
-            enableProjectContext={state.enableProjectContext}
-            setEnableProjectContext={setEnableProjectContext}
-            enableDualAPI={enableDualAPI}
-            setEnableDualAPI={setEnableDualAPI}
-            getEnabledProviders={getEnabledProviders}
-            handleEnhancePromptWithAPI={handleEnhancePromptWithAPI}
-            onCancel={effectiveOnCancel}
-            onSend={handleSend}
-          />
+            <div className="flex items-center gap-2 flex-wrap">
+              <ControlBar
+                disabled={disabled}
+                isLoading={isLoading}
+                executionEngineConfig={state.executionEngineConfig}
+                setExecutionEngineConfig={setExecutionEngineConfig}
+                selectedModel={state.selectedModel}
+                setSelectedModel={setSelectedModel}
+                availableModels={availableModels}
+                selectedThinkingMode={state.selectedThinkingMode}
+                selectedThinkingEffort={state.selectedThinkingEffort}
+                handleToggleThinkingMode={handleToggleThinkingMode}
+                onSetThinkingEffort={handleSetThinkingEffort}
+                customModels={customModels}
+                isPlanMode={isPlanMode}
+                onTogglePlanMode={onTogglePlanMode}
+                hasMessages={hasMessages}
+                sessionCost={sessionCost}
+                sessionStats={sessionStats}
+                showCostPopover={state.showCostPopover}
+                setShowCostPopover={setShowCostPopover}
+                messages={messages}
+                session={session}
+                autoCompactSettings={autoCompactSettings}
+                codexRateLimits={codexRateLimits}
+                isEnhancing={isEnhancing}
+                projectPath={projectPath}
+                enableProjectContext={state.enableProjectContext}
+                setEnableProjectContext={setEnableProjectContext}
+                enableDualAPI={enableDualAPI}
+                setEnableDualAPI={setEnableDualAPI}
+                getEnabledProviders={getEnabledProviders}
+                handleEnhancePromptWithAPI={handleEnhancePromptWithAPIStable}
+              />
+              <PromptActionButton
+                disabled={disabled}
+                isLoading={isLoading}
+                prompt={state.prompt}
+                hasAttachments={imageAttachments.length > 0}
+                executionStatus={executionStatus}
+                onCancel={effectiveOnCancel}
+                onSend={handleSend}
+              />
+            </div>
+          </div>
         </div>
       </div>
     </>

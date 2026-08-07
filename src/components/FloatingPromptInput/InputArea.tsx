@@ -105,39 +105,64 @@ const InputAreaComponent = forwardRef<HTMLTextAreaElement, InputAreaProps>(({
 
   return (
     <div className="relative">
-      {/* 🆕 建议叠加层 */}
-      <SuggestionOverlay
-        suggestion={suggestion ?? null}
-        currentPrompt={prompt}
-        isLoading={isSuggestionLoading}
-      />
+      <div className="group/prompt relative isolate grid max-h-[300px]">
+        {/*
+          CSS mirror drives the compact editor height in the browser's normal layout pass.
+          This avoids the height=auto -> scrollHeight read cycle that synchronously flushed
+          layout on every Linux/WebKitGTK keystroke.
+        */}
+        <div
+          data-prompt-autosize-mirror
+          aria-hidden="true"
+          className="invisible pointer-events-none col-start-1 row-start-1 min-h-[56px] max-h-[300px] overflow-hidden whitespace-pre-wrap break-words border px-3 py-2 pr-10 text-sm"
+        >
+          {prompt || ' '}
+        </div>
 
-      <Textarea
-        ref={ref}
-        value={prompt}
-        onChange={onTextChange}
-        onKeyDown={onKeyDown}
-        onPaste={onPaste}
-        // 🔧 Mac 输入法兼容：监听 composition 事件
-        onCompositionStart={onCompositionStart}
-        onCompositionEnd={onCompositionEnd}
-        // 🆕 启用建议时隐藏 placeholder，由 SuggestionOverlay 替代
-        placeholder={getPlaceholder()}
-        disabled={disabled}
-        className={cn(
-          "min-h-[56px] max-h-[300px] resize-none pr-10 overflow-y-auto",
-          "bg-background/50 backdrop-blur-sm border-border/50 focus:border-primary/50 focus:ring-primary/20",
-          dragActive && "border-primary ring-2 ring-primary/20",
-          // 🆕 建议存在时文字颜色正常，让叠加层可见
-          suggestion && "caret-primary"
-        )}
-        rows={1}
-        style={{ height: 'auto' }}
-        onDragEnter={onDragEnter}
-        onDragLeave={onDragLeave}
-        onDragOver={onDragOver}
-        onDrop={onDrop}
-      />
+        {/* Keep backdrop filtering on a static composited layer behind changing text. */}
+        <div
+          data-prompt-input-backdrop
+          aria-hidden="true"
+          className={cn(
+            "pointer-events-none absolute inset-0 z-0 rounded-md border border-border/50 bg-background/50 backdrop-blur-sm",
+            "transform-gpu [contain:paint] transition-[border-color,box-shadow]",
+            "group-focus-within/prompt:border-primary/50 group-focus-within/prompt:ring-2 group-focus-within/prompt:ring-primary/20",
+            dragActive && "border-primary ring-2 ring-primary/20",
+          )}
+        />
+
+        {/* 🆕 建议叠加层 */}
+        <SuggestionOverlay
+          suggestion={suggestion ?? null}
+          currentPrompt={prompt}
+          isLoading={isSuggestionLoading}
+        />
+
+        <Textarea
+          ref={ref}
+          value={prompt}
+          onChange={onTextChange}
+          onKeyDown={onKeyDown}
+          onPaste={onPaste}
+          // 🔧 Mac 输入法兼容：监听 composition 事件
+          onCompositionStart={onCompositionStart}
+          onCompositionEnd={onCompositionEnd}
+          // 🆕 启用建议时隐藏 placeholder，由 SuggestionOverlay 替代
+          placeholder={getPlaceholder()}
+          disabled={disabled}
+          className={cn(
+            "relative z-20 col-start-1 row-start-1 h-full min-h-[56px] max-h-[300px] resize-none overflow-y-auto pr-10",
+            "transform-gpu border-transparent bg-transparent focus:border-transparent focus-visible:ring-0 focus-visible:ring-offset-0",
+            // 🆕 建议存在时文字颜色正常，让叠加层可见
+            suggestion && "caret-primary"
+          )}
+          rows={1}
+          onDragEnter={onDragEnter}
+          onDragLeave={onDragLeave}
+          onDragOver={onDragOver}
+          onDrop={onDrop}
+        />
+      </div>
 
       <Button
         variant="ghost"

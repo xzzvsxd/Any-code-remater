@@ -16,17 +16,14 @@ import { GeminiModelSelector } from "./GeminiModelSelector";
 import { PlanModeToggle } from "./PlanModeToggle";
 import { SessionToolbar } from "@/components/SessionToolbar";
 import { ContextWindowIndicator } from "@/components/widgets/ContextWindowIndicator";
-import { ModelType, ModelConfig, ThinkingEffort, type ExecutionStatusInfo } from "./types";
+import { ModelType, ModelConfig, ThinkingEffort } from "./types";
 import { resolveSelectedModelName } from "./resolveModelName";
-import { resolvePromptActionButtonState } from "./promptActionButtonState";
 import type { CodexRateLimits } from "@/types/codex";
 import type { ClaudeSettings } from "@/lib/api";
 
 interface ControlBarProps {
   disabled?: boolean;
   isLoading: boolean;
-  prompt: string;
-  hasAttachments?: boolean;
   executionEngineConfig: ExecutionEngineConfig;
   setExecutionEngineConfig: (config: ExecutionEngineConfig) => void;
   selectedModel: ModelType;
@@ -51,7 +48,6 @@ interface ControlBarProps {
   autoCompactSettings?: ClaudeSettings | null;
   codexRateLimits?: CodexRateLimits | null;
   isEnhancing: boolean;
-  executionStatus?: ExecutionStatusInfo;
   projectPath?: string;
   enableProjectContext: boolean;
   setEnableProjectContext: (enable: boolean) => void;
@@ -59,8 +55,6 @@ interface ControlBarProps {
   setEnableDualAPI: (enable: boolean) => void;
   getEnabledProviders: () => any[];
   handleEnhancePromptWithAPI: (id: string) => void;
-  onCancel: () => void;
-  onSend: () => void;
 }
 
 const PASSIVE_WIDGET_SIGNAL_TAIL_SCAN_COUNT = 8;
@@ -131,16 +125,9 @@ const areControlBarPropsEqual = (prev: ControlBarProps, next: ControlBarProps) =
   const sessionStatsEqual = streaming
     ? true
     : prev.sessionCost === next.sessionCost && prev.sessionStats === next.sessionStats;
-  const executionStatusEqual = streaming
-    ? prev.executionStatus?.canCancel === next.executionStatus?.canCancel
-      && prev.executionStatus?.isCancelling === next.executionStatus?.isCancelling
-    : prev.executionStatus === next.executionStatus;
-
   return (
     prev.disabled === next.disabled
     && prev.isLoading === next.isLoading
-    && prev.prompt === next.prompt
-    && prev.hasAttachments === next.hasAttachments
     && prev.executionEngineConfig === next.executionEngineConfig
     && prev.setExecutionEngineConfig === next.setExecutionEngineConfig
     && prev.selectedModel === next.selectedModel
@@ -149,6 +136,8 @@ const areControlBarPropsEqual = (prev: ControlBarProps, next: ControlBarProps) =
     && prev.selectedThinkingMode === next.selectedThinkingMode
     && prev.selectedThinkingEffort === next.selectedThinkingEffort
     && prev.handleToggleThinkingMode === next.handleToggleThinkingMode
+    && prev.onSetThinkingEffort === next.onSetThinkingEffort
+    && prev.customModels === next.customModels
     && prev.isPlanMode === next.isPlanMode
     && prev.onTogglePlanMode === next.onTogglePlanMode
     && prev.hasMessages === next.hasMessages
@@ -160,7 +149,6 @@ const areControlBarPropsEqual = (prev: ControlBarProps, next: ControlBarProps) =
     && prev.autoCompactSettings === next.autoCompactSettings
     && prev.codexRateLimits === next.codexRateLimits
     && prev.isEnhancing === next.isEnhancing
-    && executionStatusEqual
     && prev.projectPath === next.projectPath
     && prev.enableProjectContext === next.enableProjectContext
     && prev.setEnableProjectContext === next.setEnableProjectContext
@@ -168,16 +156,12 @@ const areControlBarPropsEqual = (prev: ControlBarProps, next: ControlBarProps) =
     && prev.setEnableDualAPI === next.setEnableDualAPI
     && prev.getEnabledProviders === next.getEnabledProviders
     && prev.handleEnhancePromptWithAPI === next.handleEnhancePromptWithAPI
-    && prev.onCancel === next.onCancel
-    && prev.onSend === next.onSend
   );
 };
 
 const ControlBarComponent: React.FC<ControlBarProps> = ({
   disabled,
   isLoading,
-  prompt,
-  hasAttachments = false,
   executionEngineConfig,
   setExecutionEngineConfig,
   selectedModel,
@@ -199,7 +183,6 @@ const ControlBarComponent: React.FC<ControlBarProps> = ({
   autoCompactSettings,
   codexRateLimits: providedCodexRateLimits,
   isEnhancing,
-  executionStatus,
   projectPath,
   enableProjectContext,
   setEnableProjectContext,
@@ -207,20 +190,8 @@ const ControlBarComponent: React.FC<ControlBarProps> = ({
   setEnableDualAPI,
   getEnabledProviders,
   handleEnhancePromptWithAPI,
-  onCancel,
-  onSend
 }) => {
   const { t } = useTranslation();
-  const canCancelExecution = !executionStatus || executionStatus.canCancel;
-  const isCancellingExecution = executionStatus?.isCancelling === true;
-  const actionButtonState = resolvePromptActionButtonState({
-    isLoading,
-    prompt,
-    hasAttachments,
-    disabled,
-    canCancelExecution,
-    isCancellingExecution,
-  });
   const passiveMessagesRef = useRef(messages);
   const passiveWidgetSignalRef = useRef(getPassiveWidgetSignalKey(messages, executionEngineConfig.engine));
   const passiveWidgetSignal = getPassiveWidgetSignalKey(messages, executionEngineConfig.engine);
@@ -272,7 +243,7 @@ const ControlBarComponent: React.FC<ControlBarProps> = ({
   }, [executionEngineConfig.engine, messagesForPassiveWidgets, providedCodexRateLimits]);
   
   return (
-    <div className="flex items-center gap-2 flex-wrap">
+    <>
       {/* Execution Engine Selector */}
       <ExecutionEngineSelector
         value={executionEngineConfig}
@@ -507,40 +478,7 @@ const ControlBarComponent: React.FC<ControlBarProps> = ({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {/* Send/Cancel Button */}
-      {actionButtonState.mode === 'cancel' ? (
-        <div className="flex flex-col items-end gap-1">
-          <Button
-            onClick={onCancel}
-            variant="destructive"
-            size="default"
-            disabled={actionButtonState.disabled}
-            title={
-              !canCancelExecution
-                ? '正在启动进程，拿到当前会话 ID 后即可安全取消'
-                : '只取消当前会话，不影响其他对话'
-            }
-            className="h-8 shadow-md bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700 text-white font-medium disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            {isCancellingExecution ? '取消中...' : t('buttons.cancel')}
-          </Button>
-          {!canCancelExecution && (
-            <span className="max-w-44 text-[10px] leading-tight text-muted-foreground text-right">
-              启动中，等待会话 ID...
-            </span>
-          )}
-        </div>
-      ) : (
-        <Button
-          onClick={onSend}
-          disabled={actionButtonState.disabled}
-          size="default"
-          className="h-8 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-sm transition-all duration-200"
-        >
-          {t('promptInput.send')}
-        </Button>
-      )}
-    </div>
+    </>
   );
 };
 
