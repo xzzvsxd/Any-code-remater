@@ -393,7 +393,12 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
     // 用 ResizeObserver 观察内容容器高度，任何高度变化且仍处于粘底态时立即追底。
     // performAutoScroll 自带死区 + 用户上滑解除保护，故与用户滚动、与 rAF 循环均不冲突
     //（scrollTop 调整不改内容尺寸，不会反过来触发本 observer，无循环）。
-    let contentObserver: ResizeObserver | null = null;
+    // Observe both the message track and the scroll viewport. The queue panel and
+    // input area are siblings of the viewport, so adding/removing a queued prompt
+    // changes clientHeight without changing the message track's content height.
+    // Without observing the viewport, the existing scrollTop remains one panel
+    // height above the bottom until the user scrolls manually.
+    let viewportObserver: ResizeObserver | null = null;
     const runResizeFollow = () => {
       resizeFollowFrameRef.current = 0;
       if (!shouldFollowResizeToBottom({
@@ -424,17 +429,18 @@ export function useSmartAutoScroll(config: SmartAutoScrollConfig): SmartAutoScro
       resizeFollowFrameRef.current = requestAnimationFrame(runResizeFollow);
     };
     const contentEl = scrollElement.firstElementChild;
+    viewportObserver = new ResizeObserver(() => {
+      scheduleResizeFollow();
+    });
+    viewportObserver.observe(scrollElement);
     if (contentEl) {
-      contentObserver = new ResizeObserver(() => {
-        scheduleResizeFollow();
-      });
-      contentObserver.observe(contentEl);
+      viewportObserver.observe(contentEl);
     }
 
     return () => {
       cancelResumeConfirmation();
       cancelResizeFollow();
-      contentObserver?.disconnect();
+      viewportObserver?.disconnect();
       scrollElement.removeEventListener('wheel', handleWheel);
       scrollElement.removeEventListener('touchstart', handleTouchStart);
       scrollElement.removeEventListener('touchmove', handleTouchMove);

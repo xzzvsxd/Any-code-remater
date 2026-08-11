@@ -17,4 +17,9 @@ describe('smart auto-scroll render safety invariants', () => {
     expect(source).toContain('requestAnimationFrame(runResizeFollow)');
     expect(source).not.toContain('contentObserver = new ResizeObserver(() => {\n        if (shouldFollowResizeToBottom');
   });
+
+  test('follows the bottom when the message viewport is resized by the queue panel', () => {
+    expect(source).toContain('viewportObserver = new ResizeObserver');
+    expect(source).toContain('viewportObserver.observe(scrollElement)');
+  });
 });

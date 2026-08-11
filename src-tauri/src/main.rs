@@ -249,18 +249,8 @@ use tauri::{Manager, WindowEvent};
 use tauri_plugin_window_state::Builder as WindowStatePlugin;
 
 fn main() {
-    // Linux 白屏/卡死缓解：部分 Linux 发行版 / 显卡驱动 / 虚拟机下，WebKitGTK 的 GPU 合成与
-    // DMABUF 渲染器会导致渲染线程阻塞、界面白屏。这里在 webview 创建前注入标准 workaround
-    // 环境变量（保留用户已显式设置的值，不覆盖），是 Tauri 社区针对 Linux 白屏的通用缓解手段。
     #[cfg(target_os = "linux")]
-    {
-        if std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
-            std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
-        }
-        if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
-            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-        }
-    }
+    configure_linux_webview_environment();
 
     // Initialize logger
     env_logger::init();
@@ -685,4 +675,31 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Configure WebKitGTK workarounds before Tauri creates the webview.
+///
+/// Compositing mode is intentionally left enabled by default: forcing software
+/// compositing makes scrolling and animated panels substantially slower on Debian
+/// systems. Users with a broken GPU/WebKit stack can opt into the old safe mode by
+/// setting `ANY_CODE_FORCE_SOFTWARE_WEBVIEW=1`, or by setting WebKit's variable
+/// themselves. DMABUF remains disabled as the lighter compatibility workaround.
+#[cfg(target_os = "linux")]
+fn configure_linux_webview_environment() {
+    let force_software = std::env::var("ANY_CODE_FORCE_SOFTWARE_WEBVIEW")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false);
+
+    if force_software && std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+    }
+
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
 }
