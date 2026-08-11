@@ -158,15 +158,16 @@ export const getMessageVirtualIdentity = (
 
 const getAggregatedKey = (group: Extract<MessageGroup, { type: 'aggregated' }>, fallbackIndex: number): string => {
   const messages = Array.isArray(group.messages) ? group.messages : [];
-  const identities = messages
-    .map((message, index) => getMessageVirtualIdentity(message, group.index + index))
-    .join('|');
-
-  if (!identities) {
+  const firstMessage = messages[0];
+  if (!firstMessage) {
     return `agg:empty:${fallbackIndex}`;
   }
 
-  return `agg:${messages.length}:${stableHash(identities)}:${keyPart(identities) ?? fallbackIndex}`;
+  // 聚合行的 React identity 必须固定在首条技术消息上。流式期间后续 tool/thinking
+  // 事件会持续追加到同一行；若把消息数量或整组指纹放进 key，每次追加都会卸载整行，
+  // ToolCallsGroup 的用户展开状态也会随之重置。内容变化由 render revision / measurement
+  // key 单独追踪，虚拟列表仍会正确重新渲染和测高。
+  return `agg:${getMessageVirtualIdentity(firstMessage, group.index ?? fallbackIndex)}`;
 };
 
 export const getMessageGroupVirtualKey = (

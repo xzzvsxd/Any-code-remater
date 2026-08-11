@@ -188,7 +188,7 @@ describe('message group virtualization identity and safety', () => {
     );
   });
 
-  test('aggregated technical rows include real message identities so cache is not reused for a different aggregate', () => {
+  test('aggregated technical rows separate stable identity from changing render content', () => {
     const first: MessageGroup = {
       type: 'aggregated',
       index: 10,
@@ -214,8 +214,50 @@ describe('message group virtualization identity and safety', () => {
       ],
     };
 
-    expect(getMessageGroupVirtualKey(first, 10)).not.toBe(
+    expect(getMessageGroupVirtualKey(first, 10)).toBe(
       getMessageGroupVirtualKey(second, 10),
+    );
+    expect(getMessageGroupRenderRevision(first, 10)).not.toBe(
+      getMessageGroupRenderRevision(second, 10),
+    );
+    expect(getMessageGroupMeasurementCacheKey(first, 10)).not.toBe(
+      getMessageGroupMeasurementCacheKey(second, 10),
+    );
+  });
+
+  test('keeps an aggregate row key stable when streaming appends another tool event', () => {
+    const firstToolMessage = {
+      type: 'assistant',
+      uuid: 'tool-row-1',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'tool-1', name: 'Read', input: {} }],
+      },
+    } as ClaudeStreamMessage;
+    const nextToolMessage = {
+      type: 'assistant',
+      uuid: 'tool-row-2',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'tool-2', name: 'Bash', input: {} }],
+      },
+    } as ClaudeStreamMessage;
+    const beforeAppend: MessageGroup = {
+      type: 'aggregated',
+      index: 10,
+      messages: [firstToolMessage],
+    };
+    const afterAppend: MessageGroup = {
+      type: 'aggregated',
+      index: 10,
+      messages: [firstToolMessage, nextToolMessage],
+    };
+
+    expect(getMessageGroupVirtualKey(beforeAppend, 10)).toBe(
+      getMessageGroupVirtualKey(afterAppend, 10),
+    );
+    expect(getMessageGroupRenderRevision(beforeAppend, 10)).not.toBe(
+      getMessageGroupRenderRevision(afterAppend, 10),
     );
   });
 
