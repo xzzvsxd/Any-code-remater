@@ -1005,6 +1005,15 @@ export const api = {
     }
   },
 
+  /** Remember an explicitly selected project path before its first session exists. */
+  async rememberProjectPath(projectPath: string): Promise<void> {
+    try {
+      await invoke<void>('remember_project_path', { projectPath });
+    } catch (error) {
+      console.warn("Failed to remember project path:", error);
+    }
+  },
+
   /**
    * Lists all hidden projects
    * @returns Promise resolving to array of hidden project IDs

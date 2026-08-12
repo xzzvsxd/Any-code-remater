@@ -9,10 +9,13 @@ use serde_json::Value;
 
 use super::models::JsonlEntry;
 use super::models::{Project, Session};
-use super::paths::{decode_project_path, get_claude_dir, normalize_path_for_comparison};
+use super::paths::{
+    decode_project_path, encode_project_path, get_claude_dir, normalize_path_for_comparison,
+};
 
 pub struct ProjectStore {
     claude_dir: PathBuf,
+    project_path_overrides: HashMap<String, String>,
 }
 
 pub struct BatchDeleteOutcome {
@@ -184,12 +187,37 @@ pub(crate) fn extract_session_summary(path: &Path) -> SessionSummary {
 impl ProjectStore {
     pub fn new() -> Result<Self, String> {
         let claude_dir = get_claude_dir().map_err(|e| e.to_string())?;
-        Ok(Self { claude_dir })
+        let project_path_overrides = load_project_path_overrides(&claude_dir);
+        Ok(Self {
+            claude_dir,
+            project_path_overrides,
+        })
     }
 
     #[cfg(test)]
     pub fn from_claude_dir_for_tests(claude_dir: PathBuf) -> Self {
-        Self { claude_dir }
+        let project_path_overrides = load_project_path_overrides(&claude_dir);
+        Self {
+            claude_dir,
+            project_path_overrides,
+        }
+    }
+
+    /// Remember the path selected by the user for a Claude project directory.
+    /// This preserves paths for projects that have no session cwd yet and
+    /// avoids relying on lossy hyphen-based directory-name decoding.
+    pub fn remember_project_path(&self, project_path: &str) -> Result<(), String> {
+        let trimmed_path = project_path.trim();
+        if trimmed_path.is_empty() {
+            return Err("Project path cannot be empty".to_string());
+        }
+
+        let mut overrides = self.project_path_overrides.clone();
+        overrides.insert(encode_project_path(trimmed_path), trimmed_path.to_string());
+        let content = serde_json::to_string_pretty(&overrides)
+            .map_err(|e| format!("Failed to serialize project path overrides: {}", e))?;
+        fs::write(self.project_path_overrides_file(), content)
+            .map_err(|e| format!("Failed to write project path overrides: {}", e))
     }
 
     pub fn list_projects_fast(&self) -> Result<Vec<Project>, String> {
@@ -247,7 +275,7 @@ impl ProjectStore {
                     .unwrap_or_default()
                     .as_secs();
 
-                let project_path = match get_project_path_from_sessions_fast(&path) {
+                let project_path = match self.get_project_path_for_dir(&path, true) {
                     Ok(path) => path,
                     Err(e) => {
                         log::debug!(
@@ -337,7 +365,7 @@ impl ProjectStore {
                         .unwrap_or_default()
                         .as_secs();
 
-                    let project_path = match get_project_path_from_sessions(&path) {
+                    let project_path = match self.get_project_path_for_dir(&path, false) {
                         Ok(path) => path,
                         Err(e) => {
                             log::warn!(
@@ -425,7 +453,7 @@ impl ProjectStore {
             return Err(format!("Project directory not found: {}", project_id));
         }
 
-        let project_path = match get_project_path_from_sessions(&project_dir) {
+        let project_path = match self.get_project_path_for_dir(&project_dir, false) {
             Ok(path) => path,
             Err(e) => {
                 log::warn!(
@@ -652,10 +680,11 @@ impl ProjectStore {
             for entry in entries.flatten() {
                 if entry.path().is_dir() {
                     if let Some(dir_name) = entry.file_name().to_str() {
-                        let candidate_path = match get_project_path_from_sessions(&entry.path()) {
-                            Ok(path) => path,
-                            Err(_) => decode_project_path(dir_name),
-                        };
+                        let candidate_path =
+                            match self.get_project_path_for_dir(&entry.path(), false) {
+                                Ok(path) => path,
+                                Err(_) => decode_project_path(dir_name),
+                            };
 
                         if normalize_path_for_comparison(&candidate_path) == target_normalized_path
                         {
@@ -717,7 +746,7 @@ impl ProjectStore {
                         if entry.path().is_dir() {
                             if let Some(dir_name) = entry.file_name().to_str() {
                                 let candidate_path =
-                                    match get_project_path_from_sessions(&entry.path()) {
+                                    match self.get_project_path_for_dir(&entry.path(), false) {
                                         Ok(path) => path,
                                         Err(_) => decode_project_path(dir_name),
                                     };
@@ -792,6 +821,24 @@ impl ProjectStore {
         self.claude_dir.join("hidden_projects.json")
     }
 
+    fn project_path_overrides_file(&self) -> PathBuf {
+        self.claude_dir.join("project_paths.json")
+    }
+
+    fn get_project_path_for_dir(&self, project_dir: &Path, fast: bool) -> Result<String, String> {
+        if let Some(dir_name) = project_dir.file_name().and_then(|name| name.to_str()) {
+            if let Some(path) = self.project_path_overrides.get(dir_name) {
+                return Ok(path.clone());
+            }
+        }
+
+        if fast {
+            get_project_path_from_sessions_fast(project_dir)
+        } else {
+            get_project_path_from_sessions(project_dir)
+        }
+    }
+
     fn deduplicate_projects(
         &self,
         all_projects: Vec<Project>,
@@ -801,15 +848,18 @@ impl ProjectStore {
         let mut unique_projects_map: HashMap<String, Project> = HashMap::new();
 
         for project in all_projects {
-            let normalized_path = normalize_path_for_comparison(&project.path);
+            // The directory name is Claude's physical project identity.
+            // Path decoding is lossy (hyphens can represent either separators
+            // or real characters), so never merge different directory ids
+            // merely because their best-effort paths compare equal.
+            let project_id = project.id.clone();
 
-            match unique_projects_map.get_mut(&normalized_path) {
+            match unique_projects_map.get_mut(&project_id) {
                 Some(existing_project) => {
                     log::debug!(
-                        "Merging duplicate project with path: {} (existing: {}, new: {})",
-                        project.path,
-                        existing_project.id,
-                        project.id
+                        "Merging duplicate project directory id: {} (path: {})",
+                        project_id,
+                        project.path
                     );
 
                     let mut new_sessions = project.sessions;
@@ -822,26 +872,9 @@ impl ProjectStore {
                     if project.created_at > existing_project.created_at {
                         existing_project.created_at = project.created_at;
                     }
-
-                    let should_update_id = project.id.len() < existing_project.id.len()
-                        || (project.id.len() == existing_project.id.len()
-                            && !project.id.contains("--")
-                            && existing_project.id.contains("--"))
-                        || (project.id.len() == existing_project.id.len()
-                            && project.id.chars().any(|c| c.is_uppercase())
-                            && existing_project.id.chars().all(|c| !c.is_uppercase()));
-
-                    if should_update_id {
-                        log::debug!(
-                            "Updating project ID from '{}' to '{}'",
-                            existing_project.id,
-                            project.id
-                        );
-                        existing_project.id = project.id;
-                    }
                 }
                 None => {
-                    unique_projects_map.insert(normalized_path, project);
+                    unique_projects_map.insert(project_id, project);
                 }
             }
         }
@@ -906,7 +939,7 @@ impl ProjectStore {
         for hidden_id in &hidden_projects {
             // 隐藏项的真实路径：优先从其会话 cwd 解析，目录不存在/无会话时回退到目录名解码。
             let candidate_dir = projects_dir.join(hidden_id);
-            let candidate_path = match get_project_path_from_sessions(&candidate_dir) {
+            let candidate_path = match self.get_project_path_for_dir(&candidate_dir, false) {
                 Ok(path) => path,
                 Err(_) => decode_project_path(hidden_id),
             };
@@ -978,6 +1011,14 @@ fn read_project_cwd_from_session_file(path: &Path) -> Option<String> {
         }
     }
     None
+}
+
+fn load_project_path_overrides(claude_dir: &Path) -> HashMap<String, String> {
+    let path = claude_dir.join("project_paths.json");
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<HashMap<String, String>>(&content).ok())
+        .unwrap_or_default()
 }
 
 fn get_project_path_from_sessions_fast(project_dir: &Path) -> Result<String, String> {
@@ -1071,6 +1112,7 @@ fn normalize_macos_path(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::paths::encode_project_path;
     use super::{extract_session_summary, ProjectStore};
     use std::fs;
 
@@ -1100,6 +1142,11 @@ mod tests {
     }
 
     #[test]
+    fn encode_project_path_preserves_windows_drive_separator_encoding() {
+        assert_eq!(encode_project_path(r"C:\work\ai-care"), "C--work-ai-care");
+    }
+
+    #[test]
     fn list_projects_fast_returns_shell_without_session_enumeration() {
         let tmp = tempfile::tempdir().unwrap();
         let claude_dir = tmp.path().join(".claude");
@@ -1126,6 +1173,59 @@ mod tests {
         assert_eq!(full_projects.len(), 1);
         assert_eq!(full_projects[0].sessions, vec!["session-1".to_string()]);
         assert_eq!(full_projects[0].session_counts.claude, 1);
+    }
+
+    #[test]
+    fn list_projects_prefers_remembered_path_when_session_cwd_is_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let claude_dir = tmp.path().join(".claude");
+        let project_dir = claude_dir.join("projects").join("D--workspace-ai-care");
+        fs::create_dir_all(&project_dir).unwrap();
+        fs::write(
+            project_dir.join("queued.jsonl"),
+            r#"{"type":"queue-operation"}"#,
+        )
+        .unwrap();
+
+        let store = ProjectStore::from_claude_dir_for_tests(claude_dir.clone());
+        store
+            .remember_project_path(r"D:\workspace\ai-care")
+            .unwrap();
+
+        // A production command creates a fresh store for the subsequent list
+        // request, so reload the persisted mapping here as well.
+        let store = ProjectStore::from_claude_dir_for_tests(claude_dir);
+        let projects = store.list_projects_fast().unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].path, r"D:\workspace\ai-care");
+    }
+
+    #[test]
+    fn list_projects_keeps_distinct_directory_ids_when_paths_are_equal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let claude_dir = tmp.path().join(".claude");
+        let first_dir = claude_dir.join("projects").join("D--workspace-alpha");
+        let second_dir = claude_dir.join("projects").join("D--workspace-beta");
+        fs::create_dir_all(&first_dir).unwrap();
+        fs::create_dir_all(&second_dir).unwrap();
+
+        let first_session = r#"{"type":"user","cwd":"D:\\workspace\\shared","message":{"role":"user","content":"first"}}"#;
+        let second_session = r#"{"type":"user","cwd":"D:\\workspace\\shared","message":{"role":"user","content":"second"}}"#;
+        fs::write(first_dir.join("session-alpha.jsonl"), first_session).unwrap();
+        fs::write(second_dir.join("session-beta.jsonl"), second_session).unwrap();
+
+        let store = ProjectStore::from_claude_dir_for_tests(claude_dir);
+        let projects = store.list_projects().unwrap();
+
+        assert_eq!(projects.len(), 2);
+        assert!(projects
+            .iter()
+            .any(|project| project.id == "D--workspace-alpha"
+                && project.sessions == vec!["session-alpha"]));
+        assert!(projects
+            .iter()
+            .any(|project| project.id == "D--workspace-beta"
+                && project.sessions == vec!["session-beta"]));
     }
 
     #[test]

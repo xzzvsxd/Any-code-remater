@@ -250,6 +250,15 @@ pub async fn restore_project_by_path(project_path: String) -> Result<bool, Strin
     Ok(restored)
 }
 
+/// Persist the user-selected path for a Claude project directory. This is
+/// needed before the first session exists because Claude's directory id is not
+/// reversible when a path component contains hyphens.
+#[tauri::command]
+pub async fn remember_project_path(project_path: String) -> Result<(), String> {
+    let store = ProjectStore::new()?;
+    store.remember_project_path(&project_path)
+}
+
 /// Permanently delete a project from the file system with intelligent directory detection
 #[tauri::command]
 pub async fn delete_project_permanently(project_id: String) -> Result<String, String> {

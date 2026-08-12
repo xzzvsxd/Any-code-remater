@@ -455,7 +455,7 @@ describe('workbench sidebar session ordering', () => {
     })).toBe(liveSelected);
   });
 
-  test('keeps an active promoted session pinned while replacing its stale disk copy', () => {
+  test('keeps an active idle session in its disk position while replacing stale metadata', () => {
     const staleDiskCopy = session('fresh-session', '2026-06-15T01:00:00.000Z', {
       first_message: '',
     });
@@ -480,8 +480,13 @@ describe('workbench sidebar session ordering', () => {
       runningSessionKeys: new Set(),
     });
 
-    expect(reconciled.pinnedOpenTabSessions.map((item) => item.id)).toEqual(['fresh-session']);
-    expect(reconciled.remainingDiskSessions.map((item) => item.id)).toEqual(['old-session', 'disk-only']);
+    expect(reconciled.pinnedOpenTabSessions).toEqual([]);
+    expect(reconciled.remainingDiskSessions.map((item) => item.id)).toEqual([
+      'fresh-session',
+      'old-session',
+      'disk-only',
+    ]);
+    expect(reconciled.remainingDiskSessions[0]).toBe(activeOpenCopy);
   });
 
   test('WorkbenchSidebar does not poll expanded projects while sessions are streaming', () => {

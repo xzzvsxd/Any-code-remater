@@ -40,19 +40,32 @@ export const sessionBelongsToWorkbenchProject = (session: Session, project: Proj
 export const findWorkbenchProjectForSession = (
   session: Pick<Session, 'project_id' | 'project_path'>,
   projects: readonly Project[],
-): Project | undefined => projects.find((project) => (
-  project.id === session.project_id
-  || (!!session.project_path
-    && normalizeWorkbenchPath(session.project_path) === normalizeWorkbenchPath(project.path))
-));
+): Project | undefined => {
+  const byId = projects.find((project) => project.id === session.project_id);
+  if (byId) return byId;
+
+  const normalizedPath = normalizeWorkbenchPath(session.project_path);
+  if (!normalizedPath) return undefined;
+  const byPath = projects.filter((project) => normalizeWorkbenchPath(project.path) === normalizedPath);
+  return byPath.length === 1 ? byPath[0] : undefined;
+};
 
 export const workbenchProjectsMatch = (
   project: Pick<Project, 'id' | 'path'>,
   candidate?: Pick<Project, 'id' | 'path'> | null,
 ): boolean => {
   if (!candidate) return false;
-  return project.id === candidate.id
-    || normalizeWorkbenchPath(project.path) === normalizeWorkbenchPath(candidate.path);
+  if (project.id && candidate.id) {
+    if (project.id === candidate.id) return true;
+    // Two real Claude directory ids are never aliases, even if lossy path
+    // decoding yields the same path. Virtual projects may still reconcile by
+    // path while waiting for their real directory to appear.
+    const projectIsVirtual = project.id.startsWith('virtual:');
+    const candidateIsVirtual = candidate.id.startsWith('virtual:');
+    if (!projectIsVirtual && !candidateIsVirtual) return false;
+  }
+
+  return normalizeWorkbenchPath(project.path) === normalizeWorkbenchPath(candidate.path);
 };
 
 interface ResolveWorkbenchProjectSessionsOptions {
@@ -216,13 +229,13 @@ interface ReconciledWorkbenchOpenTabSessions {
 }
 
 /**
- * Keep the in-memory representation for sessions that are new, active, or
+ * Keep the in-memory representation for sessions that are new or
  * running. A just-created JSONL can already appear in a disk scan with an empty
  * title/old activity timestamp; letting that stale copy shadow the open tab
  * sends the new session below the sidebar's render limit.
  *
- * Idle background tabs continue to use their disk row, so restored tab sets do
- * not flood the pinned section.
+ * An active idle tab replaces its stale disk metadata in place, but is not
+ * promoted to the top merely because the user selected it.
  */
 export function reconcileWorkbenchOpenTabSessions({
   diskSessions,
@@ -236,7 +249,6 @@ export function reconcileWorkbenchOpenTabSessions({
 
   openTabSessions.forEach((session) => {
     const shouldPin = !diskIds.has(session.id)
-      || session.id === activeSessionId
       || isWorkbenchSessionRunning(session, runningSessionKeys);
     if (!shouldPin || pinnedIds.has(session.id)) return;
 
@@ -246,9 +258,12 @@ export function reconcileWorkbenchOpenTabSessions({
 
   return {
     pinnedOpenTabSessions,
-    remainingDiskSessions: pinnedIds.size === 0
-      ? diskSessions
-      : diskSessions.filter((session) => !pinnedIds.has(session.id)),
+    remainingDiskSessions: diskSessions
+      .filter((session) => !pinnedIds.has(session.id))
+      .map((session) => {
+        if (session.id !== activeSessionId) return session;
+        return openTabSessions.find((openSession) => openSession.id === session.id) ?? session;
+      }),
   };
 }
 
@@ -377,9 +392,13 @@ export function buildWorkbenchProjectSessionIndex({
   runningSessionKeys,
 }: BuildWorkbenchProjectSessionIndexOptions): WorkbenchProjectSessionIndex {
   const projectIds = new Set(projects.map((project) => project.id));
-  const projectIdByPath = new Map(
-    projects.map((project) => [normalizeWorkbenchPath(project.path), project.id]),
-  );
+  const projectIdsByPath = new Map<string, string[]>();
+  projects.forEach((project) => {
+    const path = normalizeWorkbenchPath(project.path);
+    const ids = projectIdsByPath.get(path) ?? [];
+    ids.push(project.id);
+    projectIdsByPath.set(path, ids);
+  });
 
   const resolveProjectId = (projectId?: string, projectPath?: string): string | undefined => {
     if (projectId && projectIds.has(projectId)) {
@@ -387,7 +406,8 @@ export function buildWorkbenchProjectSessionIndex({
     }
 
     const normalizedPath = normalizeWorkbenchPath(projectPath);
-    return normalizedPath ? projectIdByPath.get(normalizedPath) : undefined;
+    const ids = normalizedPath ? projectIdsByPath.get(normalizedPath) : undefined;
+    return ids?.length === 1 ? ids[0] : undefined;
   };
 
   const openTabSessionsByProjectId = new Map<string, Session[]>();

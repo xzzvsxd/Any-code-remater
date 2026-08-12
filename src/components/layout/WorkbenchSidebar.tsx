@@ -521,10 +521,16 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
   // 若每次都用 Date.now() 重刷时间戳，会反复 setState → orderedProjects 反复重排 → 列表抖动。
   // 因此改为「边沿触发」：仅当项目从『无运行』变『有运行』时打一次戳，运行结束后清除记录以便下次再置顶。
   const activityStampedRef = useRef<Set<string>>(new Set());
-  const projectIdByPath = React.useMemo(
-    () => new Map(projects.map((project) => [normalizeWorkbenchPath(project.path), project.id])),
-    [projects],
-  );
+  const projectIdsByPath = React.useMemo(() => {
+    const map = new Map<string, string[]>();
+    projects.forEach((project) => {
+      const path = normalizeWorkbenchPath(project.path);
+      const ids = map.get(path) ?? [];
+      ids.push(project.id);
+      map.set(path, ids);
+    });
+    return map;
+  }, [projects]);
   useEffect(() => {
     const runningNow = new Set<string>();
     runningTabRefs.forEach((ref) => {
@@ -533,8 +539,8 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
         return;
       }
 
-      const projectId = projectIdByPath.get(normalizeWorkbenchPath(ref.projectPath));
-      if (projectId) runningNow.add(projectId);
+      const projectIds = projectIdsByPath.get(normalizeWorkbenchPath(ref.projectPath));
+      if (projectIds?.length === 1) runningNow.add(projectIds[0]);
     });
     // 清除已停止运行的项目记录，允许其下次重新运行时再次触发置顶。
     activityStampedRef.current.forEach((pid) => {
@@ -550,7 +556,7 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
       newlyRunning.forEach((pid) => { next[pid] = now; });
       return next;
     });
-  }, [projectIdByPath, runningTabRefs]);
+  }, [projectIdsByPath, runningTabRefs]);
 
   useEffect(() => {
     try { localStorage.setItem(COLLAPSED_KEY, String(collapsed)); } catch { /* ignore */ }
@@ -616,10 +622,10 @@ export const WorkbenchSidebar: React.FC<WorkbenchSidebarProps> = ({ onAboutClick
   // A promoted tab is already rendered from in-memory tab state. Refresh only
   // its owning project so the disk cache catches up without a global scan.
   useEffect(() => subscribeWorkbenchSessionPromoted((promotion) => {
-    const project = projects.find((candidate) => (
-      candidate.id === promotion.projectId
-      || normalizeWorkbenchPath(candidate.path) === normalizeWorkbenchPath(promotion.projectPath)
-    ));
+    const project = findWorkbenchProjectForSession({
+      project_id: promotion.projectId,
+      project_path: promotion.projectPath,
+    }, projects);
     if (!project) {
       scheduleProjectRefresh(false);
       return;

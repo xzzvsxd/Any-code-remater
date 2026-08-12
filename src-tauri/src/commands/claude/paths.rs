@@ -35,10 +35,13 @@ pub fn get_codex_dir() -> Result<PathBuf> {
     Ok(codex_dir)
 }
 
-/// Encodes a project path to match Claude CLI's encoding scheme
-/// Uses single hyphens to separate path components
+/// Encodes a project path to match Claude CLI's on-disk project directory ids.
+/// Every non-alphanumeric character, including a Windows drive colon, becomes
+/// a hyphen (for example `C:\\work\\ai-care` -> `C--work-ai-care`).
 pub fn encode_project_path(path: &str) -> String {
-    path.replace('\\', "-").replace('/', "-").replace(':', "")
+    path.chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+        .collect()
 }
 
 /// Decodes a project directory name back to its original path

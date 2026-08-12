@@ -2,6 +2,12 @@
 import { api, Project, Session } from '@/lib/api';
 import { sortSessionsByActivity } from '@/lib/sessionOrdering';
 import { useTranslation } from 'react-i18next';
+import {
+  isVirtualProjectId,
+  findProjectByEncodedIdentity,
+  mergeProjectsByIdentity,
+  normalizeProjectIdentityPath,
+} from './projectIdentity';
 
 interface ProjectContextType {
   projects: Project[];
@@ -147,23 +153,34 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   );
 
   const normalizeProjectPath = useCallback((path: string) => {
-    return path ? path.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase() : '';
+    return normalizeProjectIdentityPath(path);
   }, []);
 
   const isVirtualProject = useCallback((project: Project | null | undefined) => {
-    return Boolean(project?.id.startsWith('virtual:'));
+    return Boolean(project && isVirtualProjectId(project.id));
   }, []);
 
   const findProjectByPath = useCallback((projectList: Project[], projectPath: string) => {
+    const encodedIdentityMatch = findProjectByEncodedIdentity(projectList, projectPath);
+    if (encodedIdentityMatch) return encodedIdentityMatch;
+
     const normalizedProjectPath = normalizeProjectPath(projectPath);
-    return projectList.find(project => normalizeProjectPath(project.path) === normalizedProjectPath) ?? null;
-  }, [normalizeProjectPath]);
+    const matches = projectList.filter(project => normalizeProjectPath(project.path) === normalizedProjectPath);
+    if (matches.length === 1) return matches[0];
+
+    // A virtual entry can be replaced by the one real project at the same
+    // path. Multiple real directory ids are intentionally ambiguous and must
+    // not be resolved by path alone.
+    const realMatches = matches.filter(project => !isVirtualProject(project));
+    return realMatches.length === 1 ? realMatches[0] : null;
+  }, [isVirtualProject, normalizeProjectPath]);
 
   const findRealProjectByPath = useCallback((projectList: Project[], projectPath: string) => {
     const normalizedProjectPath = normalizeProjectPath(projectPath);
-    return projectList.find(project =>
+    const matches = projectList.filter(project =>
       !isVirtualProject(project) && normalizeProjectPath(project.path) === normalizedProjectPath
-    ) ?? null;
+    );
+    return matches.length === 1 ? matches[0] : null;
   }, [isVirtualProject, normalizeProjectPath]);
 
   const buildVirtualProject = useCallback((projectPath: string): Project => ({
@@ -189,27 +206,19 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   }, []);
 
   const mergeProjects = useCallback((primaryProjects: Project[], secondaryProjects: Project[]) => {
-    const mergedProjects: Project[] = [];
-    const seenPaths = new Set<string>();
-
-    [...primaryProjects, ...secondaryProjects].forEach(project => {
-      const normalizedProjectPath = normalizeProjectPath(project.path);
-      if (seenPaths.has(normalizedProjectPath)) {
-        return;
-      }
-
-      seenPaths.add(normalizedProjectPath);
-      mergedProjects.push(project);
-    });
-
-    return mergedProjects;
-  }, [normalizeProjectPath]);
+    return mergeProjectsByIdentity(primaryProjects, secondaryProjects);
+  }, []);
 
   const resolveEffectiveProject = useCallback((project: Project, projectList?: Project[]) => {
     const availableProjects = projectList ?? projects;
-    const matchedProject =
-      findRealProjectByPath(availableProjects, project.path) ??
-      (isVirtualProject(project) ? null : findProjectByPath(availableProjects, project.path));
+    const matchedById = !isVirtualProject(project)
+      ? availableProjects.find(candidate => candidate.id === project.id) ?? null
+      : null;
+    const matchedProject = matchedById ?? (
+      isVirtualProject(project)
+        ? findRealProjectByPath(availableProjects, project.path)
+        : findProjectByPath(availableProjects, project.path)
+    );
     const effectiveProject = matchedProject ?? project;
 
     return { matchedProject, effectiveProject };
@@ -417,10 +426,18 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       setMutationLoading(true);
       setError(null);
 
+      // Preserve the exact user-selected path before listing projects. This
+      // prevents a no-session project such as `foo-bar` from being replaced by
+      // the ambiguous fallback decode `foo/bar`.
+      await api.rememberProjectPath(projectPath);
+
       const existingProject = findProjectByPath(projects, projectPath);
       if (existingProject) {
+        const resolvedProject = existingProject.path === projectPath
+          ? existingProject
+          : { ...existingProject, path: projectPath };
         sessionLoadRequestRef.current += 1;
-        setProjects(prevProjects => mergeProjects([existingProject], prevProjects));
+        setProjects(prevProjects => mergeProjects([resolvedProject], prevProjects));
         setSelectedProject(null);
         setSessions([]);
         setSessionsLoading(false);
